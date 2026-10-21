@@ -32,7 +32,7 @@ import {
   AllRepositories,
 } from '../../infrastructure/repositories/RepositoryFactory';
 import { createScopedRepositories } from '../../infrastructure/repositories/ScopedRepositoryFacade';
-import { AuthUser, AttachmentGateway, SystemShareGateway } from '../../application/ports';
+import { AuthUser, AttachmentGateway, SystemShareGateway, SyncGateway } from '../../application/ports';
 import { Household, Member } from '../../domain/entities';
 import {
   addGroupMember,
@@ -94,6 +94,7 @@ interface AppState {
     calendar: LocalCalendarAdapter;
     /** V4-01: photo attachments behind an honest port (no provider faked). */
     attachments: AttachmentGateway;
+    sync: SyncGateway;
   };
 }
 
@@ -338,6 +339,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       notifications: servicesRef.current.notifications,
       calendar: servicesRef.current.calendar,
       attachments: servicesRef.current.attachments,
+      sync: servicesRef.current.sync,
     },
   };
 

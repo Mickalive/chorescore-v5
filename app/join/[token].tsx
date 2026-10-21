@@ -39,13 +39,18 @@ export default function JoinScreen() {
   const { token } = useLocalSearchParams<{ token: string }>();
   const router = useRouter();
   const { t } = useI18n();
-  const { currentUser, repos, rawRepos, signIn } = useApp();
+  const { currentUser, repos, rawRepos, signIn, services } = useApp();
 
   const [status, setStatus] = useState<JoinStatus>('loading');
   const [errorMessage, setErrorMessage] = useState('');
   const [householdName, setHouseholdName] = useState('');
 
   const resolveInvitation = useCallback(async () => {
+    if (!services.sync.isAvailable()) {
+      setStatus('error');
+      setErrorMessage(t('invite.unavailableBody'));
+      return;
+    }
     if (!token) {
       setStatus('error');
       setErrorMessage(t('join.invalidLink'));
@@ -114,7 +119,7 @@ export default function JoinScreen() {
       setStatus('error');
       setErrorMessage(t('join.verifyError'));
     }
-  }, [token, rawRepos, currentUser, t]);
+  }, [token, rawRepos, currentUser, t, services]);
 
   useEffect(() => {
     resolveInvitation();

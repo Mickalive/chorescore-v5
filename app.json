@@ -1,8 +1,8 @@
 {
   "expo": {
     "name": "ChoreScore",
-    "slug": "chorescore-v3",
-    "version": "0.1.0",
+    "slug": "chorescore-v5",
+    "version": "0.5.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -15,29 +15,14 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "app.chorescore.v3"
+      "bundleIdentifier": "app.chorescore.v5"
     },
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#FFF5EB"
       },
-      "package": "app.chorescore.v3",
-      "intentFilters": [
-        {
-          "action": "VIEW",
-          "data": [
-            {
-              "scheme": "https",
-              "host": "chorescore.app",
-              "pathPrefix": "/join"
-            }
-          ],
-          "category": [
-            "BROWSABLE",
-            "DEFAULT"
-          ]
-        }
-      ]
+      "package": "app.chorescore.v5",
+      "intentFilters": []
     },
     "web": {
       "bundler": "metro"

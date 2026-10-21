@@ -33,6 +33,7 @@ export default function InviteScreen() {
   const router = useRouter();
   const { t, locale } = useI18n();
   const { currentHouseholdId, currentUser, repos, services } = useApp();
+  const collaborationAvailable = services.sync.isAvailable();
   const { memberId } = useLocalSearchParams<{ memberId?: string }>();
   const [existingInvitations, setExistingInvitations] = useState<Invitation[]>([]);
   const [targetMember, setTargetMember] = useState<Member | null>(null);
@@ -75,6 +76,10 @@ export default function InviteScreen() {
   }, [services, t]);
 
   const handleCreateAndShare = async () => {
+    if (!collaborationAvailable) {
+      Alert.alert(t('invite.unavailableTitle'), t('invite.unavailableBody'));
+      return;
+    }
     if (!currentHouseholdId || !currentUser) return;
     setIsSubmitting(true);
     try {
@@ -121,6 +126,12 @@ export default function InviteScreen() {
           <Text variant="screenTitle">{t('invite.title')}</Text>
         </View>
 
+        {!collaborationAvailable && (
+          <Card style={styles.card}>
+            <Text variant="sectionTitle">{t('invite.unavailableTitle')}</Text>
+            <Text variant="body">{t('invite.unavailableBody')}</Text>
+          </Card>
+        )}
         <Card style={styles.card}>
           <Text variant="body" style={styles.hint}>
             {targetMember
@@ -133,7 +144,7 @@ export default function InviteScreen() {
               : t('invite.createLink')}
             variant="primary"
             onPress={handleCreateAndShare}
-            disabled={!currentHouseholdId || isSubmitting}
+            disabled={!collaborationAvailable || !currentHouseholdId || isSubmitting}
             loading={isSubmitting}
             style={styles.shareButton}
           />

@@ -314,6 +314,8 @@ export const CATALOG: Record<SupportedLocale, LocaleCatalog> = {
 
     // ── Invitations ───────────────────────────────────────────
     'invite.title': 'Inviter',
+    'invite.unavailableTitle': 'Invitations pas encore disponibles',
+    'invite.unavailableBody': 'Les données sont actuellement enregistrées uniquement sur ce téléphone. Pour rejoindre un groupe depuis un autre appareil, une synchronisation sécurisée est nécessaire. Aucun faux lien ne sera envoyé.',
     'invite.linkLabel': 'Lien d’invitation',
     'invite.linkOnlyHint':
       'Toute personne disposant de ce lien peut rejoindre le groupe. Le lien est partagé via la feuille de partage native.',
@@ -706,6 +708,8 @@ export const CATALOG: Record<SupportedLocale, LocaleCatalog> = {
 
     // ── Invitations ───────────────────────────────────────────
     'invite.title': 'Invite',
+    'invite.unavailableTitle': 'Invitations not yet available',
+    'invite.unavailableBody': 'Data is currently stored only on this phone. Joining from another device requires secure synchronization. ChoreScore will not send a link that cannot work.',
     'invite.linkLabel': 'Invite link',
     'invite.linkOnlyHint':
       'Anyone with this link can join the group. The link is shared through the native share sheet.',
