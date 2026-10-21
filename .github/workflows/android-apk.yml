@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: chorescore-v5-apk
+  group: chorescore-v5-apk-${{ github.sha }}
   cancel-in-progress: true
 
 jobs:
