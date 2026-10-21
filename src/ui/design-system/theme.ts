@@ -1,150 +1,46 @@
 /**
- * ChoreScore V4 — Design System Theme
- *
- * Warm V2 palette restored, with a more mature and polished execution.
- * Reference palette is canonical: docs/V4_CONSTITUTION.md §1.
- *
- * - Terracotta / cream / sage warm palette
- * - Dense but breathable composition, controlled spaces
- * - Audited balance colors only (deep sage / deep brick)
- * - No gamification, no crypto/neobank flash, no gratuitous gradients
+ * ChoreScore V5 — first visual baseline, inspired by V1's clean teal,
+ * generous typography and clearer information hierarchy.
+ * Requires real screenshot review before final design acceptance.
  */
-
 export const colors = {
-  // Base palette — canonical V2 warm
-  background: '#FFF8F0',    // Warm cream
-  surface: '#FFFFFF',       // Clean white
-  surfaceAlt: '#FFF0E6',    // Soft warm surface
-  surfaceHighlight: '#FFE8D6', // Warm highlight
-
-  // Primary text hierarchy — all meet WCAG AA 4.5:1 on surfaces
-  text: '#3D405B',          // Deep ink
-  textSecondary: '#5A7260', // Sage gray-green
-  textMuted: '#606070',     // Muted slate
+  background: '#F7FBFC',
+  surface: '#FFFFFF',
+  surfaceAlt: '#F1FAEE',
+  surfaceHighlight: '#E6F4F6',
+  text: '#264653',
+  textSecondary: '#457B9D',
+  textMuted: '#576D79',
   textOnPrimary: '#FFFFFF',
-
-  // Primary action — warm terracotta
-  primary: '#C0512F',
-  primaryLight: '#F2CC8F',
-  primaryDark: '#9A3A1B',
-
-  // Semantic balance states — canonical and desaturated
-  balancePositive: '#5D8C6F',  // Deep sage
-  balanceNegative: '#9A3A1B',  // Deep brick
-
-  // Semantic aliases from the canonical V2 palette
-  success: '#5D8C6F',
-  error: '#C0512F',
-  warning: '#7A5614',
-  info: '#3D85C6',
-
-  // Borders and dividers — warm
-  border: '#E8E0D8',
-  divider: '#F0E8E0',
-
-  // Chart palette — warm but sober
-  chartColors: [
-    '#C0512F',
-    '#5A7260',
-    '#3D405B',
-    '#5D8C6F',
-    '#F2CC8F',
-    '#7A5614',
-  ],
+  primary: '#257989',
+  primaryLight: '#A8DADC',
+  primaryDark: '#1E606B',
+  balancePositive: '#197669',
+  balanceNegative: '#B2412E',
+  success: '#197669',
+  error: '#B2412E',
+  warning: '#925719',
+  info: '#306C92',
+  border: '#DCE7EA',
+  divider: '#E7EEF0',
+  chartColors: ['#257989', '#E9C46A', '#264653', '#2A9D8F', '#A8DADC', '#F4A261'],
 };
-
-export const spacing = {
-  xs: 4,
-  sm: 8,
-  md: 12,
-  lg: 16,
-  xl: 24,
-  xxl: 32,
-};
-
-export const borderRadius = {
-  sm: 6,
-  md: 10,
-  lg: 16,
-  xl: 24,
-};
-
+export const spacing = { xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32 };
+export const borderRadius = { sm: 10, md: 16, lg: 20, xl: 24 };
 export const typography = {
-  screenTitle: {
-    fontSize: 24,
-    fontWeight: '700' as const,
-    letterSpacing: -0.3,
-    color: colors.text,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600' as const,
-    letterSpacing: -0.2,
-    color: colors.text,
-  },
-  body: {
-    fontSize: 16,
-    fontWeight: '400' as const,
-    lineHeight: 22,
-    color: colors.text,
-  },
-  bodyBold: {
-    fontSize: 16,
-    fontWeight: '600' as const,
-    lineHeight: 22,
-    color: colors.text,
-  },
-  caption: {
-    fontSize: 13,
-    fontWeight: '400' as const,
-    lineHeight: 18,
-    color: colors.textSecondary,
-  },
-  metric: {
-    fontSize: 32,
-    fontWeight: '700' as const,
-    letterSpacing: -0.5,
-    color: colors.text,
-  },
-  metricUnit: {
-    fontSize: 16,
-    fontWeight: '400' as const,
-    color: colors.textSecondary,
-  },
-  balance: {
-    fontSize: 20,
-    fontWeight: '600' as const,
-  },
-  tabLabel: {
-    fontSize: 13,
-    fontWeight: '500' as const,
-    letterSpacing: 0.2,
-  },
+  screenTitle: { fontSize: 30, lineHeight: 36, fontWeight: '800' as const, letterSpacing: -0.5, color: colors.text },
+  sectionTitle: { fontSize: 19, fontWeight: '700' as const, letterSpacing: -0.2, color: colors.text },
+  body: { fontSize: 16, fontWeight: '400' as const, lineHeight: 23, color: colors.text },
+  bodyBold: { fontSize: 16, fontWeight: '700' as const, lineHeight: 23, color: colors.text },
+  caption: { fontSize: 13, fontWeight: '400' as const, lineHeight: 19, color: colors.textSecondary },
+  metric: { fontSize: 30, fontWeight: '800' as const, letterSpacing: -0.4, color: colors.text },
+  metricUnit: { fontSize: 16, fontWeight: '500' as const, color: colors.textSecondary },
+  balance: { fontSize: 21, fontWeight: '700' as const },
+  tabLabel: { fontSize: 13, fontWeight: '600' as const, letterSpacing: 0.15 },
 };
-
 export const shadows = {
-  small: {
-    shadowColor: colors.text,
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
-  },
-  medium: {
-    shadowColor: colors.text,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 5,
-    elevation: 2,
-  },
+  small: { shadowColor: colors.text, shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.055, shadowRadius: 3, elevation: 1 },
+  medium: { shadowColor: colors.text, shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.09, shadowRadius: 8, elevation: 2 },
 };
-
-export const theme = {
-  colors,
-  spacing,
-  borderRadius,
-  typography,
-  shadows,
-};
-
+export const theme = { colors, spacing, borderRadius, typography, shadows };
 export type Theme = typeof theme;

@@ -24,6 +24,7 @@ import {
   TextInput,
   TouchableOpacity,
   Alert,
+  Image,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { ScreenContainer } from '../../src/ui/components/ScreenContainer';
@@ -883,6 +884,9 @@ export default function AddScreen() {
       <Text variant="caption">{t('add.photoOptional')}</Text>
       {attachments.map((attachment) => (
         <View key={attachment.id} style={styles.shareRow}>
+          {attachment.ref.startsWith('file:') && (
+            <Image source={{ uri: attachment.ref }} style={styles.photoThumbnail} resizeMode="cover" />
+          )}
           <Text variant="body" style={styles.shareName}>
             {t('add.photoAttached')}
           </Text>
@@ -1810,6 +1814,12 @@ const styles = StyleSheet.create({
   },
   hint: {
     marginTop: spacing.xs,
+  },
+  photoThumbnail: {
+    width: 62,
+    height: 62,
+    borderRadius: borderRadius.sm,
+    backgroundColor: colors.surfaceAlt,
   },
   photoButton: {
     marginTop: spacing.sm,

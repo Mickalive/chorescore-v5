@@ -6,6 +6,7 @@
 import { Directory, File, Paths } from 'expo-file-system';
 import { AttachmentGateway, AttachmentHandle, AttachmentSource } from '../../application/ports';
 
+export const ATTACHMENTS_UNAVAILABLE = 'attachments-unavailable'; // compatibility with the isolated test adapter
 const MAX_PHOTO_BYTES = 20 * 1024 * 1024;
 const ROOT = 'chorescore-photos';
 

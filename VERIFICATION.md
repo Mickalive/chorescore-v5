@@ -10,7 +10,7 @@
 | Dépenses | Montant exact, devise et part custom | Balances avant/après relance | Non testé sur V5 |
 | Edition | Modification/suppression d'écriture | Balances cohérentes immédiatement et après relance | Non testé sur V5 |
 | À faire | Tâche et dépense, complétion unique | Double appui + relance, une écriture | Non testé sur V5 |
-| Photo | Choisir, enregistrer, rouvrir et afficher | Photo visible après relance | Non implémenté correctement |
+| Photo | Choisir, enregistrer, rouvrir et afficher | Photo visible après relance | Adaptateur local et aperçu ajoutés ; test Android requis |
 | Partage | Ouvrir feuille native avec texte/lien | Test Android physique | Non testé sur V5 |
 | Rappel | Notification reçue à l'heure demandée | Notification Android physique | Adaptateur no-op |
 | Invitation | Groupe partagé sans doublon | **Deux appareils**, deux comptes | Bloqué sans cloud |
