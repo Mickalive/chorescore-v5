@@ -180,6 +180,8 @@ export interface InvitationResult {
  * hides the action instead of faking a photo.
  */
 export interface AttachmentGateway {
+  /** Retry durable cleanup of unreferenced managed files, when supported. */
+  collectGarbage?(): Promise<void>;
   isAvailable(): boolean;
   /** User picked a photo, or cancelled / provider unavailable (null). */
   pickPhoto(): Promise<AttachmentSource | null>;

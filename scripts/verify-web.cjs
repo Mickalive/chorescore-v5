@@ -1,0 +1,114 @@
+/** Real browser + expo-sqlite WASM smoke test. Not an Android acceptance test. */
+const { chromium, expect } = require('@playwright/test');
+const { createServer } = require('node:http');
+const fs = require('node:fs');
+const path = require('node:path');
+const assert = require('node:assert/strict');
+const root = path.resolve(process.env.WEB_EXPORT_DIR || 'dist-web');
+const evidence = path.resolve(process.env.EVIDENCE_DIR || '/tmp/chorescore-web-evidence');
+fs.mkdirSync(evidence, { recursive: true });
+const mime = { '.js': 'text/javascript', '.html': 'text/html', '.wasm': 'application/wasm', '.ttf': 'font/ttf', '.png': 'image/png', '.json': 'application/json' };
+const server = createServer((req, res) => {
+  let target = path.resolve(root, '.' + decodeURIComponent(new URL(req.url, 'http://local').pathname));
+  if (!target.startsWith(root + path.sep) && target !== root) { res.writeHead(403); res.end(); return; }
+  if (!fs.existsSync(target) || fs.statSync(target).isDirectory()) {
+    // Expo Router SPA deep links must resolve to the exported shell on reload.
+    target = path.join(root, 'index.html');
+  }
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
+  res.setHeader('Content-Type', mime[path.extname(target)] || 'application/octet-stream');
+  fs.createReadStream(target).on('error', () => { res.statusCode = 500; res.end(); }).pipe(res);
+});
+(async () => {
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const browser = await chromium.launch({ executablePath: process.env.CHROME_BIN || '/usr/bin/chromium', headless: true, args: ['--no-sandbox'] });
+  const context = await browser.newContext({ viewport: { width: 412, height: 915 } });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  const field = name => page.locator(`[data-testid="${name}"]:visible`);
+  const button = name => page.getByRole('button', { name, exact: true });
+  const screenshot = async name => { await page.screenshot({ path: path.join(evidence, name + '.png') }); };
+  try {
+    await page.goto(`http://127.0.0.1:${server.address().port}`);
+    await button('Créer un groupe').waitFor();
+    await screenshot('groups-empty-web');
+    await button('Créer un groupe').click();
+    await field('groups.nameInput').fill('Notre maison');
+    await field('groups.unit.points').click();
+    // Commit a member whose name is still in the input (no separate Add tap).
+    await field('groups.memberInput').fill('Camille');
+    await button('Créer').click();
+    await button('Ouvrir le groupe Notre maison').waitFor();
+    await screenshot('groups-filled-web');
+    await page.reload();
+    await button('Ouvrir le groupe Notre maison').click();
+    await page.getByText('Valeur (pts)', { exact: true }).waitFor();
+    await field('add.taskLabel').fill('Cuisine');
+    await field('add.taskValue').fill('9');
+    await field('add.taskNote').fill('Note persistante');
+    await screenshot('add-task-web');
+    await button('Ajouter la tâche').click();
+    await expect(field('add.taskLabel')).toHaveValue('');
+    await page.getByText('Dépense', { exact: true }).click();
+    await field('add.expenseTitle').fill('Courses');
+    await field('add.expenseAmount').fill('1,01');
+    await field('add.expenseNote').fill('Ticket conservé');
+    await screenshot('add-expense-web');
+    await button('Ajouter la dépense').click();
+    await expect(field('add.expenseTitle')).toHaveValue('');
+    await page.getByRole('tab', { name: 'Balances', exact: true }).click();
+    await page.getByText(/^Cuisine\s/).first().waitFor();
+    await expect(page.getByText('+ 4.5 points', { exact: true })).toBeVisible();
+    await expect(page.getByText('+ CHF 0.50', { exact: true })).toBeVisible();
+    await screenshot('balances-web');
+    await page.getByText(/^Cuisine\s/).first().click();
+    await button('Modifier la tâche').click();
+    await expect(field('add.taskNote')).toHaveValue('Note persistante');
+    await field('add.taskValue').fill('20');
+    await button('Mettre à jour').click();
+    await page.getByText(/Cuisine.*20 pts/).first().waitFor();
+    await page.reload();
+    await page.getByText(/Cuisine.*20 pts/).first().waitFor();
+    await expect(page.getByText('+ 10 points', { exact: true })).toBeVisible();
+    await page.getByText(/^Courses\s/).first().waitFor();
+    await page.getByRole('tab', { name: 'À faire', exact: true }).click();
+    await button('Nouvel élément').click();
+    await field('todos.createTitle').fill('Lessive prévue');
+    await field('todos.createNotes').fill('Note prévue');
+    await button('Créer').click();
+    await page.getByText('Lessive prévue', { exact: true }).waitFor();
+    await screenshot('todos-web');
+    await button('Terminer').click();
+    await field('todos.completeValue').fill('6');
+    await expect(field('todos.completeNote')).toHaveValue('Note prévue');
+    await button('Confirmer').click();
+    await button('Nouvel élément').waitFor();
+    await page.getByRole('tab', { name: 'Balances', exact: true }).click();
+    await page.getByText(/Lessive prévue.*6 pts/).first().waitFor();
+    await expect(page.getByText('+ 13 points', { exact: true })).toBeVisible();
+    await page.goto(`http://127.0.0.1:${server.address().port}/`);
+    await button('Options générales').click();
+    await screenshot('settings-fr-web');
+    await button('English').click();
+    await page.getByRole('heading', { name: 'General options', exact: true }).waitFor();
+    await page.reload();
+    await page.getByRole('heading', { name: 'General options', exact: true }).waitFor();
+    await page.setViewportSize({ width: 360, height: 800 });
+    await screenshot('settings-en-small-web');
+    await page.goto(`http://127.0.0.1:${server.address().port}/`);
+    await button('Open group Notre maison').waitFor();
+    await screenshot('groups-en-small-web');
+    assert.deepEqual(errors, []);
+    console.log('PASS: points group + pending named member; exact-cent expense; task and notes; Balances edit; reload persistence; todo completion; zero-sum balances; FR/EN preference persistence and small-screen layout.');
+    console.log('Screenshots:', evidence, '(web only; not Android evidence)');
+  } catch (error) {
+    await screenshot('failure-web').catch(() => {});
+    console.error(error.message);
+    console.error((await page.locator('body').innerText().catch(() => '')).slice(-5000));
+    process.exitCode = 1;
+  } finally {
+    await browser.close(); await new Promise(resolve => server.close(resolve));
+  }
+})().catch(error => { console.error(error.message); server.close(); process.exitCode = 1; });

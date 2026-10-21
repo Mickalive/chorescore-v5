@@ -1,3 +1,6 @@
+import { CategoryPicker } from '../../src/features/entries/CategoryPicker';
+import { PhotoField } from '../../src/features/entries/PhotoField';
+import { todoNotificationId } from '../../src/infrastructure/local/LocalNotificationAdapter';
 /**
  * ChoreScore V4 — À faire Tab
  *
@@ -37,6 +40,7 @@ import { useApp } from '../../src/features/app/AppContext';
 import { useI18n } from '../../src/i18n';
 import {
   Attachment,
+  Category,
   ExpenseSplitMode,
   Household,
   Member,
@@ -55,7 +59,7 @@ import {
 // ── Types ──────────────────────────────────────────────────────
 
 type TodoView = 'list' | 'create' | 'complete';
-type TodoTaskSplit = 'equal' | 'custom';
+type TodoTaskSplit = 'equal' | 'category' | 'custom';
 
 interface CreateFormData {
   kind: TodoKind;
@@ -66,6 +70,7 @@ interface CreateFormData {
   reminderAt: Date | null;
   notes: string;
   persistentTaskId: string | null;
+  categoryId: string | null;
   expenseAmountRaw: string;
   expenseCurrency: string;
 }
@@ -128,6 +133,7 @@ export default function TodosScreen() {
   const { t } = useI18n();
   const { currentHouseholdId, repos, currentUser, emitDataChange, services } = useApp();
 
+  const [categories, setCategories] = useState<Category[]>([]);
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [household, setHousehold] = useState<Household | null>(null);
@@ -145,6 +151,7 @@ export default function TodosScreen() {
     reminderAt: null,
     notes: '',
     persistentTaskId: null,
+    categoryId: null,
     expenseAmountRaw: '',
     expenseCurrency: DEFAULT_CURRENCY,
   });
@@ -175,16 +182,18 @@ export default function TodosScreen() {
 
   const loadData = useCallback(async () => {
     if (!currentHouseholdId) return;
-    const [householdMembers, householdTodos, householdData, tasks] = await Promise.all([
+    const [householdMembers, householdTodos, householdData, tasks, groupCategories] = await Promise.all([
       repos.members.getByHousehold(currentHouseholdId),
       repos.todos.getByHousehold(currentHouseholdId),
       repos.households.getById(currentHouseholdId),
       repos.tasks.getByHousehold(currentHouseholdId),
+      repos.categories.getByHousehold(currentHouseholdId),
     ]);
     setMembers(householdMembers);
     setTodos(householdTodos.filter((todo) => todo.status !== 'completed'));
     setHousehold(householdData);
     setPersistentTasks(tasks);
+    setCategories(groupCategories);
 
     // Set default members for create form
     if (householdMembers.length > 0) {
@@ -234,7 +243,7 @@ export default function TodosScreen() {
         persistentTaskId: kind === 'task' ? createForm.persistentTaskId : null,
         status: 'todo',
         kind,
-        categoryId: null,
+        categoryId: createForm.categoryId,
         ...(kind === 'expense'
           ? {
               expenseAmountMinor,
@@ -243,14 +252,19 @@ export default function TodosScreen() {
           : {}),
       });
 
-      // Schedule reminder if set and notification port is available
-      if (createForm.reminderAt && services.notifications.isAvailable()) {
-        await services.notifications.scheduleNotification({
-          title: t('todos.reminderNotificationTitle', { title: createForm.title.trim() }),
-          body: createForm.notes.trim() || t('todos.reminderNotificationBody'),
-          scheduledAt: createForm.reminderAt.toISOString(),
-          data: { todoId: created.id },
-        });
+      // A denied/failed reminder must not leave an unseen todo behind on retry.
+      if (createForm.reminderAt) {
+        try {
+          await services.notifications.scheduleNotification({
+            title: t('todos.reminderNotificationTitle', { title: createForm.title.trim() }),
+            body: createForm.notes.trim() || t('todos.reminderNotificationBody'),
+            scheduledAt: createForm.reminderAt.toISOString(),
+            data: { todoId: created.id },
+          });
+        } catch (error) {
+          await repos.todos.delete(created.id);
+          throw error;
+        }
       }
 
       // Create calendar event if due date is set and calendar port is available
@@ -289,7 +303,8 @@ export default function TodosScreen() {
       reminderAt: null,
       notes: '',
       persistentTaskId: null,
-      expenseAmountRaw: '',
+      categoryId: null,
+    expenseAmountRaw: '',
       expenseCurrency: DEFAULT_CURRENCY,
     });
   };
@@ -313,11 +328,11 @@ export default function TodosScreen() {
           : '',
       currency: todo.expenseCurrency || DEFAULT_CURRENCY,
       beneficiaryMemberIds,
-      taskSplitChoice: 'equal',
+      taskSplitChoice: categories.find(c => c.id === todo.categoryId)?.defaultTaskRatio ? 'category' : 'equal',
       taskWeightsRaw: {},
       expenseSplitMode: 'equal',
       customShares: {},
-      note: '',
+      note: todo.notes,
       attachments: [],
     });
     setView('complete');
@@ -397,12 +412,14 @@ export default function TodosScreen() {
           participantMemberIds: completeForm.beneficiaryMemberIds,
           completedByUserId: currentUser.userId,
           categoryId: selectedTodo.categoryId ?? null,
+          categoryLabelSnapshot: categories.find(c => c.id === selectedTodo.categoryId)?.name,
           customShares:
             completeForm.expenseSplitMode === 'custom' ? completeExpenseShares ?? undefined : undefined,
           note: completeForm.note,
           attachments: completeForm.attachments,
         });
 
+        await services.notifications.cancelNotification(todoNotificationId(selectedTodo.id)).catch(() => undefined);
         emitDataChange('expense', currentHouseholdId!);
         emitDataChange('todo', currentHouseholdId!);
         setSelectedTodo(null);
@@ -439,12 +456,15 @@ export default function TodosScreen() {
         beneficiaryMemberIds: completeForm.beneficiaryMemberIds,
         completedByUserId: currentUser.userId,
         categoryId: selectedTodo.categoryId ?? null,
+        categoryLabelSnapshot: categories.find(c => c.id === selectedTodo.categoryId)?.name,
+        category: completeForm.taskSplitChoice === 'category' ? categories.find(c => c.id === selectedTodo.categoryId) : null,
         overrideSplitWeights:
           completeForm.taskSplitChoice === 'custom' ? customTaskWeights : null,
         note: completeForm.note,
         attachments: completeForm.attachments,
       });
 
+      await services.notifications.cancelNotification(todoNotificationId(selectedTodo.id)).catch(() => undefined);
       emitDataChange('contribution', currentHouseholdId!);
       emitDataChange('todo', currentHouseholdId!);
       setSelectedTodo(null);
@@ -469,6 +489,7 @@ export default function TodosScreen() {
         onPress: async () => {
           try {
             await repos.todos.delete(todo.id);
+            await services.notifications.cancelNotification(todoNotificationId(todo.id));
             setTodos((prev) => prev.filter((item) => item.id !== todo.id));
             emitDataChange('todo', currentHouseholdId!);
           } catch {
@@ -735,6 +756,9 @@ export default function TodosScreen() {
                   </View>
                 </View>
               )}
+
+              <CategoryPicker categories={categories} selectedId={createForm.categoryId}
+                onSelect={categoryId => setCreateForm(p => ({ ...p, categoryId }))} />
 
               {/* Assignee / Payer */}
               <View style={styles.inputGroup}>
@@ -1099,6 +1123,9 @@ export default function TodosScreen() {
                 </View>
               </View>
 
+              {completeKind === 'task' && categories.find(c => c.id === selectedTodo?.categoryId)?.defaultTaskRatio &&
+                <Button title={t('add.splitCategory')} variant={completeForm.taskSplitChoice === 'category' ? 'primary' : 'secondary'}
+                  onPress={() => setCompleteForm(p => ({ ...p, taskSplitChoice: 'category' }))} />}
               {/* Split: equal or custom */}
               <View style={styles.inputGroup}>
                 <Text variant="caption">{t('add.split')}</Text>
@@ -1242,35 +1269,8 @@ export default function TodosScreen() {
                 />
               </View>
 
-              {/* Photo */}
-              <View style={styles.inputGroup}>
-                <Text variant="caption">{t('add.photoOptional')}</Text>
-                {completeForm.attachments.map((attachment) => (
-                  <View key={attachment.id} style={styles.shareRow}>
-                    <Text variant="body" style={styles.shareName}>
-                      {t('add.photoAttached')}
-                    </Text>
-                    <TouchableOpacity onPress={() => removePhoto(attachment.id)}>
-                      <Text variant="caption" color={colors.balanceNegative}>
-                        {t('add.photoRemove')}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                ))}
-                {attachmentsAvailable ? (
-                  <Button
-                    title={t('add.photoAdd')}
-                    variant="secondary"
-                    size="small"
-                    onPress={addPhoto}
-                    style={styles.photoButton}
-                  />
-                ) : (
-                  <Text variant="caption" color={colors.textMuted} style={styles.hint}>
-                    {t('add.photoUnavailable')}
-                  </Text>
-                )}
-              </View>
+              <PhotoField attachments={completeForm.attachments} available={attachmentsAvailable}
+                onAdd={addPhoto} onRemove={removePhoto} testID="todos.completePhoto" />
 
               <Button
                 title={t('action.confirm')}

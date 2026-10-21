@@ -1,3 +1,6 @@
+import { taskUpdatePayload, expenseUpdatePayload } from '../../src/features/entries/editPayload';
+import { PhotoField } from '../../src/features/entries/PhotoField';
+import { LoadingState, ErrorState } from '../../src/ui/components/States';
 /**
  * ChoreScore V4 — Add Tab
  *
@@ -24,7 +27,6 @@ import {
   TextInput,
   TouchableOpacity,
   Alert,
-  Image,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { ScreenContainer } from '../../src/ui/components/ScreenContainer';
@@ -37,9 +39,7 @@ import { useI18n } from '../../src/i18n';
 import {
   Attachment,
   Category,
-  ContributionEntry,
   ContributionUnit,
-  ExpenseEntry,
   ExpenseSplitMode,
   Member,
   PersistentTask,
@@ -134,60 +134,6 @@ function amountMinorToRaw(amountMinor: number): string {
   return `${whole}.${cents.toString().padStart(2, '0')}`;
 }
 
-/**
- * Build the update payload for an edited task.
- *
- * The explicit `undefined` entries are deliberate: the repository merges the
- * partial over the existing row, and SQLite writes `NULL` for undefined, so an
- * edit can genuinely *remove* a note, a photo, a category or a custom split.
- * Spreading the draft alone would keep stale values when a field is omitted.
- */
-function taskUpdatePayload(
-  draft: Omit<ContributionEntry, 'id'>,
-  modifiedBy: string,
-): Partial<ContributionEntry> {
-  return {
-    label: draft.label,
-    performedByMemberId: draft.performedByMemberId,
-    beneficiaryMemberIds: draft.beneficiaryMemberIds,
-    value: draft.value,
-    unit: draft.unit,
-    persistentTaskId: draft.persistentTaskId,
-    occurredAt: draft.occurredAt,
-    categoryId: draft.categoryId,
-    categoryLabelSnapshot: draft.categoryLabelSnapshot,
-    note: draft.note,
-    attachments: draft.attachments,
-    splitMode: draft.splitMode,
-    splitWeights: draft.splitWeights,
-    splitSource: draft.splitSource,
-    modifiedBy,
-  };
-}
-
-/** Same "edit can clear a field" contract as {@link taskUpdatePayload}. */
-function expenseUpdatePayload(
-  draft: Omit<ExpenseEntry, 'id'>,
-  modifiedBy: string,
-): Partial<ExpenseEntry> {
-  return {
-    title: draft.title,
-    amountMinor: draft.amountMinor,
-    currency: draft.currency,
-    paidByMemberId: draft.paidByMemberId,
-    participantMemberIds: draft.participantMemberIds,
-    splitMode: draft.splitMode,
-    customShares: draft.customShares,
-    category: draft.category,
-    categoryId: draft.categoryId,
-    categoryLabelSnapshot: draft.categoryLabelSnapshot,
-    note: draft.note,
-    attachments: draft.attachments,
-    occurredAt: draft.occurredAt,
-    modifiedBy,
-  };
-}
-
 interface CategoryOption {
   id: string | null;
   name: string;
@@ -212,6 +158,8 @@ export default function AddScreen() {
   const [mode, setMode] = useState<EntryMode>('task');
   const [members, setMembers] = useState<Member[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [loadedGroupId, setLoadedGroupId] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState(false);
   const [householdUnit, setHouseholdUnit] = useState<ContributionUnit>('minutes');
   const [persistentTasks, setPersistentTasks] = useState<PersistentTask[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -282,14 +230,15 @@ export default function AddScreen() {
 
   const loadHousehold = useCallback(async () => {
     if (!currentHouseholdId) return;
-    const householdMembers = await repos.members.getByHousehold(currentHouseholdId);
+    const [householdMembers, household, tasks, groupCategories] = await Promise.all([
+      repos.members.getByHousehold(currentHouseholdId), repos.households.getById(currentHouseholdId),
+      repos.tasks.getByHousehold(currentHouseholdId), repos.categories.getByHousehold(currentHouseholdId),
+    ]);
+    if (!household) throw new Error('Group is unavailable');
     setMembers(householdMembers);
-
-    const household = await repos.households.getById(currentHouseholdId);
-    if (household) setHouseholdUnit(household.contributionUnit);
-
-    setPersistentTasks(await repos.tasks.getByHousehold(currentHouseholdId));
-    await loadCategories();
+    setHouseholdUnit(household.contributionUnit);
+    setPersistentTasks(tasks);
+    setCategories(groupCategories);
 
     if (householdMembers.length > 0) {
       setTaskForm((prev) => ({
@@ -314,9 +263,7 @@ export default function AddScreen() {
   useEffect(() => {
     if (initialLoadDoneRef.current) return;
     initialLoadDoneRef.current = true;
-    loadHousehold().catch(() => {
-      // Keep the form usable; a later focus/retry can reload.
-    });
+    loadHousehold().then(() => setLoadedGroupId(currentHouseholdId)).catch(() => setLoadError(true));
   }, [loadHousehold]);
 
   // ── Pre-fill the form when editing an existing entry ───────
@@ -876,51 +823,10 @@ export default function AddScreen() {
   );
 
   const renderPhotoField = (
-    attachments: Attachment[],
-    onChange: (next: Attachment[]) => void,
-    addButtonTestID: string,
-  ) => (
-    <View style={styles.inputGroup}>
-      <Text variant="caption">{t('add.photoOptional')}</Text>
-      {attachments.map((attachment) => (
-        <View key={attachment.id} style={styles.shareRow}>
-          {attachment.ref.startsWith('file:') && (
-            <Image source={{ uri: attachment.ref }} style={styles.photoThumbnail} resizeMode="cover" />
-          )}
-          <Text variant="body" style={styles.shareName}>
-            {t('add.photoAttached')}
-          </Text>
-          <TouchableOpacity
-            onPress={() => onChange(removePhoto(attachments, attachment.id))}
-            style={styles.actionButton}
-          >
-            <Text variant="caption" color={colors.balanceNegative}>
-              {t('add.photoRemove')}
-            </Text>
-          </TouchableOpacity>
-        </View>
-      ))}
-      {attachments.length > 0 && !attachmentsAvailable ? (
-        <Text variant="caption" color={colors.textMuted} style={styles.hint}>
-          {t('add.photoMissing')}
-        </Text>
-      ) : null}
-      {attachmentsAvailable ? (
-        <Button
-          testID={addButtonTestID}
-          title={t('add.photoAdd')}
-          variant="secondary"
-          size="small"
-          onPress={() => addPhoto((attachment) => onChange([...attachments, attachment]))}
-          style={styles.photoButton}
-        />
-      ) : (
-        <Text variant="caption" color={colors.textMuted} style={styles.hint}>
-          {t('add.photoUnavailable')}
-        </Text>
-      )}
-    </View>
-  );
+    attachments: Attachment[], onChange: (next: Attachment[]) => void, addButtonTestID: string,
+  ) => <PhotoField attachments={attachments} available={attachmentsAvailable} testID={addButtonTestID}
+    onAdd={() => addPhoto(photo => onChange([...attachments, photo]))}
+    onRemove={id => onChange(removePhoto(attachments, id))} />;
 
   const renderCategoryManager = () => (
     <View style={styles.managerSection}>
@@ -1080,6 +986,15 @@ export default function AddScreen() {
 
   // ── Render ─────────────────────────────────────────────────
 
+  if (loadedGroupId !== currentHouseholdId) {
+    return <ScreenContainer>{loadError
+      ? <ErrorState title={t('state.error')} message={t('state.genericError')}
+          retryLabel={t('action.retry')} onRetry={() => {
+            setLoadError(false);
+            loadHousehold().then(() => setLoadedGroupId(currentHouseholdId)).catch(() => setLoadError(true));
+          }} />
+      : <LoadingState message={t('state.loading')} />}</ScreenContainer>;
+  }
   return (
     <ScreenContainer>
       <View style={styles.header}>

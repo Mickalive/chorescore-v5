@@ -175,6 +175,8 @@ export interface InvitationRepository extends SeedableRepository<Invitation> {
 // ── V3-06: Sync State Repository ───────────────────────────────
 
 export interface SyncStateRepository {
+  /** Reserve a monotonically increasing, persisted local outbox sequence. */
+  nextLocalRevision(householdId: string, collection: SyncCollection): Promise<number>;
   getCursor(householdId: string, collection: SyncCollection): Promise<SyncCursor | null>;
   setCursor(cursor: SyncCursor): Promise<void>;
   /**

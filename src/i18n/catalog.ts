@@ -63,6 +63,9 @@ export const CATALOG: Record<SupportedLocale, LocaleCatalog> = {
 
     // ── Groups root ───────────────────────────────────────────
     'groups.title': 'Groupes',
+    'groups.subtitle': 'Un quotidien plus simple, ensemble.',
+    'groups.summaryGroups': 'Groupes',
+    'groups.summaryMembers': 'Membres',
     'groups.emptyTitle': 'Aucun groupe',
     'groups.emptyBody':
       'Créez un groupe pour commencer à partager dépenses et tâches.',
@@ -155,6 +158,7 @@ export const CATALOG: Record<SupportedLocale, LocaleCatalog> = {
 
     // ── Add: note + photo (optional) ──────────────────────────
     'add.photoOptional': 'Photo (optionnel)',
+    'photo.openPreview': 'Ouvrir la photo',
     'add.photoAdd': 'Ajouter une photo',
     'add.photoAttached': 'Photo jointe',
     'add.photoMissing': 'Photo jointe, indisponible sur cet appareil.',
@@ -463,6 +467,9 @@ export const CATALOG: Record<SupportedLocale, LocaleCatalog> = {
 
     // ── Groups root ───────────────────────────────────────────
     'groups.title': 'Groups',
+    'groups.subtitle': 'An easier everyday life, together.',
+    'groups.summaryGroups': 'Groups',
+    'groups.summaryMembers': 'Members',
     'groups.emptyTitle': 'No group yet',
     'groups.emptyBody': 'Create a group to start sharing expenses and tasks.',
     'groups.create': 'Create a group',
@@ -550,6 +557,7 @@ export const CATALOG: Record<SupportedLocale, LocaleCatalog> = {
 
     // ── Add: note + photo (optional) ──────────────────────────
     'add.photoOptional': 'Photo (optional)',
+    'photo.openPreview': 'Open photo',
     'add.photoAdd': 'Add a photo',
     'add.photoAttached': 'Photo attached',
     'add.photoMissing': 'Photo attached, unavailable on this device.',

@@ -1554,6 +1554,20 @@ function invitationFromRow(row: InvitationRow): Invitation {
 // ── V3-06: SQLite Sync State Repository ────────────────────────
 
 export class SqliteSyncStateRepository implements SyncStateRepository {
+  async nextLocalRevision(householdId: string, collection: SyncCollection): Promise<number> {
+    const db = await getDatabase();
+    const row = await db.getFirstAsync<{ revision: number }>(`
+      INSERT INTO sync_sequences(householdId, collection, revision)
+      VALUES (?, ?, MAX(
+        COALESCE((SELECT MAX(revision) FROM sync_records WHERE householdId = ? AND collection = ?), 0),
+        COALESCE((SELECT lastRevision FROM sync_cursors WHERE householdId = ? AND collection = ?), 0)
+      ) + 1)
+      ON CONFLICT(householdId, collection) DO UPDATE SET revision = sync_sequences.revision + 1
+      RETURNING revision`, [householdId, collection, householdId, collection, householdId, collection]);
+    if (!row) throw new Error('Could not reserve local sync sequence');
+    return row.revision;
+  }
+
   async getCursor(householdId: string, collection: SyncCollection): Promise<SyncCursor | null> {
     const db = await getDatabase();
     const row = await db.getFirstAsync<SyncCursorRow>(

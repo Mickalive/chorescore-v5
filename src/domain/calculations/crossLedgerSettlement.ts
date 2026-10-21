@@ -22,7 +22,7 @@ import {
 
 function validateRate(rate: ContributionMoneyRate): void {
   requireFinitePositive(rate.contributionValue, 'Rate contributionValue');
-  if (!Number.isInteger(rate.moneyAmountMinor) || rate.moneyAmountMinor <= 0) {
+  if (!Number.isSafeInteger(rate.moneyAmountMinor) || rate.moneyAmountMinor <= 0) {
     throw new Error('Rate moneyAmountMinor must be a positive integer');
   }
   normalizeCurrency(rate.currency);

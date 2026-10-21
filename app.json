@@ -22,7 +22,10 @@
         "backgroundColor": "#FFF5EB"
       },
       "package": "app.chorescore.v5",
-      "intentFilters": []
+      "intentFilters": [],
+      "permissions": [
+        "android.permission.SCHEDULE_EXACT_ALARM"
+      ]
     },
     "web": {
       "bundler": "metro"
@@ -31,7 +34,8 @@
       "expo-router",
       "expo-font",
       "expo-sharing",
-      "expo-sqlite"
+      "expo-sqlite",
+      "expo-notifications"
     ],
     "experiments": {
       "typedRoutes": true

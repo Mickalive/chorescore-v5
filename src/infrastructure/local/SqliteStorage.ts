@@ -8,17 +8,30 @@
 
 import * as SQLite from 'expo-sqlite';
 
-let db: SQLite.SQLiteDatabase | null = null;
+let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
-export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
-  if (db) return db;
-  db = await SQLite.openDatabaseAsync('chorescore.db');
-  await initializeSchema(db);
-  await applyV4ColumnMigrations(db);
-  return db;
+export function getDatabase(): Promise<SQLite.SQLiteDatabase> {
+  if (!databasePromise) {
+    databasePromise = (async () => {
+      const database = await SQLite.openDatabaseAsync('chorescore.db');
+      try {
+        await initializeSchema(database);
+        await applyV4ColumnMigrations(database);
+        await initializeAttachmentLinks(database);
+        return database;
+      } catch (error) {
+        await database.closeAsync();
+        throw error;
+      }
+    })().catch((error) => {
+      databasePromise = null;
+      throw error;
+    });
+  }
+  return databasePromise;
 }
 
-async function initializeSchema(database: SQLite.SQLiteDatabase): Promise<void> {
+export async function initializeSchema(database: SQLite.SQLiteDatabase): Promise<void> {
   await database.execAsync(`
     PRAGMA journal_mode = WAL;
     PRAGMA foreign_keys = ON;
@@ -159,6 +172,22 @@ async function initializeSchema(database: SQLite.SQLiteDatabase): Promise<void> 
       createdBy TEXT NOT NULL
     );
 
+    -- File lifecycle is independent from ledger history. Links are changed by
+    -- SQL triggers in the SAME transaction as the entry; failed edits cannot
+    -- enqueue deletion of a still-referenced private photo.
+    CREATE TABLE IF NOT EXISTS attachment_files (
+      ref TEXT PRIMARY KEY,
+      createdAt INTEGER NOT NULL,
+      committed INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS attachment_links (
+      ref TEXT NOT NULL,
+      entryId TEXT NOT NULL,
+      collection TEXT NOT NULL,
+      PRIMARY KEY (ref, entryId, collection)
+    );
+    CREATE INDEX IF NOT EXISTS idx_attachment_links_entry ON attachment_links(collection, entryId);
+
     -- Indexes for fast local queries
     CREATE INDEX IF NOT EXISTS idx_memberships_user ON memberships(userId);
     CREATE INDEX IF NOT EXISTS idx_memberships_household ON memberships(householdId);
@@ -191,6 +220,13 @@ async function initializeSchema(database: SQLite.SQLiteDatabase): Promise<void> 
     CREATE INDEX IF NOT EXISTS idx_invitations_household ON invitations(householdId);
     CREATE INDEX IF NOT EXISTS idx_invitations_link_token ON invitations(linkToken);
     CREATE INDEX IF NOT EXISTS idx_invitations_email ON invitations(invitedEmail, status);
+
+    CREATE TABLE IF NOT EXISTS sync_sequences (
+      householdId TEXT NOT NULL,
+      collection TEXT NOT NULL,
+      revision INTEGER NOT NULL,
+      PRIMARY KEY (householdId, collection)
+    );
 
     -- V3-06: Sync cursors
     CREATE TABLE IF NOT EXISTS sync_cursors (
@@ -292,6 +328,51 @@ export async function applyV4ColumnMigrations(
     }
   }
   return added;
+}
+
+/** Additive file-reference migration; never changes an entry's content. */
+export async function initializeAttachmentLinks(database: SQLite.SQLiteDatabase): Promise<void> {
+  for (const table of ['contribution_entries', 'expense_entries']) {
+    await database.execAsync(`
+      CREATE TRIGGER IF NOT EXISTS ${table}_photos_insert AFTER INSERT ON ${table} BEGIN
+        INSERT OR IGNORE INTO attachment_files(ref, createdAt, committed)
+          SELECT json_extract(value, '$.ref'), 0, 1 FROM json_each(COALESCE(NEW.attachmentsJson, '[]'));
+        INSERT OR IGNORE INTO attachment_links(ref, entryId, collection)
+          SELECT json_extract(value, '$.ref'), NEW.id, '${table}' FROM json_each(COALESCE(NEW.attachmentsJson, '[]'));
+        UPDATE attachment_files SET committed = 1 WHERE ref IN
+          (SELECT ref FROM attachment_links WHERE entryId = NEW.id AND collection = '${table}');
+      END;
+      CREATE TRIGGER IF NOT EXISTS ${table}_photos_update AFTER UPDATE OF attachmentsJson ON ${table} BEGIN
+        DELETE FROM attachment_links WHERE entryId = OLD.id AND collection = '${table}';
+        INSERT OR IGNORE INTO attachment_files(ref, createdAt, committed)
+          SELECT json_extract(value, '$.ref'), 0, 1 FROM json_each(COALESCE(NEW.attachmentsJson, '[]'));
+        INSERT OR IGNORE INTO attachment_links(ref, entryId, collection)
+          SELECT json_extract(value, '$.ref'), NEW.id, '${table}' FROM json_each(COALESCE(NEW.attachmentsJson, '[]'));
+        UPDATE attachment_files SET committed = 1 WHERE ref IN
+          (SELECT ref FROM attachment_links WHERE entryId = NEW.id AND collection = '${table}');
+      END;
+      CREATE TRIGGER IF NOT EXISTS ${table}_photos_delete AFTER DELETE ON ${table} BEGIN
+        DELETE FROM attachment_links WHERE entryId = OLD.id AND collection = '${table}';
+      END;
+    `);
+  }
+  // Backfill only once; scanning old ledgers is a migration, never a render or
+  // normal startup cost. Include both collections in the same transaction.
+  await database.execAsync('CREATE TABLE IF NOT EXISTS local_migrations (name TEXT PRIMARY KEY)');
+  const migrated = await database.getFirstAsync('SELECT name FROM local_migrations WHERE name = ?', ['attachment-links-v1']);
+  if (!migrated) {
+    await database.withTransactionAsync(async () => {
+      for (const table of ['contribution_entries', 'expense_entries']) {
+        await database.execAsync(`
+          INSERT OR IGNORE INTO attachment_files(ref, createdAt, committed)
+            SELECT json_extract(j.value, '$.ref'), 0, 1 FROM ${table} e, json_each(COALESCE(e.attachmentsJson, '[]')) j;
+          INSERT OR IGNORE INTO attachment_links(ref, entryId, collection)
+            SELECT json_extract(j.value, '$.ref'), e.id, '${table}' FROM ${table} e, json_each(COALESCE(e.attachmentsJson, '[]')) j;
+        `);
+      }
+      await database.runAsync('INSERT INTO local_migrations(name) VALUES (?)', ['attachment-links-v1']);
+    });
+  }
 }
 
 /**

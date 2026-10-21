@@ -1,3 +1,4 @@
+import { FirebaseAuthAdapter, firebaseAuthConfig } from '../../infrastructure/cloud/FirebaseAuthAdapter';
 /**
  * ChoreScore V3 — App Context
  *
@@ -33,7 +34,7 @@ import {
 } from '../../infrastructure/repositories/RepositoryFactory';
 import { createScopedRepositories } from '../../infrastructure/repositories/ScopedRepositoryFacade';
 import { AuthUser, AttachmentGateway, SystemShareGateway, SyncGateway } from '../../application/ports';
-import { Household, Member } from '../../domain/entities';
+import { ContributionUnit, Household, Member } from '../../domain/entities';
 import {
   addGroupMember,
   createGroupWithMembers,
@@ -68,7 +69,7 @@ interface AppState {
   households: Household[];
   currentHouseholdId: string | null;
   setCurrentHouseholdId: (id: string | null) => void;
-  createHousehold: (name: string, memberNames?: string[]) => Promise<Household>;
+  createHousehold: (name: string, memberNames?: string[], contributionUnit?: ContributionUnit) => Promise<Household>;
   loadHouseholds: (userId?: string) => Promise<void>;
 
   // Members
@@ -115,6 +116,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [households, setHouseholds] = useState<Household[]>([]);
   const [currentHouseholdId, setCurrentHouseholdId] = useState<string | null>(null);
   const [reposReady, setReposReady] = useState(false);
+  const [authRestored, setAuthRestored] = useState(false);
 
   // Start with a real (in-memory) repository set so screens always receive a
   // working provider; it is replaced by the SQLite-backed set once ready.
@@ -153,7 +155,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [ensureReposReady]);
 
   const servicesRef = useRef({
-    auth: new LocalAuthAdapter({ secureStorage: new LocalSecureStorageAdapter() }),
+    auth: firebaseAuthConfig() && !isE2EAuthEnabled()
+      ? new FirebaseAuthAdapter(firebaseAuthConfig()!, new LocalSecureStorageAdapter())
+      : new LocalAuthAdapter({ secureStorage: new LocalSecureStorageAdapter() }),
     // V4-09: the normal build uses the real native share sheet. The explicit,
     // secretless E2E build gets a deterministic adapter so the share journey
     // can be driven without a SystemUI sheet the harness cannot dismiss.
@@ -167,9 +171,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // until a real photo provider is configured; the UI then hides the photo
     // action instead of faking a pick. The explicit, secretless E2E build gets
     // a deterministic offline source so the real photo journey can be driven.
-    attachments: isE2EAuthEnabled()
+    attachments: (isE2EAuthEnabled()
       ? new E2EAttachmentAdapter(true)
-      : new LocalAttachmentAdapter(),
+      : new LocalAttachmentAdapter()) as AttachmentGateway,
   });
 
   // ── Data-change signal (pub/sub) ──────────────────────────────
@@ -179,6 +183,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const dataChangeListenersRef = useRef<Set<DataChangeCallback>>(new Set());
 
   const emitDataChange = useCallback((type: DataChangeType, householdId: string) => {
+    // Cleanup uses indexed reference metadata; failures retain a durable queue.
+    void ensureReposReady().then(() => rawReposRef.current.withTransaction(async () => {
+      await servicesRef.current.attachments.collectGarbage?.();
+    })).catch(() => undefined);
     for (const listener of dataChangeListenersRef.current) {
       try { listener(type, householdId); } catch { /* swallow */ }
     }
@@ -191,6 +199,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // Auth state listener
   useEffect(() => {
+    servicesRef.current.notifications.initialize();
+    void ensureReposReady().then(() => rawReposRef.current.withTransaction(async () => {
+      await servicesRef.current.attachments.collectGarbage?.();
+    })).catch(() => undefined);
     const unsubscribe = servicesRef.current.auth.onAuthStateChanged((user) => {
       setCurrentUser(user);
     });
@@ -201,10 +213,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // repositories are initialized, so an early sign-in can never race the
   // local store (reposReady is consumed here and by signIn/loadHouseholds).
   useEffect(() => {
-    if (reposReady) {
+    if (reposReady && authRestored) {
       setIsLoading(false);
     }
-  }, [reposReady]);
+  }, [reposReady, authRestored]);
 
   const loadHouseholds = useCallback(async (userId?: string) => {
     // Gate on repository readiness so the local store is always available.
@@ -246,12 +258,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     (async () => {
       await ensureReposReady();
       const token = await servicesRef.current.auth.restoreSession().catch(() => null);
-      if (cancelled || !token) return;
+      if (cancelled) return;
+      if (!token) { setAuthRestored(true); return; }
       const user = servicesRef.current.auth.getCurrentUser();
       if (user) {
         await applySignedInUserRef.current(user);
       }
+      if (!cancelled) setAuthRestored(true);
     })().catch(() => {
+      if (!cancelled) setAuthRestored(true);
       // A failed restore must never block the app: the sign-in screen remains.
     });
     return () => { cancelled = true; };
@@ -291,13 +306,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setCurrentHouseholdId(null);
   }, []);
 
-  const createHousehold = useCallback(async (name: string, memberNames: string[] = []) => {
+  const createHousehold = useCallback(async (name: string, memberNames: string[] = [], contributionUnit: ContributionUnit = 'minutes') => {
     if (!currentUser) throw new Error('Not authenticated');
     await ensureReposReady();
     const result = await createGroupWithMembers(reposRef.current, {
       name,
       owner: { userId: currentUser.userId, displayName: currentUser.displayName || 'Membre' },
       memberNames,
+      contributionUnit,
     });
     emitDataChange('household', result.household.id);
     emitDataChange('member', result.household.id);

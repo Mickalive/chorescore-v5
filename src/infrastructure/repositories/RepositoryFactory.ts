@@ -107,6 +107,22 @@ export interface AllRepositories {
   withTransaction: <T>(fn: () => Promise<T>) => Promise<T>;
 }
 
+/** Serialize transactions on one connection, including their asynchronous work.
+ * Expo's non-exclusive transaction API otherwise lets overlapping calls share
+ * a transaction. A rejected operation must not poison the next one.
+ * Callers must not recursively enter withTransaction from its callback.
+ */
+export function serializeTransactions(repos: AllRepositories): AllRepositories {
+  const run = repos.withTransaction;
+  let tail: Promise<unknown> = Promise.resolve();
+  repos.withTransaction = <T>(fn: () => Promise<T>): Promise<T> => {
+    const result = tail.then(() => run(fn));
+    tail = result.catch(() => undefined);
+    return result;
+  };
+  return repos;
+}
+
 /**
  * Detect whether we are running in a test environment.
  * In tests, SQLite is not available (no native modules), so we use in-memory.
@@ -124,20 +140,8 @@ function isTestEnvironment(): boolean {
   return false;
 }
 
-/**
- * Global revision counter for sync records created by business writes.
- * Each write increments this counter. In production this would be
- * per-entity persisted; for InMemory tests a simple counter suffices.
- */
-let syncRevisionCounter = 0;
-function nextSyncRevision(): number {
-  syncRevisionCounter += 1;
-  return syncRevisionCounter;
-}
-
-/** Reset the revision counter (for tests). */
+/** Legacy test hook. Durable outbox sequences are never reset. */
 export function resetSyncRevisions(): void {
-  syncRevisionCounter = 0;
   resetWrapperRevisions();
 }
 
@@ -230,6 +234,10 @@ async function getExistingEntityTimestamp(
 }
 
 export class MaterializingSyncState implements SyncStateRepository {
+  nextLocalRevision(householdId: string, collection: SyncCollection): Promise<number> {
+    return this.inner.nextLocalRevision(householdId, collection);
+  }
+
   constructor(
     private inner: SyncStateRepository,
     private getRepos: () => AllRepositories,
@@ -410,7 +418,7 @@ function createInMemoryRepositories(): AllRepositories {
     },
   };
 
-  return repos;
+  return serializeTransactions(repos);
 }
 
 export { createInMemoryRepositories };
@@ -419,7 +427,7 @@ export { createInMemoryRepositories };
 // V3-06 REPAIR: The SQLite path now uses MaterializingSyncState with
 // sync recording wrappers, covering all 10 SYNC_COLLECTIONS.
 
-async function createSqliteRepositories(): Promise<AllRepositories | null> {
+export async function createSqliteRepositories(): Promise<AllRepositories | null> {
   try {
     const {
       SqliteUserRepository,
@@ -493,7 +501,7 @@ async function createSqliteRepositories(): Promise<AllRepositories | null> {
       },
     };
 
-    return repos;
+    return serializeTransactions(repos);
   } catch {
     // expo-sqlite not available (test env, web, etc.)
     return null;
@@ -570,7 +578,7 @@ export function withTimeout<T>(promise: Promise<T>, ms: number, fallback: () => 
  */
 export async function createRepositories(): Promise<AllRepositories> {
   const { repos } = await createRepositoriesWithStatus();
-  return repos;
+  return serializeTransactions(repos);
 }
 
 /** Which storage backend actually served the repository set. */

@@ -912,6 +912,17 @@ export class InMemoryInvitationRepository implements InvitationRepository {
 // ── V3-06: InMemory Sync State Repository ──────────────────────
 
 export class InMemorySyncStateRepository implements SyncStateRepository {
+  private sequences = new Map<string, number>();
+  async nextLocalRevision(householdId: string, collection: SyncCollection): Promise<number> {
+    const key = `${householdId}:${collection}`;
+    const previous = this.sequences.get(key) ?? Math.max(
+      this.cursors.get(key)?.lastRevision ?? 0,
+      (this.records.get(key) ?? []).reduce((max, record) => Math.max(max, record.revision), 0),
+    );
+    this.sequences.set(key, previous + 1);
+    return previous + 1;
+  }
+
   private cursors = new Map<string, SyncCursor>();
   private records = new Map<string, SyncRecord[]>();
 
