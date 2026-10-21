@@ -9,7 +9,10 @@
     "typecheck": "tsc --noEmit",
     "prebuild": "expo prebuild --platform android",
     "test": "NODE_OPTIONS=--experimental-vm-modules jest --runInBand",
-    "test:web": "expo export --platform web --output-dir dist-web && node scripts/verify-web.cjs"
+    "test:web": "expo export --platform web --output-dir dist-web && node scripts/verify-web.cjs",
+    "build:backend": "tsc -p backend/tsconfig.json",
+    "test:backend": "npm run build:backend && node --test backend-tests/*.test.cjs",
+    "start:backend": "node dist-backend/backend/main.js"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.1.1",

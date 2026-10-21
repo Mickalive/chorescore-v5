@@ -34,6 +34,8 @@ jobs:
         run: npm run typecheck
       - name: Domain and disk-backed SQLite integration tests
         run: npm test
+      - name: Collaboration server HTTP integration tests
+        run: npm run test:backend
       - name: Build release-mode Android APK
         run: |
           set -euo pipefail
