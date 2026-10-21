@@ -26,7 +26,7 @@ Sources lues : `AGENTS.md`, `CODEX_MISSION.md`, `PRODUCT.md`, les deux documents
 - `npm test` : **55 tests exécutés, 55 réussis**, dont les repositories réels sur SQLite sur disque via le pilote Node. Ce pont de test ne valide pas le pont Expo Android.
 - `EXPO_NO_TELEMETRY=1 EXPO_OFFLINE=1 npm run test:web` : parcours navigateur réel réussi, aucune erreur JavaScript observée. Groupe, tâche, dépense, édition, persistance, complétion et langue vérifiés.
 - Prébuild Android : réussi. Compilation Gradle ARM64 + x86_64 : première configuration corrigée (JDK 17/proxy/CA), puis échec réseau HTTP 503 sur deux artifacts AndroidX de `dl.google.com`. Ne pas assimiler cet échec à une compilation réussie.
-- Émulateur API 35 lancé sans KVM ; connexion directe à son ADB obtenue, mais démarrage complet et installation de l'application non validés.
+- Émulateur API 35 lancé sans KVM : connexion directe à ADB et démarrage complet obtenus (`sys.boot_completed=1`, Android 15). Capture système restée en timeout ; application non installée.
 - Un seul workflow Android, désormais déclenché sur PR et exécutant les tests avec Node 24. Le push a ensuite échoué (HTTP 503 du service réseau, également sur l’API GitHub) : aucune PR ni exécution CI de cette branche n’a encore pu être créée.
 
 ## Captures observées — navigateur uniquement
