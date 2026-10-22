@@ -1,6 +1,6 @@
 # Activation Google / Firebase — non activée dans cette branche
 
-Cette branche implémente l'authentification Google. Elle **n'implémente pas encore le backend de collaboration**. Renseigner ces variables ne synchronise pas les groupes ; l'interface conserve l'indication de stockage local et les invitations distantes restent indisponibles.
+Cette branche implémente l'authentification Google et un serveur de collaboration testé séparément (voir `backend/README.md`), **pas encore déployé ni raccordé au client mobile**. Renseigner ces variables ne synchronise pas les groupes ; l'interface conserve l'indication de stockage local et les invitations distantes restent indisponibles.
 
 ## Projet et accès
 
@@ -27,4 +27,4 @@ Apple et Facebook ne sont pas activés. Aucun faux compte social n'est généré
 
 Connexion réelle, fermeture/réouverture, expiration/rafraîchissement, déconnexion, deuxième compte et refus d'accès. Les tests unitaires simulent les réponses réseau : ils vérifient le cycle de session, pas le fournisseur.
 
-Le backend doit encore définir et vérifier l'isolation des groupes, les invitations ciblées conservant le `memberId`, l'outbox/deltas/tombstones, les conflits comptables et le stockage privé des photos. Tant que ces parcours n'ont pas fonctionné entre deux comptes/appareils, aucune release collaborative ne peut être déclarée prête.
+Les tests HTTP du serveur vérifient l’isolation des groupes, les invitations ciblées conservant le `memberId`, les deltas paginés, conflits et transactions. Restent notamment le raccordement du client et de son outbox, le déploiement et le stockage privé des photos. Tant que ces parcours n'ont pas fonctionné entre deux comptes/appareils, aucune release collaborative ne peut être déclarée prête.

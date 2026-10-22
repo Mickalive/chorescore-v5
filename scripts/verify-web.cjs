@@ -48,6 +48,20 @@ const server = createServer((req, res) => {
     await field('add.taskLabel').fill('Cuisine');
     await field('add.taskValue').fill('9');
     await field('add.taskNote').fill('Note persistante');
+    await field('add.taskDateTime').click();
+    await field('add.taskDateTime.date').fill('2026-02-30');
+    await expect(field('add.taskDateTime.confirm')).toHaveAttribute('aria-disabled','true');
+    await field('add.taskDateTime.date').fill(new Date().toISOString().slice(0,10));
+    await field('add.taskDateTime.time').fill('08:17');
+    await screenshot('date-time-web');
+    await field('add.taskDateTime.confirm').click();
+    await expect(field('add.taskDateTime.time')).toBeHidden();
+    await expect(field('add.taskDateTime')).toContainText('08:17');
+    await field('add.taskDateTime').click();
+    await field('add.taskDateTime.time').fill('09:18');
+    await button('Annuler').click();
+    await expect(field('add.taskDateTime.time')).toBeHidden();
+    await expect(field('add.taskDateTime')).toContainText('08:17');
     await screenshot('add-task-web');
     await button('Ajouter la tâche').click();
     await expect(field('add.taskLabel')).toHaveValue('');
@@ -66,6 +80,7 @@ const server = createServer((req, res) => {
     await page.getByText(/^Cuisine\s/).first().click();
     await button('Modifier la tâche').click();
     await expect(field('add.taskNote')).toHaveValue('Note persistante');
+    await expect(field('add.taskDateTime')).toContainText('08:17');
     await field('add.taskValue').fill('20');
     await button('Mettre à jour').click();
     await page.getByText(/Cuisine.*20 pts/).first().waitFor();
@@ -77,6 +92,19 @@ const server = createServer((req, res) => {
     await button('Nouvel élément').click();
     await field('todos.createTitle').fill('Lessive prévue');
     await field('todos.createNotes').fill('Note prévue');
+    await field('todos.dueDateTime').click();
+    await field('todos.dueDateTime.date').fill('2028-02-29');
+    await field('todos.dueDateTime.time').fill('18:43');
+    await field('todos.dueDateTime.confirm').click();
+    await expect(field('todos.dueDateTime')).toContainText('18:43');
+    await field('todos.reminderDateTime').click();
+    await field('todos.reminderDateTime.date').fill('2028-02-29');
+    await field('todos.reminderDateTime.time').fill('18:23');
+    await field('todos.reminderDateTime.confirm').click();
+    await expect(field('todos.reminderDateTime')).toContainText('18:23');
+    await field('todos.reminderDateTime').click();
+    await button('Retirer la date').click();
+    await expect(field('todos.reminderDateTime')).toContainText('Pas de rappel');
     await button('Créer').click();
     await page.getByText('Lessive prévue', { exact: true }).waitFor();
     await screenshot('todos-web');
@@ -101,7 +129,7 @@ const server = createServer((req, res) => {
     await button('Open group Notre maison').waitFor();
     await screenshot('groups-en-small-web');
     assert.deepEqual(errors, []);
-    console.log('PASS: points group + pending named member; exact-cent expense; task and notes; Balances edit; reload persistence; todo completion; zero-sum balances; FR/EN preference persistence and small-screen layout.');
+    console.log('PASS: arbitrary local dates/times, invalid-date rejection and cancellation; points group + pending named member; exact-cent expense; task and notes; Balances edit; reload persistence; todo completion; zero-sum balances; FR/EN preference persistence and small-screen layout.');
     console.log('Screenshots:', evidence, '(web only; not Android evidence)');
   } catch (error) {
     await screenshot('failure-web').catch(() => {});

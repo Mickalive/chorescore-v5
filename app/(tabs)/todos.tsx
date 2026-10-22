@@ -1,3 +1,4 @@
+import { DateTimeField } from '../../src/ui/components/DateTimeField';
 import { CategoryPicker } from '../../src/features/entries/CategoryPicker';
 import { PhotoField } from '../../src/features/entries/PhotoField';
 import { todoNotificationId } from '../../src/infrastructure/local/LocalNotificationAdapter';
@@ -844,95 +845,13 @@ export default function TodosScreen() {
                 </View>
               )}
 
-              {/* Due date */}
-              <View style={styles.inputGroup}>
-                <Text variant="caption">{t('todos.due')}</Text>
-                <TouchableOpacity
-                  style={styles.dateTimeButton}
-                  onPress={() => {
-                    Alert.alert(t('todos.dueTitle'), t('todos.duePrompt'), [
-                      {
-                        text: t('todos.dueTomorrow'),
-                        onPress: () => {
-                          const d = new Date();
-                          d.setDate(d.getDate() + 1);
-                          d.setHours(18, 0, 0, 0);
-                          setCreateForm((p) => ({ ...p, dueAt: d }));
-                        },
-                      },
-                      {
-                        text: t('todos.dueIn3Days'),
-                        onPress: () => {
-                          const d = new Date();
-                          d.setDate(d.getDate() + 3);
-                          d.setHours(18, 0, 0, 0);
-                          setCreateForm((p) => ({ ...p, dueAt: d }));
-                        },
-                      },
-                      {
-                        text: t('todos.dueIn1Week'),
-                        onPress: () => {
-                          const d = new Date();
-                          d.setDate(d.getDate() + 7);
-                          d.setHours(18, 0, 0, 0);
-                          setCreateForm((p) => ({ ...p, dueAt: d }));
-                        },
-                      },
-                      {
-                        text: t('todos.clear'),
-                        onPress: () => setCreateForm((p) => ({ ...p, dueAt: null })),
-                      },
-                      { text: t('action.cancel'), style: 'cancel' },
-                    ]);
-                  }}
-                >
-                  <Text variant="body">
-                    {createForm.dueAt ? formatDateTimeShort(createForm.dueAt) : t('todos.noDue')}
-                  </Text>
-                </TouchableOpacity>
-              </View>
+              <DateTimeField label={t('todos.due')} value={createForm.dueAt}
+                emptyLabel={t('todos.noDue')} clearable testID="todos.dueDateTime"
+                onChange={(dueAt) => setCreateForm(p => ({...p,dueAt}))} />
 
-              {/* Reminder */}
-              <View style={styles.inputGroup}>
-                <Text variant="caption">{t('todos.reminder')}</Text>
-                <TouchableOpacity
-                  style={styles.dateTimeButton}
-                  onPress={() => {
-                    Alert.alert(t('todos.reminderTitle'), t('todos.reminderPrompt'), [
-                      {
-                        text: t('todos.reminder1h'),
-                        onPress: () => {
-                          if (createForm.dueAt) {
-                            const r = new Date(createForm.dueAt.getTime() - 3600000);
-                            setCreateForm((p) => ({ ...p, reminderAt: r }));
-                          }
-                        },
-                      },
-                      {
-                        text: t('todos.reminderSameDay'),
-                        onPress: () => {
-                          if (createForm.dueAt) {
-                            const r = new Date(createForm.dueAt);
-                            r.setHours(9, 0, 0, 0);
-                            setCreateForm((p) => ({ ...p, reminderAt: r }));
-                          }
-                        },
-                      },
-                      {
-                        text: t('todos.clear'),
-                        onPress: () => setCreateForm((p) => ({ ...p, reminderAt: null })),
-                      },
-                      { text: t('action.cancel'), style: 'cancel' },
-                    ]);
-                  }}
-                >
-                  <Text variant="body">
-                    {createForm.reminderAt
-                      ? formatDateTimeShort(createForm.reminderAt)
-                      : t('todos.noReminder')}
-                  </Text>
-                </TouchableOpacity>
-              </View>
+              <DateTimeField label={t('todos.reminder')} value={createForm.reminderAt}
+                emptyLabel={t('todos.noReminder')} clearable testID="todos.reminderDateTime"
+                onChange={(reminderAt) => setCreateForm(p => ({...p,reminderAt}))} />
 
               {/* Notes */}
               <View style={styles.inputGroup}>

@@ -8,7 +8,7 @@ Sources lues : `AGENTS.md`, `CODEX_MISSION.md`, `PRODUCT.md`, les deux documents
 | --- | --- | --- |
 | Groupes, membres, minutes/points | Sélecteur à la création, dernier nom non validé inclus, garde contre double soumission ; test navigateur avec rechargement + SQLite sur disque | Essais Android, groupes nombreux et longs noms |
 | Identité persistée | Identifiant local distinct par installation ; identité des installations existantes conservée ; toutes les routes attendent la restauration | Identité locale sans autorisation cloud |
-| Tâches/dépenses | Saisie et notes testées dans le navigateur ; soldes +4,5 points et +0,50 CHF attendus ; parser monétaire exact, rejet des fractions de centime et des dépassements | Date/heure actuellement limitée aux choix prédéfinis ; essais natifs complets et compensation non vérifiés |
+| Tâches/dépenses | Saisie et notes testées dans le navigateur ; soldes +4,5 points et +0,50 CHF attendus ; parser monétaire exact, rejet des fractions de centime et des dépassements | Date/heure précise et rejet des dates impossibles vérifiés dans le navigateur, annulation sans modification et valeur retrouvée à l’édition ; essais natifs complets et compensation non vérifiés |
 | Catégories et ratios | Catégories sélectionnables dans À faire ; ratio snapshoté à la complétion, remplaçable par égal/custom ; tests de conservation historique | Revue visuelle Android du gestionnaire |
 | Balances, édition/suppression | Modification de 9 à 20 points depuis Balances, note conservée, solde +10 et dépense retrouvés après rechargement ; suppression/liens photos testés sur SQLite | Suppression par dialogue natif et gros historique non validés ; chargement initial des ledgers encore complet |
 | À faire tâche/dépense | Relecture dans transaction sérialisée : un seul succès pour deux complétions concurrentes ; rollback ledger/todo/outbox ; custom shares exactes ; parcours tâche réel dans le navigateur | Double appui Android et parcours dépense Android non exécutés |
@@ -24,15 +24,15 @@ Sources lues : `AGENTS.md`, `CODEX_MISSION.md`, `PRODUCT.md`, les deux documents
 - `npm ci --no-audit --no-fund` : réinstallation depuis le lockfile réussie.
 - `npm run typecheck` : passe.
 - `npm run test:backend` : scénario HTTP réel réussi avec comptes signés par clé de test, SQLite sur disque, redémarrage, isolation, révocation/expiration, conflit, rollback, double complétion et pagination. Aucun vrai compte Firebase/appareil dans ce scénario.
-- `npm test` : **55 tests exécutés, 55 réussis**, dont les repositories réels sur SQLite sur disque via le pilote Node. Ce pont de test ne valide pas le pont Expo Android.
+- `npm test` : **56 tests exécutés, 56 réussis**, dont les repositories réels sur SQLite sur disque via le pilote Node. Ce pont de test ne valide pas le pont Expo Android.
 - `EXPO_NO_TELEMETRY=1 EXPO_OFFLINE=1 npm run test:web` : parcours navigateur réel réussi, aucune erreur JavaScript observée. Groupe, tâche, dépense, édition, persistance, complétion et langue vérifiés.
 - Prébuild Android : réussi. Compilation Gradle ARM64 + x86_64 : première configuration corrigée (JDK 17/proxy/CA), puis échec réseau HTTP 503 sur deux artifacts AndroidX de `dl.google.com`. Ne pas assimiler cet échec à une compilation réussie.
 - Émulateur API 35 lancé sans KVM : connexion directe à ADB et démarrage complet obtenus (`sys.boot_completed=1`, Android 15). Capture système restée en timeout ; application non installée.
-- Un seul workflow Android, désormais déclenché sur PR et exécutant les tests avec Node 24. Le push a ensuite échoué (HTTP 503 du service réseau, également sur l’API GitHub) : aucune PR ni exécution CI de cette branche n’a encore pu être créée.
+- Un seul workflow Android, désormais déclenché sur PR et exécutant les tests avec Node 24. Après rétablissement du réseau, branche poussée et [PR nº 2](https://github.com/Mickalive/chorescore-v5/pull/2) ouverte en brouillon. Workflow Android démarré (exécution 39701219229), résultat à relever après terminaison.
 
 ## Captures observées — navigateur uniquement
 
-[Groupes vide](docs/evidence/groups-empty-web.png) · [Groupes rempli](docs/evidence/groups-filled-web.png) · [Ajouter tâche](docs/evidence/add-task-web.png) · [Ajouter dépense](docs/evidence/add-expense-web.png) · [Balances](docs/evidence/balances-web.png) · [À faire](docs/evidence/todos-web.png) · [Options EN, petit écran](docs/evidence/settings-en-small-web.png).
+[Saisie date/heure](docs/evidence/date-time-web.png) · [Groupes vide](docs/evidence/groups-empty-web.png) · [Groupes rempli](docs/evidence/groups-filled-web.png) · [Ajouter tâche](docs/evidence/add-task-web.png) · [Ajouter dépense](docs/evidence/add-expense-web.png) · [Balances](docs/evidence/balances-web.png) · [À faire](docs/evidence/todos-web.png) · [Options EN, petit écran](docs/evidence/settings-en-small-web.png).
 
 Reproduire avec Node 24, `npm ci`, puis `npm test`. Pour le navigateur : Chromium installé, `EXPO_NO_TELEMETRY=1 EXPO_OFFLINE=1 npm run test:web`. `CHROME_BIN` permet de préciser son chemin ; les captures sont écrites dans `/tmp/chorescore-web-evidence` ou `EVIDENCE_DIR`.
 

@@ -1,3 +1,4 @@
+import { DateTimeField } from '../../src/ui/components/DateTimeField';
 import { taskUpdatePayload, expenseUpdatePayload } from '../../src/features/entries/editPayload';
 import { PhotoField } from '../../src/features/entries/PhotoField';
 import { LoadingState, ErrorState } from '../../src/ui/components/States';
@@ -774,22 +775,6 @@ export default function AddScreen() {
     });
   };
 
-  const pickDateTime = (current: Date, onPick: (date: Date) => void) => {
-    Alert.alert(t('add.dateTime'), formatDateTimeShort(current), [
-      { text: t('add.dateNow'), onPress: () => onPick(new Date()) },
-      { text: t('add.dateHourAgo'), onPress: () => onPick(new Date(Date.now() - 3600000)) },
-      {
-        text: t('add.dateYesterday'),
-        onPress: () => {
-          const d = new Date();
-          d.setDate(d.getDate() - 1);
-          onPick(d);
-        },
-      },
-      { text: t('action.cancel'), style: 'cancel' },
-    ]);
-  };
-
   // A stored task keeps its own unit: editing it must never relabel minutes as
   // points (or the reverse) just because the group later changed its unit.
   const activeTaskUnit = isEditing ? taskEditUnit ?? householdUnit : householdUnit;
@@ -1258,22 +1243,8 @@ export default function AddScreen() {
             'add.taskPhotoButton',
           )}
 
-          {/* Date / Time */}
-          <View style={styles.inputGroup}>
-            <Text variant="caption">{t('add.dateTime')}</Text>
-            <TouchableOpacity
-              style={styles.dateTimeButton}
-              onPress={() =>
-                pickDateTime(taskForm.occurredAt, (date) =>
-                  setTaskForm((prev) => ({ ...prev, occurredAt: date })),
-                )
-              }
-              accessibilityRole="button"
-              accessibilityLabel={t('a11y.chooseDateTime')}
-            >
-              <Text variant="body">{formatDateTimeShort(taskForm.occurredAt)}</Text>
-            </TouchableOpacity>
-          </View>
+          <DateTimeField label={t('add.dateTime')} value={taskForm.occurredAt}
+            testID="add.taskDateTime" onChange={(date) => { if(date) setTaskForm(prev => ({...prev,occurredAt:date})); }} />
 
           <Button
             title={isEditing ? t('add.update') : t('add.addTask')}
@@ -1481,22 +1452,8 @@ export default function AddScreen() {
             'add.expensePhotoButton',
           )}
 
-          {/* Date / Time */}
-          <View style={styles.inputGroup}>
-            <Text variant="caption">{t('add.dateTime')}</Text>
-            <TouchableOpacity
-              style={styles.dateTimeButton}
-              onPress={() =>
-                pickDateTime(expenseForm.occurredAt, (date) =>
-                  setExpenseForm((prev) => ({ ...prev, occurredAt: date })),
-                )
-              }
-              accessibilityRole="button"
-              accessibilityLabel={t('a11y.chooseDateTime')}
-            >
-              <Text variant="body">{formatDateTimeShort(expenseForm.occurredAt)}</Text>
-            </TouchableOpacity>
-          </View>
+          <DateTimeField label={t('add.dateTime')} value={expenseForm.occurredAt}
+            testID="add.expenseDateTime" onChange={(date) => { if(date) setExpenseForm(prev => ({...prev,occurredAt:date})); }} />
 
           <Button
             title={isEditing ? t('add.update') : t('add.addExpense')}

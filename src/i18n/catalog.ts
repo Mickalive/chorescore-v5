@@ -27,6 +27,12 @@ export const CATALOG: Record<SupportedLocale, LocaleCatalog> = {
 
     // ── Common actions & states ───────────────────────────────
     'action.save': 'Enregistrer',
+    'dateTime.date': 'Date (AAAA-MM-JJ)',
+    'dateTime.time': 'Heure (HH:MM)',
+    'dateTime.localHint': 'Date et heure locales de votre téléphone.',
+    'dateTime.invalid': 'Vérifiez la date et l’heure : ce créneau doit exister.',
+    'dateTime.now': 'Maintenant',
+    'dateTime.clear': 'Retirer la date',
     'action.cancel': 'Annuler',
     'action.delete': 'Supprimer',
     'action.edit': 'Modifier',
@@ -431,6 +437,12 @@ export const CATALOG: Record<SupportedLocale, LocaleCatalog> = {
 
     // ── Common actions & states ───────────────────────────────
     'action.save': 'Save',
+    'dateTime.date': 'Date (YYYY-MM-DD)',
+    'dateTime.time': 'Time (HH:MM)',
+    'dateTime.localHint': 'Date and time in your phone’s local timezone.',
+    'dateTime.invalid': 'Check the date and time: this time must exist.',
+    'dateTime.now': 'Now',
+    'dateTime.clear': 'Remove date',
     'action.cancel': 'Cancel',
     'action.delete': 'Delete',
     'action.edit': 'Edit',
