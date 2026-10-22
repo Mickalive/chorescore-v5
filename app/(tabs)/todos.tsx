@@ -233,7 +233,7 @@ export default function TodosScreen() {
     submittingRef.current = true;
     setIsSubmitting(true);
     try {
-      const created = await repos.todos.create({
+      const created = await repos.withTransaction(async () => repos.todos.create({
         householdId: currentHouseholdId,
         title: createForm.title.trim(),
         assigneeMemberId: createForm.assigneeMemberId,
@@ -251,7 +251,7 @@ export default function TodosScreen() {
               expenseCurrency: safeCurrency(createForm.expenseCurrency),
             }
           : {}),
-      });
+      }));
 
       // A denied/failed reminder must not leave an unseen todo behind on retry.
       if (createForm.reminderAt) {
@@ -263,7 +263,7 @@ export default function TodosScreen() {
             data: { todoId: created.id },
           });
         } catch (error) {
-          await repos.todos.delete(created.id);
+          await repos.withTransaction(async () => repos.todos.delete(created.id));
           throw error;
         }
       }
@@ -489,7 +489,7 @@ export default function TodosScreen() {
         style: 'destructive',
         onPress: async () => {
           try {
-            await repos.todos.delete(todo.id);
+            await repos.withTransaction(async () => repos.todos.delete(todo.id));
             await services.notifications.cancelNotification(todoNotificationId(todo.id));
             setTodos((prev) => prev.filter((item) => item.id !== todo.id));
             emitDataChange('todo', currentHouseholdId!);

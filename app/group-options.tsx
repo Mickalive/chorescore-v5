@@ -99,7 +99,7 @@ export default function GroupOptionsScreen() {
     if (name.trim() === household.name) return;
     setIsSaving(true);
     try {
-      await repos.households.update(currentHouseholdId, { name: name.trim() });
+      await repos.withTransaction(async () => repos.households.update(currentHouseholdId, { name: name.trim() }));
       setHousehold({ ...household, name: name.trim() });
       emitDataChange('household', currentHouseholdId);
     } catch {
@@ -126,9 +126,9 @@ export default function GroupOptionsScreen() {
             setIsSaving(true);
             try {
               const result = planUnitChange(household, newUnit);
-              await repos.households.update(currentHouseholdId, {
+              await repos.withTransaction(async () => repos.households.update(currentHouseholdId, {
                 contributionUnit: newUnit,
-              });
+              }));
               setUnit(newUnit);
               setHousehold(result.updatedHousehold);
               emitDataChange('household', currentHouseholdId);
@@ -169,7 +169,7 @@ export default function GroupOptionsScreen() {
         updates.contributionToMoneyRate = null;
       }
 
-      await repos.households.update(currentHouseholdId, updates);
+      await repos.withTransaction(async () => repos.households.update(currentHouseholdId, updates));
       setHousehold({ ...household, ...updates });
       emitDataChange('household', currentHouseholdId);
       Alert.alert(t('action.ok'), t('groupOptions.saved'));

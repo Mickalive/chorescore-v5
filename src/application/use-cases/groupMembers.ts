@@ -158,5 +158,5 @@ export async function addGroupMember(
     throw new Error('householdId is required');
   }
   const name = normalizeMemberName(rawName);
-  return repos.members.create({ householdId, name, userId: null });
+  return repos.withTransaction(() => repos.members.create({ householdId, name, userId: null }));
 }

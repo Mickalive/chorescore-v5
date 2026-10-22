@@ -164,6 +164,7 @@ export default function AddScreen() {
   const [householdUnit, setHouseholdUnit] = useState<ContributionUnit>('minutes');
   const [persistentTasks, setPersistentTasks] = useState<PersistentTask[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const submittingRef = useRef(false);
 
   // Task split choice + raw weights
   const [taskSplitChoice, setTaskSplitChoice] = useState<TaskSplitChoice>('equal');
@@ -476,11 +477,11 @@ export default function AddScreen() {
         name: categoryDraft.name,
         defaultTaskRatio: weights,
       });
-      await repos.categories.create({
+      await repos.withTransaction(async () => repos.categories.create({
         householdId: draft.householdId,
         name: draft.name,
         defaultTaskRatio: draft.defaultTaskRatio,
-      });
+      }));
       resetCategoryDraft();
       await loadCategories();
     } catch {
@@ -495,7 +496,7 @@ export default function AddScreen() {
 
   const handleRenameCategory = async (category: Category) => {
     try {
-      await repos.categories.update(category.id, renameCategory(editingCategoryName));
+      await repos.withTransaction(async () => repos.categories.update(category.id, renameCategory(editingCategoryName)));
       setEditingCategoryId(null);
       await loadCategories();
     } catch {
@@ -514,7 +515,7 @@ export default function AddScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              await repos.categories.delete(category.id);
+              await repos.withTransaction(async () => repos.categories.delete(category.id));
               setTaskForm((prev) =>
                 prev.categoryId === category.id ? { ...prev, categoryId: null } : prev,
               );
@@ -557,7 +558,7 @@ export default function AddScreen() {
         Alert.alert(t('state.error'), t('add.categoryError'));
         return;
       }
-      await repos.categories.update(category.id, setCategoryDefaultTaskRatio(weights));
+      await repos.withTransaction(async () => repos.categories.update(category.id, setCategoryDefaultTaskRatio(weights)));
       setRatioCategoryId(null);
       await loadCategories();
       Alert.alert(t('add.categoryRatio'), t('add.categoryRatioSaved'));
@@ -568,7 +569,7 @@ export default function AddScreen() {
 
   const handleClearCategoryRatio = async (category: Category) => {
     try {
-      await repos.categories.update(category.id, { defaultTaskRatio: null });
+      await repos.withTransaction(async () => repos.categories.update(category.id, { defaultTaskRatio: null }));
       setRatioCategoryId(null);
       await loadCategories();
     } catch {
@@ -595,7 +596,7 @@ export default function AddScreen() {
   };
 
   const submitTask = async () => {
-    if (!currentHouseholdId || isSubmitting) return;
+    if (!currentHouseholdId || submittingRef.current) return;
     const value = parsePositiveNumber(taskForm.value);
     if (value === null) {
       Alert.alert(t('state.error'), t('add.errorValue'));
@@ -606,6 +607,7 @@ export default function AddScreen() {
       return;
     }
 
+    submittingRef.current = true;
     setIsSubmitting(true);
     try {
       const built = buildTaskDraft({
@@ -633,16 +635,16 @@ export default function AddScreen() {
       }
 
       if (isEditing && editEntryId) {
-        await repos.contributions.update(
+        await repos.withTransaction(async () => repos.contributions.update(
           editEntryId,
           taskUpdatePayload(built.draft, currentUser?.userId || ''),
-        );
+        ));
         emitDataChange('contribution', currentHouseholdId);
         router.back();
         return;
       }
 
-      const created = await repos.contributions.create(built.draft);
+      const created = await repos.withTransaction(async () => repos.contributions.create(built.draft));
       emitDataChange('contribution', currentHouseholdId);
       setLastCreated({
         kind: 'task',
@@ -658,6 +660,7 @@ export default function AddScreen() {
     } catch {
       Alert.alert(t('state.error'), isEditing ? t('add.errorEdit') : t('add.errorTask'));
     } finally {
+      submittingRef.current = false;
       setIsSubmitting(false);
     }
   };
@@ -681,7 +684,7 @@ export default function AddScreen() {
   };
 
   const submitExpense = async () => {
-    if (!currentHouseholdId || isSubmitting) return;
+    if (!currentHouseholdId || submittingRef.current) return;
     if (parsedAmountMinor === null) {
       Alert.alert(t('state.error'), t('add.errorAmount'));
       return;
@@ -691,6 +694,7 @@ export default function AddScreen() {
       return;
     }
 
+    submittingRef.current = true;
     setIsSubmitting(true);
     try {
       const built = buildExpenseDraft({
@@ -717,16 +721,16 @@ export default function AddScreen() {
       }
 
       if (isEditing && editEntryId) {
-        await repos.expenses.update(
+        await repos.withTransaction(async () => repos.expenses.update(
           editEntryId,
           expenseUpdatePayload(built.draft, currentUser?.userId || ''),
-        );
+        ));
         emitDataChange('expense', currentHouseholdId);
         router.back();
         return;
       }
 
-      const created = await repos.expenses.create(built.draft);
+      const created = await repos.withTransaction(async () => repos.expenses.create(built.draft));
       emitDataChange('expense', currentHouseholdId);
       setLastCreated({
         kind: 'expense',
@@ -741,6 +745,7 @@ export default function AddScreen() {
     } catch {
       Alert.alert(t('state.error'), isEditing ? t('add.errorEdit') : t('add.errorExpense'));
     } finally {
+      submittingRef.current = false;
       setIsSubmitting(false);
     }
   };

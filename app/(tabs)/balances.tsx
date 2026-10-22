@@ -612,7 +612,7 @@ export default function BalancesScreen() {
     }
 
     // Persist the immutable settlement — use the returned entity (real id)
-    const persistedSettlement = await repos.settlements.create(settlementData);
+    const persistedSettlement = await repos.withTransaction(async () => repos.settlements.create(settlementData));
 
     // Update local state with the real persisted entity
     const newSettlements = [...settlements, persistedSettlement];
@@ -714,10 +714,10 @@ export default function BalancesScreen() {
           onPress: async () => {
             try {
               if (isTask) {
-                await repos.contributions.delete(entryId);
+                await repos.withTransaction(async () => repos.contributions.delete(entryId));
                 emitDataChange('contribution', currentHouseholdId);
               } else {
-                await repos.expenses.delete(entryId);
+                await repos.withTransaction(async () => repos.expenses.delete(entryId));
                 emitDataChange('expense', currentHouseholdId);
               }
             } catch {

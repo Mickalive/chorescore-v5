@@ -16,7 +16,7 @@ Sources lues : `AGENTS.md`, `CODEX_MISSION.md`, `PRODUCT.md`, les deux documents
 | Rappels | API Expo Notifications, canal Android, permission, identifiant stable par todo, annulation à la complétion/suppression, refus des dates passées | Tests du contrat natif avec mocks seulement ; notification réellement reçue non prouvée ; ponctualité soumise aux réglages Android |
 | Partage | Adaptateur natif existant conservé | Feuille système non ouverte pendant cette vérification |
 | OAuth | Connexion Google native + Firebase Auth REST, SecureStore, rafraîchissement sérialisé et protection contre résurrection après déconnexion | Aucun projet Firebase configuré ; vrais comptes non testés ; Apple/Facebook indisponibles |
-| Synchronisation/invitations | Séquences locales persistantes ; curseurs d'acquittement corrigés ; écriture pendant upload et acquittements partiels testés | `LocalSyncAdapter` reste indisponible. Serveur HTTP/SQLite implémenté et testé séparément (voir `backend/README.md`) : ACL, invitations ciblées, événements paginés, conflits optimistes et complétion atomique. Raccordement mobile, stockage privé des photos et déploiement à réaliser. Aucun test à deux comptes/appareils |
+| Synchronisation/invitations | Écritures UI et outbox regroupées en transaction ; panne disque injectée sur l’outbox avec rollback et reprise vérifiés ; séquences locales persistantes et acquittements corrigés | `LocalSyncAdapter` reste indisponible. Serveur HTTP/SQLite implémenté et testé séparément (voir `backend/README.md`) : ACL, invitations ciblées, événements paginés, conflits optimistes et complétion atomique. Raccordement mobile, stockage privé des photos et déploiement à réaliser. Aucun test à deux comptes/appareils |
 | Interface FR/EN | Groupes remanié, composants réutilisables, icônes et hauteur des onglets avec safe area, touches de 48 px ; clés FR/EN vérifiées ; langue conservée après rechargement en 360×800 et 412×915 | Pas de revue visuelle Android/iOS ; les grands formulaires restent partiellement monolithiques |
 
 ## Contrôles exécutés
@@ -24,7 +24,7 @@ Sources lues : `AGENTS.md`, `CODEX_MISSION.md`, `PRODUCT.md`, les deux documents
 - `npm ci --no-audit --no-fund` : réinstallation depuis le lockfile réussie.
 - `npm run typecheck` : passe.
 - `npm run test:backend` : scénario HTTP réel réussi avec comptes signés par clé de test, SQLite sur disque, redémarrage, isolation, révocation/expiration, conflit, rollback, double complétion et pagination. Aucun vrai compte Firebase/appareil dans ce scénario.
-- `npm test` : **56 tests exécutés, 56 réussis**, dont les repositories réels sur SQLite sur disque via le pilote Node. Ce pont de test ne valide pas le pont Expo Android.
+- `npm test` : **57 tests exécutés, 57 réussis**, dont les repositories réels sur SQLite sur disque via le pilote Node. Ce pont de test ne valide pas le pont Expo Android.
 - `EXPO_NO_TELEMETRY=1 EXPO_OFFLINE=1 npm run test:web` : parcours navigateur réel réussi, aucune erreur JavaScript observée. Groupe, tâche, dépense, édition, persistance, complétion et langue vérifiés.
 - Prébuild Android : réussi. Compilation Gradle ARM64 + x86_64 : première configuration corrigée (JDK 17/proxy/CA), puis échec réseau HTTP 503 sur deux artifacts AndroidX de `dl.google.com`. Ne pas assimiler cet échec à une compilation réussie.
 - Émulateur API 35 lancé sans KVM : connexion directe à ADB et démarrage complet obtenus (`sys.boot_completed=1`, Android 15). Capture système restée en timeout ; application non installée.

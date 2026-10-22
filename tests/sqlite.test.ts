@@ -111,3 +111,28 @@ test('outbox sequences are unique across concurrent reservations and process res
   const reopened = (await createSqliteRepositories())!;
   expect(await reopened.syncState.nextLocalRevision('g', 'members')).toBeGreaterThan(Math.max(...values));
 });
+
+test('entry mutation and local outbox commit together when the sync write fails', async () => {
+  const repos = (await createSqliteRepositories())!;
+  const group = (await repos.households.getAll())[0];
+  const members = await repos.members.getByHousehold(group.id);
+  const before = await repos.contributions.getByHousehold(group.id);
+  const originalRun = mockDatabase.runAsync;
+  const failure = jest.spyOn(mockDatabase, 'runAsync').mockImplementation(async (sql: unknown, ...args: any[]) => {
+    if (typeof sql === 'string' && /INSERT.*sync_records/i.test(sql)) throw new Error('outbox disk failure');
+    return originalRun(sql,...args);
+  });
+  try {
+    await expect(repos.withTransaction(() => repos.contributions.create({
+      householdId:group.id,persistentTaskId:null,label:'Must roll back',performedByMemberId:members[0].id,
+      beneficiaryMemberIds:members.map(m => m.id),value:7,unit:'points',occurredAt:new Date().toISOString(),createdBy:'a',
+    }))).rejects.toThrow('outbox disk failure');
+  } finally { failure.mockRestore(); }
+  expect(await repos.contributions.getByHousehold(group.id)).toEqual(before);
+  // The rolled-back reservation must not poison the transaction queue.
+  await repos.withTransaction(() => repos.contributions.create({
+    householdId:group.id,persistentTaskId:null,label:'Retry succeeds',performedByMemberId:members[0].id,
+    beneficiaryMemberIds:members.map(m => m.id),value:7,unit:'points',occurredAt:new Date().toISOString(),createdBy:'a',
+  }));
+  expect((await repos.contributions.getByHousehold(group.id)).length).toBe(before.length+1);
+});
