@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: chorescore-v5-apk-${{ github.sha }}
+  group: chorescore-v5-apk-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -56,4 +56,27 @@ jobs:
           name: ChoreScore-V5-APK
           path: release/
           if-no-files-found: error
+          retention-days: 14
+
+      - name: Enable hardware acceleration for native acceptance
+        run: |
+          test -c /dev/kvm
+          sudo chmod 666 /dev/kvm
+      - name: Verify installed release APK on Android
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          profile: pixel_2
+          emulator-options: -no-window -gpu swiftshader -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: python3 scripts/android/verify-device.py release/ChoreScore-V5.apk
+      - name: Preserve actual native evidence and failure diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChoreScore-Android-evidence
+          path: android-evidence/
+          if-no-files-found: warn
           retention-days: 14

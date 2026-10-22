@@ -26,7 +26,8 @@ device.connect(rsa_keys=[signer], auth_timeout_s=30, transport_timeout_s=30, rea
 try:
     command, *args = sys.argv[1:]
     if command == 'shell':
-        print(device.shell(args[0], read_timeout_s=30, timeout_s=55))
+        for chunk in device.streaming_shell(args[0], transport_timeout_s=30, read_timeout_s=30):
+            print(chunk,end='',flush=True)
     elif command == 'install':
         device.push(args[0], '/data/local/tmp/chorescore-candidate.apk', read_timeout_s=30)
         result = device.shell('pm install -r /data/local/tmp/chorescore-candidate.apk', read_timeout_s=30, timeout_s=55)
@@ -34,11 +35,11 @@ try:
         if result.strip() != 'Success':
             raise SystemExit(1)
     elif command == 'screenshot':
-        device.shell('screencap -p /sdcard/chorescore-screen.png', read_timeout_s=30, timeout_s=55)
-        device.pull('/sdcard/chorescore-screen.png', args[0], read_timeout_s=30)
+        device.shell('screencap -p /data/local/tmp/chorescore-screen.png', read_timeout_s=30, timeout_s=55)
+        device.pull('/data/local/tmp/chorescore-screen.png', args[0], read_timeout_s=30)
     elif command == 'hierarchy':
-        print(device.shell('uiautomator dump /sdcard/chorescore-window.xml', read_timeout_s=30, timeout_s=55))
-        device.pull('/sdcard/chorescore-window.xml', args[0], read_timeout_s=30)
+        print(device.shell('uiautomator dump /data/local/tmp/chorescore-window.xml', read_timeout_s=30, timeout_s=55))
+        device.pull('/data/local/tmp/chorescore-window.xml', args[0], read_timeout_s=30)
     else:
         raise ValueError('Unknown command')
 finally:
