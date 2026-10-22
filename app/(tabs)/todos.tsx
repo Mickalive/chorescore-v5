@@ -672,7 +672,7 @@ export default function TodosScreen() {
 
           {/* ── Create View ───────────────────────────────── */}
           {view === 'create' && (
-            <Card style={styles.formCard}>
+            <Card style={styles.formCard} testID="todos.createForm">
               <View style={styles.inputGroup}>
                 <Text variant="caption">{t('todos.titleLabel')}</Text>
                 <TextInput
@@ -890,7 +890,7 @@ export default function TodosScreen() {
 
           {/* ── Complete View (mini-form) ─────────────────── */}
           {view === 'complete' && selectedTodo && (
-            <Card style={styles.formCard}>
+            <Card style={styles.formCard} testID="todos.completeForm">
               <View style={styles.editBanner}>
                 <Text variant="sectionTitle">
                   {completeKind === 'expense'

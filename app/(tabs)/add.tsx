@@ -458,15 +458,19 @@ export default function AddScreen() {
 
   // ── Category management ────────────────────────────────────
 
+  const categorySubmittingRef = useRef(false);
+  const [categoryBusy,setCategoryBusy] = useState(false);
+
   const resetCategoryDraft = () =>
     setCategoryDraft({ name: '', ratioEnabled: false, weights: {} });
 
   const handleCreateCategory = async () => {
-    if (!currentHouseholdId) return;
+    if (!currentHouseholdId || categorySubmittingRef.current) return;
+    categorySubmittingRef.current = true; setCategoryBusy(true);
     try {
       const allMemberIds = members.map((m) => m.id);
       const weights = categoryDraft.ratioEnabled
-        ? taskWeightsFromRaw(allMemberIds, categoryDraft.weights)
+        ? taskWeightsFromRaw(allMemberIds, Object.fromEntries(allMemberIds.map(id => [id,categoryDraft.weights[id] ?? '1'])))
         : null;
       if (categoryDraft.ratioEnabled && !weights) {
         Alert.alert(t('state.error'), t('add.categoryError'));
@@ -486,7 +490,7 @@ export default function AddScreen() {
       await loadCategories();
     } catch {
       Alert.alert(t('state.error'), t('add.categoryError'));
-    }
+    } finally { categorySubmittingRef.current = false; setCategoryBusy(false); }
   };
 
   const startRenameCategory = (category: Category) => {
@@ -869,7 +873,8 @@ export default function AddScreen() {
         variant="secondary"
         size="small"
         onPress={handleCreateCategory}
-        disabled={!categoryDraft.name.trim()}
+        disabled={!categoryDraft.name.trim() || categoryBusy}
+        loading={categoryBusy}
         style={styles.managerAction}
       />
 

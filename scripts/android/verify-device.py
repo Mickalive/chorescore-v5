@@ -105,6 +105,7 @@ try:
     screenshot('groups-filled-android')
     tap('Ouvrir le groupe Maison CI')
     locate(resource='add.taskLabel')
+    locate('Valeur (pts)')
     fill('add.taskLabel','Cuisine CI')
     fill('add.taskValue','9')
     fill('add.taskNote','Note persistante')
