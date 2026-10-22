@@ -10,3 +10,19 @@ test('accepts leap days, rejects silent date/time overflow and round-trips local
   }
   expect(parseLocalDateTime('2026-01-01','00:00')?.getHours()).toBe(0);
 });
+
+test('rejects the missing spring DST hour using a real Europe/Berlin runtime', () => {
+  const { spawnSync } = require('node:child_process');
+  const { pathToFileURL } = require('node:url');
+  const moduleUrl = pathToFileURL(require('node:path').resolve('src/domain/services/localDateTime.ts')).href;
+  const result = spawnSync(process.execPath,['--input-type=module','-e',
+    `import {parseLocalDateTime,localDateTimeParts} from ${JSON.stringify(moduleUrl)};
+     console.log(JSON.stringify([
+       parseLocalDateTime('2026-03-29','02:30'),
+       localDateTimeParts(parseLocalDateTime('2026-03-29','03:30')),
+       localDateTimeParts(parseLocalDateTime('2026-10-25','02:30'))
+     ]));`],{env:{...process.env,TZ:'Europe/Berlin'},encoding:'utf8'});
+  expect(result.status).toBe(0);
+  expect(JSON.parse(result.stdout)).toEqual([null,
+    {date:'2026-03-29',time:'03:30'},{date:'2026-10-25',time:'02:30'}]);
+});

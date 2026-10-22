@@ -108,3 +108,15 @@ test('expense todo custom shares preserve every cent; invalid shares commit noth
   expect(entries[0].customShares?.map(share => share.amountMinor)).toEqual([34,67]);
   expect(calculateFinancialBalancesByCurrency(entries).get('EUR')?.get(ids[0])).toBe(67);
 });
+
+test('in-memory degraded storage rolls group deletion back and removes the full group on commit',async()=>{
+  const {repos,household,todo} = await fixture();
+  await expect(repos.withTransaction(async()=>{await repos.households.delete(household.id);throw new Error('abort');})).rejects.toThrow('abort');
+  expect(await repos.todos.getById(todo.id)).not.toBeNull();
+  expect(await repos.members.getByHousehold(household.id)).toHaveLength(2);
+  await repos.withTransaction(()=>repos.households.delete(household.id));
+  expect(await repos.todos.getById(todo.id)).toBeNull();
+  expect(await repos.members.getByHousehold(household.id)).toEqual([]);
+  expect(await repos.memberships.getByHousehold(household.id)).toEqual([]);
+  expect(await repos.syncState.getDirtyRecords(household.id,'todo_items',0)).toEqual([]);
+});

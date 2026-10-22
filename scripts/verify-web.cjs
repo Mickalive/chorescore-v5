@@ -117,6 +117,23 @@ const server = createServer((req, res) => {
     await page.getByText(/Lessive prévue.*6 pts/).first().waitFor();
     await expect(page.getByText('+ 13 points', { exact: true })).toBeVisible();
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
+    await button('Créer un groupe').click();
+    await field('groups.nameInput').fill('À supprimer');
+    await button('Créer').click();
+    await button('Options du groupe À supprimer').click();
+    await field('group.deleteOpen').click();
+    await field('group.deleteName').fill('Nom incorrect');
+    await expect(field('group.deleteConfirm')).toHaveAttribute('aria-disabled','true');
+    await button('Annuler').click();
+    await field('group.deleteOpen').click();
+    await field('group.deleteName').fill('À supprimer');
+    await screenshot('delete-group-web');
+    await field('group.deleteConfirm').click();
+    await button('Ouvrir le groupe Notre maison').waitFor();
+    await expect(button('Ouvrir le groupe À supprimer')).toHaveCount(0);
+    await page.reload();
+    await button('Ouvrir le groupe Notre maison').waitFor();
+    await expect(button('Ouvrir le groupe À supprimer')).toHaveCount(0);
     await button('Options générales').click();
     await screenshot('settings-fr-web');
     await button('English').click();
@@ -129,7 +146,7 @@ const server = createServer((req, res) => {
     await button('Open group Notre maison').waitFor();
     await screenshot('groups-en-small-web');
     assert.deepEqual(errors, []);
-    console.log('PASS: arbitrary local dates/times, invalid-date rejection and cancellation; points group + pending named member; exact-cent expense; task and notes; Balances edit; reload persistence; todo completion; zero-sum balances; FR/EN preference persistence and small-screen layout.');
+    console.log('PASS: owner group deletion with exact-name confirmation, cancel and reload; arbitrary local dates/times, invalid-date rejection and cancellation; points group + pending named member; exact-cent expense; task and notes; Balances edit; reload persistence; todo completion; zero-sum balances; FR/EN preference persistence and small-screen layout.');
     console.log('Screenshots:', evidence, '(web only; not Android evidence)');
   } catch (error) {
     await screenshot('failure-web').catch(() => {});

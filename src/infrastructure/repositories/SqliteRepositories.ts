@@ -292,6 +292,12 @@ export class SqliteHouseholdRepository implements HouseholdRepository {
 
   async delete(id: string): Promise<void> {
     const db = await getDatabase();
+    // Caller owns the transaction. Child deletion fires photo-link triggers;
+    // file garbage collection then removes only unreferenced managed files.
+    for (const table of ['contribution_entries','expense_entries','todo_items','persistent_tasks',
+      'settlements','categories','invitations','memberships','members','sync_records','sync_cursors','sync_sequences']) {
+      await db.runAsync(`DELETE FROM ${table} WHERE householdId = ?`, [id]);
+    }
     await db.runAsync('DELETE FROM households WHERE id = ?', [id]);
   }
 }

@@ -136,3 +136,31 @@ test('entry mutation and local outbox commit together when the sync write fails'
   }));
   expect((await repos.contributions.getByHousehold(group.id)).length).toBe(before.length+1);
 });
+
+test('group deletion is isolated, owner-only, rollback-safe and clears private rows and links', async () => {
+  const { createScopedRepositories } = await import('../src/infrastructure/repositories/ScopedRepositoryFacade');
+  const raw = (await createSqliteRepositories())!;
+  const {household,ownerMember,namedMembers} = await createGroupWithMembers(raw,{
+    name:'Delete test',owner:{userId:'delete-owner',displayName:'Owner'},memberNames:['Member'],contributionUnit:'minutes',
+  });
+  await raw.memberships.create({userId:'delete-member',householdId:household.id,role:'MEMBER'});
+  const attachment = {id:'delete-photo',kind:'photo' as const,ref:'file:///private/chorescore-photos/delete/photo.jpg',createdAt:new Date().toISOString()};
+  await raw.withTransaction(() => raw.expenses.create({householdId:household.id,title:'Private',amountMinor:101,currency:'CHF',
+    paidByMemberId:ownerMember.id,participantMemberIds:[ownerMember.id,namedMembers[0].id],splitMode:'equal',attachments:[attachment],
+    occurredAt:new Date().toISOString(),createdBy:'delete-owner'}));
+  const otherGroups = (await raw.households.getAll()).filter(h=>h.id!==household.id);
+  const member = createScopedRepositories(raw,'delete-member');
+  await expect(member.withTransaction(()=>member.households.delete(household.id))).rejects.toThrow();
+  const owner = createScopedRepositories(raw,'delete-owner');
+  await expect(owner.withTransaction(async()=>{await owner.households.delete(household.id);throw new Error('abort deletion');})).rejects.toThrow('abort deletion');
+  expect(await owner.members.getByHousehold(household.id)).toHaveLength(2);
+  expect(await owner.expenses.getByHousehold(household.id)).toHaveLength(1);
+  await owner.withTransaction(()=>owner.households.delete(household.id));
+  for(const table of ['members','memberships','expense_entries','todo_items','contribution_entries','categories','persistent_tasks','invitations','settlements']) {
+    expect((await mockDatabase.getFirstAsync(`SELECT COUNT(*) AS n FROM ${table} WHERE householdId = ?`,[household.id])).n).toBe(0);
+  }
+  expect(await raw.households.getAll()).toEqual(otherGroups);
+  expect(await mockDatabase.getFirstAsync('SELECT COUNT(*) AS n FROM attachment_links WHERE ref=?',[attachment.ref])).toEqual({n:0});
+  const dirty=await raw.syncState.getDirtyRecords(household.id,'households',0);
+  expect(dirty).toEqual([expect.objectContaining({id:household.id,payload:null,deletedAt:expect.any(String)})]);
+});

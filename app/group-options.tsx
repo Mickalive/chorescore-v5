@@ -1,3 +1,4 @@
+import { DeleteGroupCard } from '../src/features/groups/DeleteGroupCard';
 /**
  * ChoreScore V3 — Group Options Screen
  *
@@ -399,6 +400,7 @@ export default function GroupOptionsScreen() {
             style={{ marginTop: spacing.md }}
           />
         </Card>
+        {household ? <DeleteGroupCard household={household} /> : null}
       </ScrollView>
     </ScreenContainer>
   );

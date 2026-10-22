@@ -29,7 +29,10 @@ try:
         print(device.shell(args[0], read_timeout_s=30, timeout_s=55))
     elif command == 'install':
         device.push(args[0], '/data/local/tmp/chorescore-candidate.apk', read_timeout_s=30)
-        print(device.shell('pm install -r /data/local/tmp/chorescore-candidate.apk', read_timeout_s=30, timeout_s=55))
+        result = device.shell('pm install -r /data/local/tmp/chorescore-candidate.apk', read_timeout_s=30, timeout_s=55)
+        print(result)
+        if result.strip() != 'Success':
+            raise SystemExit(1)
     elif command == 'screenshot':
         device.shell('screencap -p /sdcard/chorescore-screen.png', read_timeout_s=30, timeout_s=55)
         device.pull('/sdcard/chorescore-screen.png', args[0], read_timeout_s=30)

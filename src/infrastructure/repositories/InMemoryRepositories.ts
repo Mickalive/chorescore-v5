@@ -825,6 +825,9 @@ export class InMemorySettlementRepository implements SettlementRepository {
 
 export class InMemoryInvitationRepository implements InvitationRepository {
   private items = new Map<string, Invitation>();
+  snapshot(): Map<string,Invitation> { return new Map([...this.items].map(([id,row]) => [id,{...row}])); }
+  restoreFromSnapshot(rows: Map<string,Invitation>): void { this.items = new Map(rows); }
+
 
   seed(items: Invitation[]): void {
     for (const inv of items) {
@@ -913,6 +916,14 @@ export class InMemoryInvitationRepository implements InvitationRepository {
 
 export class InMemorySyncStateRepository implements SyncStateRepository {
   private sequences = new Map<string, number>();
+  snapshotSequences(): Map<string,number> { return new Map(this.sequences); }
+  restoreSequences(rows: Map<string,number>): void { this.sequences = new Map(rows); }
+  clearHousehold(householdId: string): void {
+    for (const map of [this.sequences,this.cursors,this.records]) {
+      for (const key of map.keys()) if(key.startsWith(`${householdId}:`)) map.delete(key);
+    }
+  }
+
   async nextLocalRevision(householdId: string, collection: SyncCollection): Promise<number> {
     const key = `${householdId}:${collection}`;
     const previous = this.sequences.get(key) ?? Math.max(

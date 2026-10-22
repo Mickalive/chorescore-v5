@@ -352,6 +352,25 @@ function createInMemoryRepositories(): AllRepositories {
   const settlementRepo = new InMemorySettlementRepository();
   const invitationRepo = new InMemoryInvitationRepository();
   const baseSyncState = new InMemorySyncStateRepository();
+  // Match SQLite group deletion, including named identities and private data.
+  const deleteHouseholdRow = householdRepo.delete.bind(householdRepo);
+  function removeGroupRows<T extends { householdId: string }>(repo: {
+    snapshot(): Map<string,T>; restoreFromSnapshot(value: Map<string,T>): void;
+  }, householdId: string) {
+    const rows = repo.snapshot();
+    for (const [id,row] of rows) if(row.householdId === householdId) rows.delete(id);
+    repo.restoreFromSnapshot(rows);
+  }
+  householdRepo.delete = async (id: string) => {
+    removeGroupRows(contributionRepo,id); removeGroupRows(expenseRepo,id);
+    removeGroupRows(todoRepo,id); removeGroupRows(taskRepo,id);
+    removeGroupRows(settlementRepo,id); removeGroupRows(categoryRepo,id);
+    removeGroupRows(invitationRepo,id); removeGroupRows(memberRepo,id);
+    removeGroupRows(membershipRepo,id);
+    baseSyncState.clearHousehold(id);
+    await deleteHouseholdRow(id);
+  };
+
 
   // Wrap ALL business repos to record dirty sync records after writes
   const syncContributions = new SyncRecordingContributionRepository(contributionRepo, baseSyncState);
@@ -396,8 +415,10 @@ function createInMemoryRepositories(): AllRepositories {
       const categorySnap = categoryRepo.snapshot();
       const membershipSnap = membershipRepo.snapshot();
       const householdSnap = householdRepo.snapshot();
+      const invitationSnap = invitationRepo.snapshot();
       // Snapshot base sync state (cursors + records)
       const syncCursorsSnap = baseSyncState.snapshotCursors();
+      const syncSequencesSnap = baseSyncState.snapshotSequences();
       const syncRecordsSnap = baseSyncState.snapshotRecords();
       try {
         return await fn();
@@ -411,7 +432,9 @@ function createInMemoryRepositories(): AllRepositories {
         categoryRepo.restoreFromSnapshot(categorySnap);
         membershipRepo.restoreFromSnapshot(membershipSnap);
         householdRepo.restoreFromSnapshot(householdSnap);
+        invitationRepo.restoreFromSnapshot(invitationSnap);
         baseSyncState.restoreCursors(syncCursorsSnap);
+        baseSyncState.restoreSequences(syncSequencesSnap);
         baseSyncState.restoreRecords(syncRecordsSnap);
         throw err;
       }
