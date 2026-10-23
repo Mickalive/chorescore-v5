@@ -10,6 +10,10 @@
 - **Mode de construction** : un APK de test Android ARM64 + x86_64 sur chaque PR et changement de main. Une compilation réussie n'est pas une validation produit.
 - **Attention aux données** : V5 est une application Android distincte (package `app.chorescore.v5`). Les données locales de V4 ne sont pas transférées automatiquement.
 
+## Mission sur GitHub
+
+Suivre [l’issue nº 1](https://github.com/Mickalive/chorescore-v5/issues/1) et poursuivre la [PR unique nº 2](https://github.com/Mickalive/chorescore-v5/pull/2). [GITHUB_DELIVERY.md](GITHUB_DELIVERY.md) précise le rôle de Codex, les contrôles GitHub Actions, les preuves attendues et l’ordre de reprise. Une consigne publiée ne constitue pas à elle seule une exécution autonome.
+
 ## Lire avant de coder
 
 - [PRODUCT.md](PRODUCT.md) — contrat produit, esthétique et contraintes.
@@ -37,4 +41,4 @@ npm start
 
 Avec Chromium installé : `EXPO_NO_TELEMETRY=1 EXPO_OFFLINE=1 npm run test:web`. Ce scénario utilise la vraie base SQLite du navigateur ; il ne remplace pas les essais Android. `CHROME_BIN` et `EVIDENCE_DIR` sont facultatifs.
 
-La connexion Google peut être configurée selon [FIREBASE_SETUP.md](docs/FIREBASE_SETUP.md). Aucun projet Firebase n'est actuellement configuré. Le backend de collaboration reste à implémenter ; activer Google ne synchronise pas les groupes.
+La connexion Google peut être configurée selon [FIREBASE_SETUP.md](docs/FIREBASE_SETUP.md). Aucun projet Firebase n'est actuellement configuré. Le serveur de collaboration est implémenté et testé séparément, mais son déploiement et son raccordement au client restent à faire ; activer Google ne synchronise pas les groupes.
