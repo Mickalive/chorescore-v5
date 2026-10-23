@@ -1,0 +1,158 @@
+name: OpenCode gratuit — mission ChoreScore
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'check = tester le modèle gratuit ; work = poursuivre la mission dans la PR 2'
+        type: choice
+        options: [check, work]
+        default: check
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+concurrency:
+  group: chorescore-opencode-writer
+  cancel-in-progress: false
+
+jobs:
+  opencode:
+    if: >-
+      github.event.repository.private == false &&
+      (github.event_name == 'workflow_dispatch' ||
+      (contains(fromJSON('[1,2]'), github.event.issue.number) &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
+       startsWith(github.event.comment.body, '/opencode')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: write
+      actions: write
+      issues: write
+      pull-requests: read
+    env:
+      MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'work' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/product-reconstruction
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install pinned OpenCode CLI
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/opencode-cli"
+          curl --fail --location --retry 2 https://github.com/anomalyco/opencode/releases/download/v1.19.4/opencode-linux-x64.tar.gz -o "$RUNNER_TEMP/opencode.tar.gz"
+          printf '%s  %s\n' 849bd6b3d959a1d2ef200ed1634a51c79a45ca236aa26665d75debd694805cce "$RUNNER_TEMP/opencode.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/opencode.tar.gz" -C "$RUNNER_TEMP/opencode-cli"
+          echo "$RUNNER_TEMP/opencode-cli" >> "$GITHUB_PATH"
+      - name: Require currently zero-priced model
+        run: |
+          curl --fail --location https://raw.githubusercontent.com/anomalyco/models.dev/dev/providers/opencode/models/big-pickle.toml -o "$RUNNER_TEMP/model.toml"
+          python3 - <<'PY'
+          import os, tomllib
+          with open(os.environ['RUNNER_TEMP']+'/model.toml','rb') as file: model=tomllib.load(file)
+          assert model['cost']['text']['input']['price']==0, 'Model input is no longer free; stopping'
+          assert model['cost']['text']['output']['price']==0, 'Model output is no longer free; stopping'
+          print('Big Pickle: input/output price both zero. No paid API credential is supplied.')
+          PY
+      - name: Verify actual free inference
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          opencode --version
+          timeout 240 opencode run --model opencode/big-pickle --format json 'Reply exactly OPENCODE_FREE_OK. Do not read or modify files. Do not use tools.' | tee "$RUNNER_TEMP/opencode-health.jsonl"
+          python3 - <<'PY'
+          import json,os
+          events=[]
+          for line in open(os.environ['RUNNER_TEMP']+'/opencode-health.jsonl'):
+            try: events.append(json.loads(line))
+            except ValueError: pass
+          assert not any(e.get('type')=='error' for e in events), 'OpenCode reported an inference error'
+          text=''.join(e.get('part',{}).get('text','') for e in events if e.get('type')=='text')
+          assert 'OPENCODE_FREE_OK' in text, 'No actual model response; worker cannot start'
+          print('Confirmed: free OpenCode model answered from this GitHub runner.')
+          PY
+      - name: Prepare dependencies and latest native failure context
+        if: env.MODE == 'work'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          mkdir -p .opencode-ci
+          gh run list --workflow android-apk.yml --branch feat/product-reconstruction --limit 5 --json databaseId,status,conclusion,url > .opencode-ci/runs.json
+          failed=$(node -e 'const a=require("./.opencode-ci/runs.json");process.stdout.write(String(a.find(r=>r.conclusion==="failure")?.databaseId??""))')
+          if [ -n "$failed" ]; then
+            gh run view "$failed" --log-failed > .opencode-ci/failed.log 2>&1 || true
+            gh run download "$failed" --name ChoreScore-Android-evidence --dir .opencode-ci/evidence 2> .opencode-ci/download-error.txt || true
+          fi
+      - name: OpenCode implements the next verified product slice
+        if: env.MODE == 'work'
+        timeout-minutes: 26
+        run: |
+          set -euo pipefail
+          timeout 1500 opencode run --agent build --model opencode/big-pickle --format json "$(cat .github/OPENCODE_MISSION.md)" | tee "$RUNNER_TEMP/opencode-work.jsonl"
+          python3 - <<'PYWORK'
+          import json,os
+          events=[]
+          for line in open(os.environ['RUNNER_TEMP']+'/opencode-work.jsonl'):
+            try: events.append(json.loads(line))
+            except ValueError: pass
+          assert not any(e.get('type')=='error' for e in events), 'OpenCode worker reported a session error'
+          assert any(e.get('type')=='text' for e in events), 'No worker response received'
+          PYWORK
+      - name: Verify proposed source changes
+        if: env.MODE == 'work'
+        run: |
+          set -euo pipefail
+          npm run typecheck
+          npm test
+          npm run test:backend
+          git diff --check
+      - name: Publish verified changes to the existing PR and run Android acceptance
+        if: env.MODE == 'work'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git add -A
+          python3 - <<'PY'
+          import subprocess
+          paths=subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines()
+          blocked=[p for p in paths if p.startswith('.github/workflows/') or p=='opencode.json' or p=='.github/OPENCODE_MISSION.md' or p.startswith('.opencode-ci/')]
+          assert not blocked, 'Worker changed its execution controls or diagnostics: '+str(blocked)
+          PY
+          if git diff --cached --quiet; then
+            echo 'No source change: no commit or claim of delivery.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'OpenCode: implement and verify the next ChoreScore product slice'
+          gh auth setup-git
+          git push origin HEAD:feat/product-reconstruction
+          gh workflow run android-apk.yml --ref feat/product-reconstruction
+          printf 'Changes pushed to PR #2. Android acceptance requested; product completion is not implied.\n' >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve worker response and proposed patch
+        if: always()
+        run: |
+          git add -N .
+          git diff --binary > "$RUNNER_TEMP/opencode-proposed.patch"
+      - name: Worker evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenCode-worker-evidence
+          path: |
+            ${{ runner.temp }}/opencode-health.jsonl
+            ${{ runner.temp }}/opencode-work.jsonl
+            ${{ runner.temp }}/opencode-proposed.patch
+          if-no-files-found: warn
+          retention-days: 14
