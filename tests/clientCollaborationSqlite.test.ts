@@ -28,6 +28,10 @@ import { RemoteSyncAdapter } from '../src/infrastructure/sync/RemoteSyncAdapter'
 import { createGroupWithMembers } from '../src/application/use-cases/groupMembers';
 import { calculateContributionBalances } from '../src/domain/calculations/contributionLedger';
 
+// Two real SQLite files, RSA token signing and a server restart are slower on
+// the shared CI runner than the default Jest budget (observed timeout at 5 s).
+jest.setTimeout(30_000);
+
 jest.mock('expo-sqlite', () => ({
   openDatabaseAsync: async (name: string) => {
     const sqlite = (process as any).getBuiltinModule('node:sqlite');

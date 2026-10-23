@@ -1,6 +1,7 @@
 """Real installed release APK smoke journey. Standard adb + Python stdlib only.
 No E2E auth, seeded repository, native API mock or fake backend is used.
 """
+import base64
 import hashlib
 import json
 import os
@@ -16,6 +17,10 @@ EVIDENCE = Path(os.environ.get('ANDROID_EVIDENCE_DIR','android-evidence')).resol
 EVIDENCE.mkdir(parents=True,exist_ok=True)
 PACKAGE = 'app.chorescore.v5'
 ADB = os.environ.get('ADB_BIN','adb')
+PHOTO_NAME = 'chorescore-photo.png'
+PHOTO_BYTES = base64.b64decode(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII='
+)
 
 def adb(*args, binary=False, timeout=35):
     result = subprocess.run([ADB,*args],capture_output=True,timeout=timeout,check=True)
@@ -74,6 +79,8 @@ def locate(label=None, resource=None, partial=False, timeout=35):
         if nodes:return nodes[0]
         if dismiss_system_dialog(root):
             continue
+        if dismiss_permission(root):
+            continue
         time.sleep(.5)
     raise AssertionError(f'Visible control missing: {resource or label}')
 
@@ -112,6 +119,36 @@ def fill_node(node,value,clear=False):
 def fill(resource,value,clear=False):
     fill_node(scroll_find(resource=resource),value,clear)
 
+def fill_nth(resource,index,value,clear=False):
+    nodes=candidates(hierarchy(),resource=resource)
+    if len(nodes)<=index:
+        for _ in range(8):
+            swipe()
+            nodes=candidates(hierarchy(),resource=resource)
+            if len(nodes)>index:break
+    if len(nodes)<=index:raise AssertionError(f'Missing {resource}[{index}]')
+    fill_node(nodes[index],value,clear)
+
+def tap_category(name):
+    for _ in range(10):
+        for node in hierarchy().iter('node'):
+            attrs=node.attrib
+            if ('/add.category.' in attrs.get('resource-id','')
+                    and attrs.get('resource-id','').split('/')[-1] != 'add.category.none'
+                    and name in attrs.get('text','')):
+                tap_node(node)
+                return
+        swipe()
+    raise AssertionError(f'Category chip missing: {name}')
+
+def add_member_at_creation(name):
+    node=scroll_find(resource='groups.memberInput')
+    tap_node(node)
+    adb('shell','input','text',name)
+    adb('shell','input','keyevent','KEYCODE_ENTER')
+    time.sleep(.8)
+    adb('shell','input','keyevent','KEYCODE_BACK')
+
 def double_tap(node):
     x1,y1,x2,y2=map(int,re.findall(r'\d+',node.attrib['bounds']))
     x,y=str((x1+x2)//2),str((y1+y2)//2)
@@ -131,8 +168,62 @@ def screenshot(name):
     (EVIDENCE/(name+'.png')).write_bytes(adb('exec-out','screencap','-p',binary=True))
     (EVIDENCE/(name+'.xml')).write_text(adb('shell','cat','/data/local/tmp/chorescore-window.xml'))
 
+def dismiss_permission(root):
+    for label in ('Allow','Autoriser','While using the app','Pendant l’utilisation'):
+        taps=candidates(root,label=label)
+        if taps:
+            tap_node(taps[0])
+            time.sleep(.8)
+            return True
+    return False
+
+def wait_for_permission(timeout=20):
+    deadline=time.monotonic()+timeout
+    while time.monotonic()<deadline:
+        if dismiss_permission(hierarchy()):
+            return True
+        time.sleep(.5)
+    return False
+
+def dismiss_alert():
+    for label in ('OK','D’accord',"D'accord",'Fermer','Close'):
+        nodes=candidates(hierarchy(),label=label)
+        if nodes:
+            tap_node(nodes[0])
+            time.sleep(.6)
+            return True
+    return False
+
+def select_photo():
+    deadline=time.monotonic()+20
+    while time.monotonic()<deadline:
+        focus=adb('shell','dumpsys','window','windows')
+        if 'documentsui' in focus.lower() or 'picker' in focus.lower():break
+        time.sleep(.5)
+    else:raise AssertionError('Android document picker did not open')
+    file_node=None
+    for _ in range(10):
+        root=hierarchy()
+        nodes=candidates(root,label='chorescore-photo',partial=True)
+        if nodes:
+            file_node=nodes[0]
+            break
+        downloads=candidates(root,label='Downloads',partial=True)
+        if downloads:
+            tap_node(downloads[0])
+        else:
+            swipe(False)
+        time.sleep(.8)
+    if file_node is None:raise AssertionError('Test photo not visible in picker')
+    tap_node(file_node)
+    locate('Photo jointe',timeout=20)
+
 def start():
     adb('shell','am','start','-W','-n',PACKAGE+'/.MainActivity',timeout=55)
+
+def open_group():
+    tap('Ouvrir le groupe Maison CI')
+    locate(resource='add.taskLabel')
 
 try:
     adb('wait-for-device')
@@ -141,6 +232,11 @@ try:
     adb('shell','wm','density','160')
     adb('install','-r',str(APK),timeout=120)
     adb('logcat','-c')
+    # A real private photo file on the device, selected through DocumentsUI.
+    (EVIDENCE/PHOTO_NAME).write_bytes(PHOTO_BYTES)
+    adb('push',str(EVIDENCE/PHOTO_NAME),f'/sdcard/Download/{PHOTO_NAME}')
+    adb('shell','am','broadcast','-a','android.intent.action.MEDIA_SCANNER_SCAN_FILE',
+        '-d',f'file:///sdcard/Download/{PHOTO_NAME}')
     start()
     # The normal unconfigured build starts a real unique local account.
     locate('Créer un groupe',timeout=90)
@@ -148,36 +244,119 @@ try:
     scroll_to(resource='groups.newButton')
     fill('groups.nameInput','Maison CI')
     scroll_to(resource='groups.unit.points')
-    fill('groups.memberInput','Camille')
+    add_member_at_creation('Camille')
+    add_member_at_creation('Dominique')
     scroll_to(resource='groups.createButton')
     locate('Ouvrir le groupe Maison CI')
     screenshot('groups-filled-android')
-    tap('Ouvrir le groupe Maison CI')
-    locate(resource='add.taskLabel')
+    open_group()
     locate('Valeur (pts)')
+
+    # User-created category with an explicit 1:3 default ratio.
+    scroll_to(resource='add.categoryManagerToggle')
+    fill('add.categoryName','Menage CI')
+    tap('add.categoryDraftRatioToggle')
+    fill('add.categoryWeight.0','1')
+    fill('add.categoryWeight.1','3')
+    tap('add.categoryCreateButton')
+    dismiss_alert()
+    scroll_top()
+    scroll_find('Menage CI',partial=True)
+    screenshot('category-with-ratio-android')
+
+    # Task with the category, exact 1:3 custom weights and a real picked photo.
     fill('add.taskLabel','Cuisine CI')
-    fill('add.taskValue','9')
+    fill('add.taskValue','8')
+    tap_category('Menage CI')
+    scroll_to(resource='add.taskSplit.custom')
+    fill('add.taskWeight.0','1')
+    fill('add.taskWeight.1','3')
     fill('add.taskNote','Note persistante')
+    scroll_to(resource='add.taskPhotoButton')
+    select_photo()
     scroll_to('Ajouter la tâche')
-    for _ in range(3):swipe(False)
+    scroll_top()
+
+    # Expense with cent-exact custom shares (1.01 => 0.50 + 0.51).
     tap('Dépense')
     fill('add.expenseTitle','Courses CI')
     fill('add.expenseAmount','1.01')
+    scroll_to(resource='add.expenseSplit.custom')
+    fill_nth('add.expenseShare',0,'0.50')
+    fill_nth('add.expenseShare',1,'0.51')
     scroll_to('Ajouter la dépense')
+
+    # Two todo kinds; complete each with a double tap, exactly one entry each.
+    tap('À faire')
+    tap(resource='todos.newItem')
+    fill('todos.createTitle','Todo tâche CI')
+    fill('todos.createNotes','Rappel CI')
+    scroll_to(resource='todos.reminderDateTime')
+    tomorrow=time.strftime('%Y-%m-%d',time.localtime(time.time()+86400))
+    fill('todos.reminderDateTime.date',tomorrow)
+    fill('todos.reminderDateTime.time','12:00')
+    tap(resource='todos.reminderDateTime.confirm')
+    scroll_to(resource='todos.createSubmit')
+    tap(resource='todos.createSubmit')
+    # Android 13 notification permission is requested by the real scheduler.
+    wait_for_permission()
+    scroll_top()
+    double_tap(scroll_find(resource='todos.complete.0'))
+    fill('todos.completeValue','3',clear=True)
+    double_tap(scroll_find(resource='todos.completeSubmit'))
+    scroll_top()
+    locate(resource='todos.newItem')
+
+    tap(resource='todos.newItem')
+    fill('todos.createTitle','Todo dépense CI')
+    scroll_to(resource='todos.createKind.expense')
+    fill('todos.createAmount','2.00')
+    scroll_to(resource='todos.createSubmit')
+    tap(resource='todos.createSubmit')
+    scroll_top()
+    double_tap(scroll_find(resource='todos.complete.0'))
+    fill('todos.completeAmount','2.00',clear=True)
+    double_tap(scroll_find(resource='todos.completeSubmit'))
+    scroll_top()
+    locate(resource='todos.newItem')
+    screenshot('todos-completed-android')
+
     tap('Balances')
     scroll_find('Courses CI',partial=True)
     scroll_find('Cuisine CI',partial=True)
+    scroll_find('Todo tâche CI',partial=True)
+    scroll_find('Todo dépense CI',partial=True)
     screenshot('balances-before-restart-android')
     adb('shell','am','force-stop',PACKAGE)
     start()
-    tap('Ouvrir le groupe Maison CI')
+    open_group()
     tap('Balances')
     scroll_find('Courses CI',partial=True)
     scroll_find('Cuisine CI',partial=True)
     screenshot('balances-after-restart-android')
-    # Open the actual Android chooser; do not replace native sharing in this build.
+
+    # Persisted private photo is still resolvable after a full restart.
     scroll_to('Cuisine CI',partial=True)
-    tap('Partager')
+    tap(resource='balances.editEntry')
+    scroll_find('Photo jointe',partial=True)
+    screenshot('photo-after-restart-android')
+    scroll_top()
+    fill('add.taskValue','20',clear=True)
+    scroll_to('Mettre à jour')
+    scroll_top()
+    scroll_find('Cuisine CI',partial=True)
+
+    # Deleting from Balances updates the ledger and removes the row.
+    scroll_to('Courses CI',partial=True)
+    tap(resource='balances.deleteEntry')
+    tap('Supprimer')
+    time.sleep(1.5)
+    assert_absent('Courses CI',partial=True)
+
+    # Open the actual Android chooser; do not replace native sharing in this build.
+    scroll_top()
+    scroll_to('Cuisine CI',partial=True)
+    tap(resource='balances.shareEntry')
     deadline=time.monotonic()+20
     while time.monotonic()<deadline:
         focus=adb('shell','dumpsys','window','windows')
@@ -189,11 +368,15 @@ try:
     (EVIDENCE/'result.json').write_text(json.dumps({
         'status':'passed','apk_sha256':hashlib.sha256(APK.read_bytes()).hexdigest(),
         'android':adb('shell','getprop','ro.build.version.release').strip(),
-        'verified':['normal release startup','points group and pending named member','task and expense creation',
-                    'both ledger entries after force-stop and relaunch','actual Android share chooser'],
-        'not_verified':['real Firebase sign-in','two-phone collaboration','photos','reminders','custom splits','native editing/deletion'],
+        'verified':['normal release startup','points group with two named members',
+                    'user category with 1:3 ratio','task with exact custom split and persisted picked photo',
+                    'expense with cent-exact custom shares','task and expense todos completed by double tap',
+                    'reminder permission requested through the real scheduler','both ledger entries after force-stop and relaunch',
+                    'native edit and delete from Balances','actual Android share chooser'],
+        'partially_verified':['reminder scheduled through the native API; delivery timing is controlled by Android'],
+        'not_verified':['real Firebase sign-in','two-phone collaboration','custom compensation on device'],
     },ensure_ascii=False,indent=2))
-    print('PASS: installed release APK, persisted group/task/expense, restart, native share chooser',flush=True)
+    print('PASS: installed release APK: category/ratio, custom splits, photo, two todos, edit/delete, restart, share',flush=True)
 finally:
     try:(EVIDENCE/'logcat.txt').write_text(adb('logcat','-d','-t','1500',timeout=20))
     except Exception:pass
