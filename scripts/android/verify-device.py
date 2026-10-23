@@ -87,8 +87,11 @@ def tap(label=None,resource=None,partial=False):
 def swipe(up=True):
     adb('shell','input','swipe','206','740' if up else '260','206','260' if up else '740','350')
 
+def scroll_top():
+    for _ in range(12):swipe(False)
+
 def scroll_find(label=None,resource=None,partial=False):
-    for _ in range(9):
+    for _ in range(12):
         nodes=candidates(hierarchy(),label,resource,partial)
         if nodes:return nodes[0]
         swipe()
@@ -97,11 +100,32 @@ def scroll_find(label=None,resource=None,partial=False):
 def scroll_to(label=None,resource=None,partial=False):
     tap_node(scroll_find(label,resource,partial))
 
-def fill(resource,value):
-    scroll_to(resource=resource)
+def fill_node(node,value,clear=False):
+    tap_node(node)
+    if clear:
+        adb('shell','input','keyevent','KEYCODE_MOVE_END')
+        for _ in range(12):adb('shell','input','keyevent','KEYCODE_DEL')
     # Test input is ASCII; unicode labels are matched through UIAutomator XML.
     adb('shell','input','text',value.replace(' ','%s'))
     adb('shell','input','keyevent','KEYCODE_BACK')  # dismiss this input's keyboard
+
+def fill(resource,value,clear=False):
+    fill_node(scroll_find(resource=resource),value,clear)
+
+def double_tap(node):
+    x1,y1,x2,y2=map(int,re.findall(r'\d+',node.attrib['bounds']))
+    x,y=str((x1+x2)//2),str((y1+y2)//2)
+    adb('shell',f'input tap {x} {y}; input tap {x} {y}')
+
+def count_resources(fragment):
+    return sum(1 for n in hierarchy().iter('node')
+               if fragment in n.attrib.get('resource-id',''))
+
+def assert_absent(label,partial=False):
+    for _ in range(8):
+        if candidates(hierarchy(),label=label,partial=partial):
+            raise AssertionError(f'Unexpected visible control: {label}')
+        swipe()
 
 def screenshot(name):
     (EVIDENCE/(name+'.png')).write_bytes(adb('exec-out','screencap','-p',binary=True))

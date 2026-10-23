@@ -115,6 +115,8 @@ export interface SyncGateway {
   ensureRemoteGroup?(householdId: string, userId: string): Promise<void>;
   /** Remote collaboration: create a server invitation for a named member. */
   createInvitation?(householdId: string, memberId: string): Promise<RemoteInvitation>;
+  /** Remote collaboration: revoke an unused invitation token. */
+  revokeInvitation?(householdId: string, token: string): Promise<void>;
   /** Remote collaboration: accept a server invitation and pull its group. */
   acceptInvitation?(token: string): Promise<RemoteInvitationAcceptance>;
   /**

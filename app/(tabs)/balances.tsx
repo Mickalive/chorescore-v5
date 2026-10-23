@@ -946,10 +946,10 @@ export default function BalancesScreen() {
         <Card style={styles.historyCard}>
           {historyPage && historyPage.entries.length > 0 ? (
             <>
-              {historyPage.entries.map((entry) => (
+              {historyPage.entries.map((entry, index) => (
                 <TouchableOpacity
                   key={entry.entry.id}
-                  testID={`balances.history.${entry.entry.id}`}
+                  testID={`balances.history.index.${index}`}
                   style={styles.historyRow}
                   onPress={() => setSelectedEntry(entry)}
                   accessibilityRole="button"

@@ -340,6 +340,15 @@ export class RemoteSyncAdapter implements SyncGateway {
     return { ...response, groupId: householdId };
   }
 
+  async revokeInvitation(householdId: string, token: string): Promise<void> {
+    await this.token();
+    await this.request<{ revoked: boolean }>(
+      'POST',
+      `/groups/${encodeURIComponent(householdId)}/invites/${encodeURIComponent(token)}/revoke`,
+      {},
+    );
+  }
+
   async acceptInvitation(token: string): Promise<RemoteInvitationAcceptance> {
     await this.token();
     const response = await this.request<RemoteInvitationAcceptance>(

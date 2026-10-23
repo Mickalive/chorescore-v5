@@ -26,8 +26,7 @@ import { useApp } from '../src/features/app/AppContext';
 import { useI18n } from '../src/i18n';
 import { Invitation, Member } from '../src/domain/entities';
 import { createInvitation } from '../src/domain/services/invitationService';
-
-const DEEP_LINK_BASE = 'https://chorescore.app/join';
+import { buildInviteLink } from '../src/features/invitations/inviteLink';
 
 export default function InviteScreen() {
   const router = useRouter();
@@ -38,6 +37,7 @@ export default function InviteScreen() {
   const [existingInvitations, setExistingInvitations] = useState<Invitation[]>([]);
   const [targetMember, setTargetMember] = useState<Member | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [revokingId, setRevokingId] = useState<string | null>(null);
 
   const loadInvitations = useCallback(async () => {
     if (!currentHouseholdId) return;
@@ -65,7 +65,7 @@ export default function InviteScreen() {
   }, [memberId, currentHouseholdId, repos]);
 
   const shareLink = useCallback(async (token: string, groupName?: string) => {
-    const link = `${DEEP_LINK_BASE}/${token}`;
+    const link = buildInviteLink(token);
     await services.share.share({
       title: groupName ? t('invite.shareTitle', { group: groupName }) : t('invite.linkTitle'),
       message: groupName
@@ -140,6 +140,35 @@ export default function InviteScreen() {
     }
   };
 
+  const revoke = (invitation: Invitation) => {
+    if (!currentHouseholdId || !services.sync.revokeInvitation || revokingId) return;
+    Alert.alert(
+      t('invite.revokeConfirmTitle'),
+      t('invite.revokeConfirmBody'),
+      [
+        { text: t('action.cancel'), style: 'cancel' },
+        {
+          text: t('invite.revoke'),
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              setRevokingId(invitation.id);
+              try {
+                await services.sync.revokeInvitation!(currentHouseholdId, invitation.linkToken);
+                await repos.invitations.updateStatus(invitation.id, 'revoked');
+                await loadInvitations();
+              } catch {
+                Alert.alert(t('state.error'), t('invite.revokeError'));
+              } finally {
+                setRevokingId(null);
+              }
+            })();
+          },
+        },
+      ],
+    );
+  };
+
   return (
     <ScreenContainer edges={['top', 'bottom']}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
@@ -203,12 +232,25 @@ export default function InviteScreen() {
                       })}
                     </Text>
                   </View>
-                  <Button
-                    title={t('invite.reshare')}
-                    variant="ghost"
-                    size="small"
-                    onPress={() => shareLink(inv.linkToken)}
-                  />
+                  <View style={styles.inviteActions}>
+                    <Button
+                      title={t('invite.reshare')}
+                      variant="ghost"
+                      size="small"
+                      onPress={() => shareLink(inv.linkToken)}
+                    />
+                    {collaborationAvailable && services.sync.revokeInvitation && (
+                      <Button
+                        title={t('invite.revoke')}
+                        variant="ghost"
+                        size="small"
+                        onPress={() => revoke(inv)}
+                        loading={revokingId === inv.id}
+                        disabled={revokingId !== null}
+                        testID={`invite.revoke.${inv.id}`}
+                      />
+                    )}
+                  </View>
                 </View>
               </Card>
             ))}
@@ -250,5 +292,9 @@ const styles = StyleSheet.create({
   },
   inviteInfo: {
     flex: 1,
+  },
+  inviteActions: {
+    alignItems: 'flex-end',
+    gap: spacing.xs,
   },
 });

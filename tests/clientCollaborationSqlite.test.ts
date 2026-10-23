@@ -138,6 +138,8 @@ afterAll(async () => {
   await stopServer();
   await closeDatabase('alice.db').catch(() => undefined);
   await closeDatabase('bob.db').catch(() => undefined);
+  await closeDatabase('carol.db').catch(() => undefined);
+  await closeDatabase('dave.db').catch(() => undefined);
   rmSync(directory, { recursive: true, force: true });
 });
 
@@ -369,4 +371,38 @@ test('two restarted SQLite clients keep cursors, outbox, conflicts and exact led
   expect(await bob.repos.todos.getById(todo.id)).toMatchObject({ status: 'completed' });
   expect(await alice.repos.contributions.getByHousehold(hid)).toHaveLength(2);
   expect(await bob.repos.contributions.getByHousehold(hid)).toHaveLength(2);
+});
+
+test('a revoked targeted invitation cannot link, and a fresh one keeps the same member id', async () => {
+  const carol = await openClient('carol', 'carol.db');
+  const dave = await openClient('dave', 'dave.db');
+
+  const { household, namedMembers } = await createGroupWithMembers(carol.repos, {
+    name: 'Invitations révoquées',
+    owner: { userId: 'carol', displayName: 'Carol' },
+    memberNames: ['Dave'],
+    contributionUnit: 'minutes',
+  });
+  const daveMember = namedMembers[0];
+  const hid = household.id;
+  await carol.sync.ensureRemoteGroup(hid, 'carol');
+
+  const revoked = await carol.sync.createInvitation(hid, daveMember.id);
+  await carol.sync.revokeInvitation(hid, revoked.token);
+  await expect(dave.sync.acceptInvitation(revoked.token)).rejects.toThrow('Invitation unavailable');
+  expect(await dave.repos.members.getById(daveMember.id)).toBeNull();
+
+  const fresh = await carol.sync.createInvitation(hid, daveMember.id);
+  const accepted = await dave.sync.acceptInvitation(fresh.token);
+  expect(accepted).toEqual({ groupId: hid, memberId: daveMember.id });
+  expect(await dave.repos.members.getById(daveMember.id)).toMatchObject({
+    id: daveMember.id,
+    name: 'Dave',
+    userId: 'dave',
+  });
+  expect(await dave.repos.members.getByHousehold(hid)).toHaveLength(2);
+  expect((await carol.repos.members.getByHousehold(hid)).filter((m) => m.name === 'Dave')).toHaveLength(1);
+
+  await dave.sync.stopSync('*');
+  await carol.sync.stopSync('*');
 });

@@ -618,10 +618,10 @@ export default function TodosScreen() {
                 </View>
               ) : (
                 <View style={styles.todoList}>
-                  {todos.map((todo) => {
+                  {todos.map((todo, index) => {
                     const kind: TodoKind = todo.kind ?? 'task';
                     return (
-                      <Card key={todo.id} style={styles.todoCard}>
+                      <Card key={todo.id} testID={`todos.item.${index}`} style={styles.todoCard}>
                         <View style={styles.todoRow}>
                           <View style={styles.todoInfo}>
                             <Text variant="caption" color={colors.textSecondary}>
@@ -650,12 +650,14 @@ export default function TodosScreen() {
                           </View>
                           <View style={styles.todoActions}>
                             <Button
+                              testID={`todos.complete.${index}`}
                               title={t('todos.complete')}
                               variant="primary"
                               onPress={() => startComplete(todo)}
                               size="small"
                             />
                             <Button
+                              testID={`todos.delete.${index}`}
                               title={t('action.deleteShort')}
                               variant="ghost"
                               onPress={() => handleDelete(todo)}

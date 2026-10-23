@@ -849,12 +849,13 @@ export default function AddScreen() {
         </Text>
       </TouchableOpacity>
       {categoryDraft.ratioEnabled &&
-        members.map((member) => (
+        members.map((member, index) => (
           <View key={member.id} style={styles.shareRow}>
             <Text variant="caption" style={styles.shareName}>
               {t('add.categoryWeightFor', { name: member.name })}
             </Text>
             <TextInput
+              testID={`add.categoryWeight.${index}`}
               accessibilityLabel={t('add.categoryWeightFor', { name: member.name })}
               style={[styles.input, styles.shareInput]}
               value={categoryDraft.weights[member.id] ?? '1'}
@@ -1174,12 +1175,13 @@ export default function AddScreen() {
                   {t('add.taskSplitMissingWeight')}
                 </Text>
               ) : (
-                taskForm.beneficiaryMemberIds.map((memberId) => (
+                taskForm.beneficiaryMemberIds.map((memberId, index) => (
                   <View key={memberId} style={styles.shareRow}>
                     <Text variant="body" style={styles.shareName}>
                       {memberName(memberId)}
                     </Text>
                     <TextInput
+                      testID={`add.taskWeight.${index}`}
                       accessibilityLabel={`${t('add.weights')} ${memberName(memberId)}`}
                       style={[styles.input, styles.shareInput]}
                       value={taskWeightRaw[memberId] ?? '1'}
@@ -1205,11 +1207,12 @@ export default function AddScreen() {
           <View style={styles.inputGroup}>
             <Text variant="caption">{t('add.performedBy')}</Text>
             <View style={styles.chipRow}>
-              {members.map((m) => {
+              {members.map((m, index) => {
                 const selected = taskForm.performedByMemberId === m.id;
                 return (
                   <TouchableOpacity
                     key={m.id}
+                    testID={`add.taskPerformer.${index}`}
                     style={[styles.memberChip, selected && styles.memberChipActive]}
                     onPress={() => setTaskForm((prev) => ({ ...prev, performedByMemberId: m.id }))}
                   >
@@ -1226,11 +1229,12 @@ export default function AddScreen() {
           <View style={styles.inputGroup}>
             <Text variant="caption">{t('add.beneficiaries')}</Text>
             <View style={styles.chipRow}>
-              {members.map((m) => {
+              {members.map((m, index) => {
                 const selected = taskForm.beneficiaryMemberIds.includes(m.id);
                 return (
                   <TouchableOpacity
                     key={m.id}
+                    testID={`add.taskBeneficiary.${index}`}
                     style={[styles.memberChip, selected && styles.memberChipActive]}
                     onPress={() => toggleBeneficiary(m.id)}
                   >
