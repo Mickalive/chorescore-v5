@@ -266,6 +266,7 @@ export default function HomeScreen() {
               variant="primary"
               onPress={handleCreateHousehold}
               disabled={!newGroupName.trim() || creating}
+              testID="groups.createButton"
             />
             <Button
               title={t('action.cancel')}
@@ -281,7 +282,7 @@ export default function HomeScreen() {
             title={t('groups.create')}
             variant="primary"
             onPress={() => setShowCreate(true)}
-            testID="groups.createButton"
+            testID="groups.newButton"
           />
         </View>
       )}

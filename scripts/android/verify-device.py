@@ -96,7 +96,7 @@ try:
     # The normal unconfigured build starts a real unique local account.
     locate('Créer un groupe',timeout=55)
     screenshot('groups-empty-android')
-    tap('Créer un groupe')
+    scroll_to(resource='groups.newButton')
     fill('groups.nameInput','Maison CI')
     scroll_to(resource='groups.unit.points')
     fill('groups.memberInput','Camille')

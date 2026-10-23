@@ -38,7 +38,7 @@ import { planUnitChange, validateUnitChange } from '../src/domain/services/unitC
 export default function GroupOptionsScreen() {
   const router = useRouter();
   const { t } = useI18n();
-  const { currentHouseholdId, repos, emitDataChange, addMember } = useApp();
+  const { currentHouseholdId, repos, emitDataChange, addMember, renameMember } = useApp();
   const [household, setHousehold] = useState<Household | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [newMemberName, setNewMemberName] = useState('');
@@ -50,6 +50,9 @@ export default function GroupOptionsScreen() {
   const [rateMoneyAmount, setRateMoneyAmount] = useState('');
   const [rateCurrency, setRateCurrency] = useState('CHF');
   const [isSaving, setIsSaving] = useState(false);
+  const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
+  const [editingMemberName, setEditingMemberName] = useState('');
+  const [isRenamingMember, setIsRenamingMember] = useState(false);
 
   const loadHousehold = useCallback(async () => {
     if (!currentHouseholdId) return;
@@ -92,6 +95,37 @@ export default function GroupOptionsScreen() {
       Alert.alert(t('state.error'), t('groupOptions.memberAddError'));
     } finally {
       setIsAddingMember(false);
+    }
+  };
+
+  const startRenameMember = (member: Member) => {
+    setEditingMemberId(member.id);
+    setEditingMemberName(member.name);
+  };
+
+  const cancelRenameMember = () => {
+    setEditingMemberId(null);
+    setEditingMemberName('');
+  };
+
+  const handleRenameMember = async () => {
+    if (!currentHouseholdId || !editingMemberId) return;
+    const trimmed = editingMemberName.trim();
+    if (!trimmed) return;
+    const current = members.find((member) => member.id === editingMemberId);
+    if (current && current.name === trimmed) {
+      cancelRenameMember();
+      return;
+    }
+    setIsRenamingMember(true);
+    try {
+      await renameMember(currentHouseholdId, editingMemberId, trimmed);
+      cancelRenameMember();
+      await loadMembers();
+    } catch {
+      Alert.alert(t('state.error'), t('groupOptions.memberRenameError'));
+    } finally {
+      setIsRenamingMember(false);
     }
   };
 
@@ -240,23 +274,65 @@ export default function GroupOptionsScreen() {
           ) : (
             members.map((member) => (
               <View key={member.id} style={styles.memberRow}>
-                <View style={styles.memberInfo}>
-                  <Text variant="body" style={styles.memberName}>{member.name}</Text>
-                  <Text variant="caption" color={colors.textSecondary}>
-                    {isLinkedMember(member)
-                      ? t('groupOptions.linkedMember')
-                      : t('groupOptions.namedMember')}
-                  </Text>
-                </View>
-                {!isLinkedMember(member) && (
-                  <Button
-                    title={t('groupOptions.inviteMember')}
-                    variant="ghost"
-                    size="small"
-                    onPress={() =>
-                      router.push({ pathname: '/invite', params: { memberId: member.id } })
-                    }
-                  />
+                {editingMemberId === member.id ? (
+                  <View style={styles.memberRenameRow}>
+                    <TextInput
+                      style={[styles.input, styles.memberRenameInput]}
+                      value={editingMemberName}
+                      onChangeText={setEditingMemberName}
+                      onSubmitEditing={handleRenameMember}
+                      returnKeyType="done"
+                      autoFocus
+                      testID="groupOptions.memberRenameInput"
+                    />
+                    <Button
+                      title={t('action.save')}
+                      variant="primary"
+                      size="small"
+                      onPress={handleRenameMember}
+                      disabled={!editingMemberName.trim() || isRenamingMember}
+                      loading={isRenamingMember}
+                      testID="groupOptions.memberRenameSave"
+                    />
+                    <Button
+                      title={t('action.cancel')}
+                      variant="ghost"
+                      size="small"
+                      onPress={cancelRenameMember}
+                      disabled={isRenamingMember}
+                    />
+                  </View>
+                ) : (
+                  <>
+                    <View style={styles.memberInfo}>
+                      <Text variant="body" style={styles.memberName}>{member.name}</Text>
+                      <Text variant="caption" color={colors.textSecondary}>
+                        {isLinkedMember(member)
+                          ? t('groupOptions.linkedMember')
+                          : t('groupOptions.namedMember')}
+                      </Text>
+                    </View>
+                    <View style={styles.memberActions}>
+                      <Button
+                        title={t('action.edit')}
+                        variant="ghost"
+                        size="small"
+                        onPress={() => startRenameMember(member)}
+                        accessibilityLabel={t('groupOptions.renameMember', { name: member.name })}
+                        testID="groupOptions.memberRename"
+                      />
+                      {!isLinkedMember(member) && (
+                        <Button
+                          title={t('groupOptions.inviteMember')}
+                          variant="ghost"
+                          size="small"
+                          onPress={() =>
+                            router.push({ pathname: '/invite', params: { memberId: member.id } })
+                          }
+                        />
+                      )}
+                    </View>
+                  </>
                 )}
               </View>
             ))
@@ -452,6 +528,20 @@ const styles = StyleSheet.create({
   memberInfo: {
     flex: 1,
     marginRight: spacing.sm,
+  },
+  memberActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  memberRenameRow: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  memberRenameInput: {
+    flex: 1,
   },
   memberName: {
     flex: 1,

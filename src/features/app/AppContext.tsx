@@ -38,6 +38,7 @@ import { ContributionUnit, Household, Member } from '../../domain/entities';
 import {
   addGroupMember,
   createGroupWithMembers,
+  renameGroupMember,
 } from '../../application/use-cases/groupMembers';
 import { loadHouseholdsForUser } from './demoFixture';
 
@@ -76,6 +77,8 @@ interface AppState {
   getMembersForHousehold: (householdId: string) => Promise<Member[]>;
   /** Add a named member to an existing group (post-creation). */
   addMember: (householdId: string, name: string) => Promise<Member>;
+  /** Rename a member while preserving its id and ledger history. */
+  renameMember: (householdId: string, memberId: string, name: string) => Promise<Member>;
 
   // Repositories (exposed for screens — scoped to current user)
   repos: AllRepositories;
@@ -332,6 +335,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return member;
   }, [ensureReposReady, emitDataChange]);
 
+  const renameMember = useCallback(async (householdId: string, memberId: string, name: string) => {
+    await ensureReposReady();
+    const member = await renameGroupMember(reposRef.current, householdId, memberId, name);
+    emitDataChange('member', householdId);
+    return member;
+  }, [ensureReposReady, emitDataChange]);
+
   const value: AppState = {
     currentUser,
     isLoading,
@@ -346,6 +356,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     loadHouseholds,
     getMembersForHousehold,
     addMember,
+    renameMember,
     repos: reposRef.current,
     rawRepos: rawReposRef.current,
     emitDataChange,
