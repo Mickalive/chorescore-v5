@@ -8,6 +8,11 @@ on:
         type: choice
         options: [check, work]
         default: check
+      rounds:
+        description: 'Nombre de passages successifs pour poursuivre le produit (un seul agent à la fois)'
+        type: choice
+        options: ['1', '4', '8']
+        default: '8'
   issue_comment:
     types: [created]
 
@@ -26,7 +31,12 @@ jobs:
        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
        startsWith(github.event.comment.body, '/opencode')))
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        passage: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.mode == 'check' && '[1]' || github.event_name == 'workflow_dispatch' && inputs.rounds == '1' && '[1]' || github.event_name == 'workflow_dispatch' && inputs.rounds == '4' && '[1,2,3,4]' || '[1,2,3,4,5,6,7,8]') }}
+    timeout-minutes: 65
     permissions:
       contents: write
       actions: write
@@ -89,6 +99,8 @@ jobs:
           set -euo pipefail
           npm ci --no-audit --no-fund
           mkdir -p .opencode-ci
+          gh issue view 1 --json title,body,comments > .opencode-ci/issue-1.json
+          gh pr view 2 --json title,body,comments > .opencode-ci/pr-2.json
           gh run list --workflow android-apk.yml --branch feat/product-reconstruction --limit 5 --json databaseId,status,conclusion,url > .opencode-ci/runs.json
           failed=$(node -e 'const a=require("./.opencode-ci/runs.json");process.stdout.write(String(a.find(r=>r.conclusion==="failure")?.databaseId??""))')
           if [ -n "$failed" ]; then
@@ -143,8 +155,18 @@ jobs:
           fi
           gh auth setup-git
           git push origin HEAD:feat/product-reconstruction
+          head=$(git rev-parse HEAD)
           gh workflow run android-apk.yml --ref feat/product-reconstruction
-          printf 'Changes pushed to PR #2. Android acceptance requested; product completion is not implied.\n' >> "$GITHUB_STEP_SUMMARY"
+          # Identify the actual run for this source revision, then require its native gate.
+          android_run=''
+          for attempt in $(seq 1 12); do
+            android_run=$(gh run list --workflow android-apk.yml --branch feat/product-reconstruction --event workflow_dispatch --limit 10 --json databaseId,headSha --jq '.[] | select(.headSha == "'"$head"'") | .databaseId' | head -n 1)
+            if [ -n "$android_run" ]; then break; fi
+            sleep 5
+          done
+          test -n "$android_run"
+          timeout 1500 gh run watch "$android_run" --exit-status --interval 20
+          printf 'Changes pushed to PR #2. Android acceptance passed; full product completion still requires all acceptance criteria.\n' >> "$GITHUB_STEP_SUMMARY"
       - name: Preserve worker response and proposed patch
         if: always()
         run: |
