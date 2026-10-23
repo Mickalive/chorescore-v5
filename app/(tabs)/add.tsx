@@ -801,6 +801,7 @@ export default function AddScreen() {
         return (
           <TouchableOpacity
             key={option.id ?? 'none'}
+            testID={`add.category.${option.id ?? 'none'}`}
             style={[styles.memberChip, selected && styles.memberChipActive]}
             onPress={() => onSelect(option.id)}
             accessibilityRole="button"
@@ -834,6 +835,7 @@ export default function AddScreen() {
         placeholderTextColor={colors.textMuted}
       />
       <TouchableOpacity
+        testID="add.categoryDraftRatioToggle"
         style={styles.managerRow}
         onPress={() =>
           setCategoryDraft((prev) => ({ ...prev, ratioEnabled: !prev.ratioEnabled }))
@@ -853,6 +855,7 @@ export default function AddScreen() {
               {t('add.categoryWeightFor', { name: member.name })}
             </Text>
             <TextInput
+              accessibilityLabel={t('add.categoryWeightFor', { name: member.name })}
               style={[styles.input, styles.shareInput]}
               value={categoryDraft.weights[member.id] ?? '1'}
               onChangeText={(value) =>
@@ -946,6 +949,7 @@ export default function AddScreen() {
                       {t('add.categoryWeightFor', { name: member.name })}
                     </Text>
                     <TextInput
+                      accessibilityLabel={t('add.categoryWeightFor', { name: member.name })}
                       style={[styles.input, styles.shareInput]}
                       value={categoryRatioWeights[member.id] ?? '1'}
                       onChangeText={(value) =>
@@ -1002,6 +1006,7 @@ export default function AddScreen() {
       {!isEditing && (
         <View style={styles.modeSwitch}>
           <TouchableOpacity
+            testID="add.mode.task"
             style={[styles.modeButton, mode === 'task' && styles.modeButtonActive]}
             onPress={() => setMode('task')}
             accessibilityRole="button"
@@ -1016,6 +1021,7 @@ export default function AddScreen() {
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
+            testID="add.mode.expense"
             style={[styles.modeButton, mode === 'expense' && styles.modeButtonActive]}
             onPress={() => setMode('expense')}
             accessibilityRole="button"
@@ -1112,6 +1118,7 @@ export default function AddScreen() {
             <Text variant="caption">{t('add.split')}</Text>
             <View style={styles.splitRow}>
               <TouchableOpacity
+                testID="add.taskSplit.equal"
                 style={[styles.splitButton, effectiveSplitChoice === 'equal' && styles.splitButtonActive]}
                 onPress={() => setTaskSplitChoice('equal')}
               >
@@ -1124,6 +1131,7 @@ export default function AddScreen() {
               </TouchableOpacity>
               {taskCategoryHasRatio && (
                 <TouchableOpacity
+                  testID="add.taskSplit.category"
                   style={[
                     styles.splitButton,
                     effectiveSplitChoice === 'category' && styles.splitButtonActive,
@@ -1143,6 +1151,7 @@ export default function AddScreen() {
                 </TouchableOpacity>
               )}
               <TouchableOpacity
+                testID="add.taskSplit.custom"
                 style={[styles.splitButton, effectiveSplitChoice === 'custom' && styles.splitButtonActive]}
                 onPress={() => setTaskSplitChoice('custom')}
               >
@@ -1171,6 +1180,7 @@ export default function AddScreen() {
                       {memberName(memberId)}
                     </Text>
                     <TextInput
+                      accessibilityLabel={`${t('add.weights')} ${memberName(memberId)}`}
                       style={[styles.input, styles.shareInput]}
                       value={taskWeightRaw[memberId] ?? '1'}
                       onChangeText={(value) =>
@@ -1257,6 +1267,7 @@ export default function AddScreen() {
             testID="add.taskDateTime" onChange={(date) => { if(date) setTaskForm(prev => ({...prev,occurredAt:date})); }} />
 
           <Button
+            testID="add.taskSubmit"
             title={isEditing ? t('add.update') : t('add.addTask')}
             variant="primary"
             onPress={submitTask}
@@ -1271,6 +1282,7 @@ export default function AddScreen() {
           />
 
           <TouchableOpacity
+            testID="add.categoryManagerToggle"
             style={styles.manageToggle}
             onPress={() => setCategoriesOpen((prev) => !prev)}
             accessibilityRole="button"
@@ -1382,6 +1394,7 @@ export default function AddScreen() {
             <Text variant="caption">{t('add.split')}</Text>
             <View style={styles.splitRow}>
               <TouchableOpacity
+                testID="add.expenseSplit.equal"
                 style={[styles.splitButton, expenseForm.splitMode === 'equal' && styles.splitButtonActive]}
                 onPress={() => setExpenseForm((prev) => ({ ...prev, splitMode: 'equal' }))}
               >
@@ -1393,6 +1406,7 @@ export default function AddScreen() {
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
+                testID="add.expenseSplit.custom"
                 style={[styles.splitButton, expenseForm.splitMode === 'custom' && styles.splitButtonActive]}
                 onPress={() => setExpenseForm((prev) => ({ ...prev, splitMode: 'custom' }))}
               >
@@ -1417,6 +1431,7 @@ export default function AddScreen() {
                   </Text>
                   <TextInput
                     testID="add.expenseShare"
+                    accessibilityLabel={`${t('add.customShares')} ${memberName(memberId)}`}
                     style={[styles.input, styles.shareInput]}
                     value={expenseForm.customShares[memberId] || ''}
                     onChangeText={(value) =>
@@ -1466,6 +1481,7 @@ export default function AddScreen() {
             testID="add.expenseDateTime" onChange={(date) => { if(date) setExpenseForm(prev => ({...prev,occurredAt:date})); }} />
 
           <Button
+            testID="add.expenseSubmit"
             title={isEditing ? t('add.update') : t('add.addExpense')}
             variant="primary"
             onPress={submitExpense}
@@ -1480,6 +1496,7 @@ export default function AddScreen() {
           />
 
           <TouchableOpacity
+            testID="add.categoryManagerToggle"
             style={styles.manageToggle}
             onPress={() => setCategoriesOpen((prev) => !prev)}
             accessibilityRole="button"

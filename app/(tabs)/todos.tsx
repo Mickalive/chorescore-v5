@@ -597,6 +597,7 @@ export default function TodosScreen() {
             <>
               <View style={styles.actions}>
                 <Button
+                  testID="todos.newItem"
                   title={t('todos.newItem')}
                   variant="primary"
                   onPress={() => {
@@ -690,6 +691,7 @@ export default function TodosScreen() {
                 <Text variant="caption">{t('todos.kind')}</Text>
                 <View style={styles.splitRow}>
                   <TouchableOpacity
+                    testID="todos.createKind.task"
                     style={[styles.splitButton, createForm.kind === 'task' && styles.splitButtonActive]}
                     onPress={() => setCreateForm((p) => ({ ...p, kind: 'task' }))}
                     accessibilityRole="button"
@@ -703,6 +705,7 @@ export default function TodosScreen() {
                     </Text>
                   </TouchableOpacity>
                   <TouchableOpacity
+                    testID="todos.createKind.expense"
                     style={[styles.splitButton, createForm.kind === 'expense' && styles.splitButtonActive]}
                     onPress={() => setCreateForm((p) => ({ ...p, kind: 'expense' }))}
                     accessibilityRole="button"
@@ -869,6 +872,7 @@ export default function TodosScreen() {
 
               <View style={styles.createActions}>
                 <Button
+                  testID="todos.createSubmit"
                   title={t('action.create')}
                   variant="primary"
                   onPress={handleCreate}
@@ -1192,6 +1196,7 @@ export default function TodosScreen() {
                 onAdd={addPhoto} onRemove={removePhoto} testID="todos.completePhoto" />
 
               <Button
+                testID="todos.completeSubmit"
                 title={t('action.confirm')}
                 variant="primary"
                 onPress={handleComplete}

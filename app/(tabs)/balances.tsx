@@ -949,6 +949,7 @@ export default function BalancesScreen() {
               {historyPage.entries.map((entry) => (
                 <TouchableOpacity
                   key={entry.entry.id}
+                  testID={`balances.history.${entry.entry.id}`}
                   style={styles.historyRow}
                   onPress={() => setSelectedEntry(entry)}
                   accessibilityRole="button"
@@ -1013,6 +1014,7 @@ export default function BalancesScreen() {
             {selectedEntry && selectedEntry.type !== 'cross-ledger-settlement' && (
               <>
                 <TouchableOpacity
+                  testID="balances.editEntry"
                   style={styles.actionSheetButton}
                   onPress={() => handleEditEntry(selectedEntry)}
                   accessibilityRole="button"
@@ -1024,6 +1026,7 @@ export default function BalancesScreen() {
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
+                  testID="balances.deleteEntry"
                   style={styles.actionSheetButton}
                   onPress={() => handleDeleteEntry(selectedEntry)}
                   accessibilityRole="button"
@@ -1037,6 +1040,7 @@ export default function BalancesScreen() {
 
             {selectedEntry && (
               <TouchableOpacity
+                testID="balances.shareEntry"
                 style={styles.actionSheetButton}
                 onPress={() => handleShareEntry(selectedEntry)}
                 accessibilityRole="button"
@@ -1046,6 +1050,7 @@ export default function BalancesScreen() {
             )}
 
             <TouchableOpacity
+              testID="balances.closeEntryActions"
               style={styles.actionSheetButton}
               onPress={closeEntryActions}
               accessibilityRole="button"
