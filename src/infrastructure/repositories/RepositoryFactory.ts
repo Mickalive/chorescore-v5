@@ -385,6 +385,10 @@ export class MaterializingSyncState implements SyncStateRepository {
   getConflicts(householdId: string): Promise<SyncConflict[]> {
     return this.inner.getConflicts(householdId);
   }
+
+  resolveConflicts(householdId: string, collection: SyncCollection, entityId: string): Promise<void> {
+    return this.inner.resolveConflicts(householdId, collection, entityId);
+  }
 }
 
 // ── Shared In-Memory Business Repo Snapshots ───────────────────

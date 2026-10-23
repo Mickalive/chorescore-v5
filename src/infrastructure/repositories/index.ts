@@ -218,4 +218,6 @@ export interface SyncStateRepository {
   deletePendingMutation(householdId: string): Promise<void>;
   recordConflict(conflict: SyncConflict): Promise<void>;
   getConflicts(householdId: string): Promise<SyncConflict[]>;
+  /** Mark open conflicts for one entity as resolved after a successful push. */
+  resolveConflicts(householdId: string, collection: SyncCollection, entityId: string): Promise<void>;
 }

@@ -1,4 +1,5 @@
 import { DeleteGroupCard } from '../src/features/groups/DeleteGroupCard';
+import { SyncStatusCard } from '../src/features/groups/SyncStatusCard';
 /**
  * ChoreScore V3 — Group Options Screen
  *
@@ -357,6 +358,12 @@ export default function GroupOptionsScreen() {
             />
           </View>
         </Card>
+
+        {/* Honest synchronization state, including outbox and conflicts */}
+        <Text variant="sectionTitle" style={styles.sectionTitle}>
+          {t('sync.title')}
+        </Text>
+        <SyncStatusCard householdId={household.id} />
 
         {/* Invitation by link */}
         <Card style={styles.card}>

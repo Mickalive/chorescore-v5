@@ -8,7 +8,7 @@ import { ContributionEntry, ExpenseEntry, Household, TodoItem } from '../src/dom
 
 type Row = Record<string, any>;
 export interface Change { collection: string; id: string; baseVersion: number; value: Row | null; }
-const editable = new Set(['contribution_entries','expense_entries','todo_items','persistent_tasks','categories']);
+const editable = new Set(['contribution_entries','expense_entries','todo_items','persistent_tasks','categories','members','households']);
 const idPattern = /^[A-Za-z0-9_-]{1,128}$/;
 function requireValue(condition: unknown, message: string): asserts condition {
   if (!condition) throw new HttpError(400, message);
@@ -99,15 +99,27 @@ export class CollaborationStore {
     const rows = this.database.prepare('SELECT revision,changes FROM events WHERE groupId=? AND revision>? ORDER BY revision LIMIT 101').all(groupId,since) as Row[];
     return { events:rows.slice(0,100).map(row => ({revision:row.revision,changes:JSON.parse(row.changes)})), hasMore:rows.length > 100 };
   }
-  private validate(groupId: string, uid: string, change: Change) {
+  private validate(groupId: string, uid: string, role: string, change: Change) {
     id(change.id); requireValue(editable.has(change.collection),'Collection is not client-writable');
     requireValue(Number.isSafeInteger(change.baseVersion) && change.baseVersion >= 0,'Invalid base version');
     const previous = this.record(groupId,change.collection,change.id);
     if ((previous?.version ?? 0) !== change.baseVersion || (previous && previous.value === null)) throw new HttpError(409,'Revision conflict; local changes must be retained');
-    if (change.value === null) return;
+    if (change.value === null) {
+      // Group/member removal changes membership and needs a dedicated,
+      // auditable operation; the generic editor must not orphan history.
+      if (change.collection === 'members' || change.collection === 'households') {
+        throw new HttpError(400,'This record cannot be deleted through mutations');
+      }
+      return;
+    }
     const value = change.value;
     requireValue(value && typeof value === 'object' && !Array.isArray(value),'Invalid record');
-    requireValue(value.id === change.id && value.householdId === groupId,'Cross-group payload denied');
+    const householdRecord = change.collection === 'households';
+    requireValue(
+      value.id === change.id &&
+        (householdRecord ? value.id === groupId : value.householdId === groupId),
+      'Cross-group payload denied',
+    );
     requireValue(JSON.stringify(value).length <= 65536,'Record too large');
     const member = (memberId: unknown) => { id(memberId); requireValue(this.value(groupId,'members',memberId),'Unknown group member'); };
     const participants = (values: unknown) => {
@@ -118,6 +130,44 @@ export class CollaborationStore {
     if (value.note !== undefined) requireValue(typeof value.note === 'string' && value.note.length <= 10000,'Invalid note');
     if (value.attachments !== undefined) requireValue(Array.isArray(value.attachments),'Invalid attachments');
     if (value.attachments?.length) throw new HttpError(400,'Private cloud media must be uploaded before attachment sync');
+    if (change.collection === 'households') {
+      // Group-wide settings are owner-only. Identity, tenancy and creation
+      // provenance are authority-owned and can never be rewritten by a client.
+      requireValue(role === 'OWNER','Only the group owner can change group settings');
+      requireValue(previous?.value,'Group must be created through the group endpoint');
+      const before = JSON.parse(previous.value);
+      text(value.name,100);
+      requireValue(value.contributionUnit === 'minutes' || value.contributionUnit === 'points','Invalid task unit');
+      requireValue(typeof value.crossLedgerCompensationEnabled === 'boolean','Invalid compensation setting');
+      if (value.contributionToMoneyRate !== null) {
+        const rate = value.contributionToMoneyRate;
+        requireValue(rate && typeof rate === 'object' && !Array.isArray(rate),'Invalid compensation rate');
+        requireValue(Number.isFinite(rate.contributionValue) && rate.contributionValue > 0,'Invalid rate contribution value');
+        requireValue(rate.contributionUnit === 'minutes' || rate.contributionUnit === 'points','Invalid rate unit');
+        requireValue(Number.isSafeInteger(rate.moneyAmountMinor) && rate.moneyAmountMinor > 0,'Invalid rate money amount');
+        requireValue(typeof rate.currency === 'string' && /^[A-Z]{3}$/.test(rate.currency),'Invalid rate currency');
+      } else {
+        requireValue(!value.crossLedgerCompensationEnabled,'A compensation rate is required');
+      }
+      value.ownerId = before.ownerId;
+      value.createdAt = before.createdAt;
+      return;
+    }
+    if (change.collection === 'members') {
+      text(value.name,60);
+      if (previous?.value) {
+        // Renaming a named member keeps its identity. Linked accounts and
+        // join history are only changed by the invitation authority.
+        const before = JSON.parse(previous.value);
+        value.userId = before.userId ?? null;
+        value.joinedAt = before.joinedAt;
+      } else {
+        requireValue(value.userId === null || value.userId === undefined,'Accounts are linked only through invitations');
+        value.userId = null;
+        value.joinedAt = new Date().toISOString();
+      }
+      return;
+    }
     if (change.collection === 'contribution_entries') {
       if (value.splitMode !== undefined) requireValue(['equal','custom'].includes(value.splitMode),'Invalid task split');
       if (value.splitWeights) { requireValue(Array.isArray(value.splitWeights),'Invalid task weights'); for (const weight of value.splitWeights) member(weight.memberId); }
@@ -165,13 +215,13 @@ export class CollaborationStore {
   mutate(uid: string, groupId: string, operationId: string, changes: Change[]) {
     id(operationId); requireValue(Array.isArray(changes) && changes.length > 0 && changes.length <= 100,'Invalid change batch');
     return this.transaction(() => {
-      this.access(groupId,uid);
+      const membership = this.access(groupId,uid);
       const hash = digest(JSON.stringify(changes));
       changes = structuredClone(changes);
       const previous = this.database.prepare('SELECT hash,response FROM mutations WHERE groupId=? AND uid=? AND id=?').get(groupId,uid,operationId) as Row | undefined;
       if (previous) { if (previous.hash !== hash) throw new HttpError(409,'Operation ID reused with different data'); return JSON.parse(previous.response); }
       requireValue(new Set(changes.map(c => `${c.collection}:${c.id}`)).size === changes.length,'Duplicate record in batch');
-      for (const change of changes) this.validate(groupId,uid,change);
+      for (const change of changes) this.validate(groupId,uid,membership.role,change);
       const result = this.append(groupId,changes);
       this.database.prepare('INSERT INTO mutations VALUES(?,?,?,?,?)').run(groupId,uid,operationId,hash,JSON.stringify(result));
       return result;
@@ -217,7 +267,7 @@ export class CollaborationStore {
   complete(uid: string, groupId: string, todoId: string, input: Row) {
     id(todoId);
     return this.transaction(() => {
-      this.access(groupId,uid);
+      const membership = this.access(groupId,uid);
       const todo = this.value(groupId,'todo_items',todoId) as TodoItem | null;
       if (!todo) throw new HttpError(404,'Todo not found');
       if (todo.status === 'completed') throw new HttpError(409,'Todo already completed');
@@ -226,7 +276,7 @@ export class CollaborationStore {
       const result = planTodoCompletion({ ...input,todo,household,completedByUserId:uid,category } as CompletionInput | ExpenseCompletionInput);
       const collection = result.kind === 'expense' ? 'expense_entries' : 'contribution_entries';
       const entry = {...(result.kind === 'expense' ? result.expenseEntry : result.contributionEntry),id:`todo-${digest(todoId)}`};
-      this.validate(groupId,uid,{collection,id:entry.id,baseVersion:0,value:entry});
+      this.validate(groupId,uid,membership.role,{collection,id:entry.id,baseVersion:0,value:entry});
       return this.append(groupId,[{collection,id:entry.id,value:entry},
         {collection:'todo_items',id:todoId,value:{...todo,...result.updatedTodo}}]);
     });

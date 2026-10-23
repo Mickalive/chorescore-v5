@@ -1121,4 +1121,13 @@ export class InMemorySyncStateRepository implements SyncStateRepository {
       .filter((conflict) => conflict.householdId === householdId)
       .map((conflict) => ({ ...conflict }));
   }
+
+  async resolveConflicts(householdId: string, collection: SyncCollection, entityId: string): Promise<void> {
+    for (const [id, conflict] of this.conflicts) {
+      if (conflict.householdId === householdId && conflict.collection === collection &&
+          conflict.entityId === entityId && !conflict.resolvedAt) {
+        this.conflicts.set(id, { ...conflict, resolvedAt: new Date().toISOString() });
+      }
+    }
+  }
 }

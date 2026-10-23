@@ -1789,6 +1789,14 @@ export class SqliteSyncStateRepository implements SyncStateRepository {
     );
   }
 
+  async resolveConflicts(householdId: string, collection: SyncCollection, entityId: string): Promise<void> {
+    const db = await getDatabase();
+    await db.runAsync(
+      'UPDATE sync_conflicts SET resolvedAt = ? WHERE householdId = ? AND collection = ? AND entityId = ? AND resolvedAt IS NULL',
+      [new Date().toISOString(), householdId, collection, entityId],
+    );
+  }
+
   async getConflicts(householdId: string): Promise<SyncConflict[]> {
     const db = await getDatabase();
     const rows = await db.getAllAsync<SyncConflictRow>(

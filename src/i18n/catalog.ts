@@ -332,6 +332,21 @@ export const CATALOG: Record<SupportedLocale, LocaleCatalog> = {
     'groupOptions.inviteHint': 'Partagez un lien d’invitation à ce groupe.',
     'groupOptions.inviteMember': 'Inviter',
 
+    // ── Synchronisation ───────────────────────────────────────
+    'sync.title': 'Synchronisation',
+    'sync.localOnly':
+      'Aucune synchronisation entre appareils n’est configurée. Les données restent sur cet appareil.',
+    'sync.lastSync': 'Dernier échange réussi : {date}',
+    'sync.never': 'jamais',
+    'sync.idle': 'Prêt à synchroniser.',
+    'sync.inProgress': 'Synchronisation en cours…',
+    'sync.pending': '{count} modification(s) en attente d’envoi.',
+    'sync.conflicts':
+      '{count} conflit(s) à vérifier. Votre version locale est conservée jusqu’à votre prochaine modification.',
+    'sync.now': 'Synchroniser maintenant',
+    'sync.retrying': 'Synchronisation…',
+    'sync.unavailable': 'État de synchronisation indisponible.',
+
     // ── Invitations ───────────────────────────────────────────
     'invite.title': 'Inviter',
     'invite.unavailableTitle': 'Invitations pas encore disponibles',
@@ -749,6 +764,21 @@ export const CATALOG: Record<SupportedLocale, LocaleCatalog> = {
     'groupOptions.invite': 'Invite with a link',
     'groupOptions.inviteHint': 'Share an invitation link to this group.',
     'groupOptions.inviteMember': 'Invite',
+
+    // ── Synchronization ───────────────────────────────────────
+    'sync.title': 'Synchronization',
+    'sync.localOnly':
+      'Cross-device synchronization is not configured. Data stays on this device.',
+    'sync.lastSync': 'Last successful exchange: {date}',
+    'sync.never': 'never',
+    'sync.idle': 'Ready to synchronize.',
+    'sync.inProgress': 'Synchronizing…',
+    'sync.pending': '{count} change(s) waiting to be sent.',
+    'sync.conflicts':
+      '{count} conflict(s) to review. Your local version is kept until your next edit.',
+    'sync.now': 'Synchronize now',
+    'sync.retrying': 'Synchronizing…',
+    'sync.unavailable': 'Synchronization status is unavailable.',
 
     // ── Invitations ───────────────────────────────────────────
     'invite.title': 'Invite',

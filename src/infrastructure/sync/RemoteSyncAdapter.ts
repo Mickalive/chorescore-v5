@@ -43,6 +43,10 @@ const WRITABLE: SyncCollection[] = [
   'todo_items',
   'persistent_tasks',
   'categories',
+  // Named members and group settings are ordinary group data: adding a member
+  // or renaming one must reach the other devices, not only the creator's phone.
+  'members',
+  'households',
 ];
 const BASELINE: SyncCollection[] = ['households', 'memberships', 'members'];
 const PAGE_GUARD = 200;
@@ -185,15 +189,27 @@ export class RemoteSyncAdapter implements SyncGateway {
 
   async startSync(householdId: string): Promise<void> {
     if (!this.isAvailable() || this.timers.has(householdId)) return;
+    // A previous session may have left durable outbox records (offline edit,
+    // process killed during a push). Pull first so conflicts are detected
+    // against the current authority, then drain the outbox immediately
+    // instead of waiting for an unrelated local write.
     await this.pullChanges(householdId).catch((error) =>
+      this.setError(householdId, this.message(error)),
+    );
+    await this.pushChanges(householdId).catch((error) =>
       this.setError(householdId, this.message(error)),
     );
     const interval = this.config.pollIntervalMs ?? 20_000;
     if (interval > 0) {
       const timer = setInterval(() => {
-        void this.pullChanges(householdId).catch((error) =>
-          this.setError(householdId, this.message(error)),
-        );
+        void (async () => {
+          try {
+            await this.pushChanges(householdId);
+            await this.pullChanges(householdId);
+          } catch (error) {
+            await this.setError(householdId, this.message(error));
+          }
+        })();
       }, interval);
       // Do not keep a Node/Jest process alive because of polling.
       (timer as unknown as { unref?: () => void }).unref?.();
@@ -391,6 +407,12 @@ export class RemoteSyncAdapter implements SyncGateway {
     const touched = new Set<SyncCollection>();
     let conflictDetected = false;
 
+    const openConflicts = new Set(
+      (await repos.syncState.getConflicts(householdId))
+        .filter((conflict) => !conflict.resolvedAt)
+        .map((conflict) => `${conflict.collection}:${conflict.entityId}`),
+    );
+
     await repos.withTransaction(async () => {
       for (const change of event.changes) {
         const known = await repos.syncState.getRemoteVersion(
@@ -399,6 +421,19 @@ export class RemoteSyncAdapter implements SyncGateway {
           change.id,
         );
         if (change.version <= known) continue;
+        const conflictKey = `${change.collection}:${change.id}`;
+        // A resolved-by-user local edit may not have been pushed yet. While a
+        // conflict is open we keep the local payload and only learn the new
+        // server version, so a background pull can never silently erase it.
+        if (openConflicts.has(conflictKey)) {
+          await repos.syncState.setRemoteVersion(
+            householdId,
+            change.collection,
+            change.id,
+            change.version,
+          );
+          continue;
+        }
 
         const pushed = await repos.syncState.getCursor(householdId, change.collection);
         const dirty = await repos.syncState.getDirtyRecords(
@@ -423,6 +458,7 @@ export class RemoteSyncAdapter implements SyncGateway {
             remotePayload: change.value ? JSON.stringify(change.value) : null,
             resolvedAt: null,
           });
+          openConflicts.add(conflictKey);
           continue;
         }
 
@@ -533,6 +569,13 @@ export class RemoteSyncAdapter implements SyncGateway {
             change.collection,
             change.id,
             change.version,
+          );
+          // A successful push means the user's local payload is now the
+          // authority for this entity; the open conflict is resolved.
+          await repos.syncState.resolveConflicts(
+            householdId,
+            change.collection,
+            change.id,
           );
         }
         const sent = JSON.parse(pending.mutation.sentJson) as Array<{
