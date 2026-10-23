@@ -3,7 +3,7 @@ import { StyleSheet, View } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { useApp } from '../app/AppContext';
 import { useI18n } from '../../i18n';
-import { SyncStatus } from '../../application/ports';
+import { SyncStatus, SyncConflictView } from '../../application/ports';
 import { Card } from '../../ui/components/Card';
 import { Button } from '../../ui/components/Button';
 import { Text } from '../../ui/components/Text';
@@ -22,12 +22,17 @@ export function SyncStatusCard({ householdId }: { householdId: string }) {
   const { services, subscribeToDataChanges } = useApp();
   const [status, setStatus] = useState<SyncStatus>(EMPTY);
   const [retrying, setRetrying] = useState(false);
+  const [conflicts, setConflicts] = useState<SyncConflictView[]>([]);
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
   const available = services.sync.isAvailable();
 
   const refresh = useCallback(async () => {
     if (!available) return;
     try {
       setStatus(await services.sync.getStatus(householdId));
+      setConflicts(services.sync.getConflicts
+        ? await services.sync.getConflicts(householdId)
+        : []);
     } catch {
       setStatus((current) => ({
         ...current,
@@ -53,6 +58,19 @@ export function SyncStatusCard({ householdId }: { householdId: string }) {
       // getStatus below reports the durable adapter error.
     } finally {
       setRetrying(false);
+      await refresh();
+    }
+  };
+
+  const resolve = async (id: string, choice: 'local' | 'remote') => {
+    if (!services.sync.resolveConflict || resolvingId) return;
+    setResolvingId(id);
+    try {
+      await services.sync.resolveConflict(householdId, id, choice);
+    } catch {
+      // The durable conflict remains listed; refresh surfaces the adapter error.
+    } finally {
+      setResolvingId(null);
       await refresh();
     }
   };
@@ -96,6 +114,37 @@ export function SyncStatusCard({ householdId }: { householdId: string }) {
               </Text>
             )}
           </View>
+          {conflicts.map((conflict) => (
+            <View key={conflict.id} style={styles.conflict}>
+              <Text variant="caption" color={colors.textSecondary}>
+                {t('sync.conflictItem', {
+                  collection: conflict.collection,
+                  date: new Date(conflict.detectedAt).toLocaleDateString(
+                    locale === 'fr' ? 'fr-CH' : 'en-CH',
+                  ),
+                })}
+              </Text>
+              <View style={styles.conflictActions}>
+                <Button
+                  title={t('sync.keepLocal')}
+                  variant="secondary"
+                  size="small"
+                  onPress={() => resolve(conflict.id, 'local')}
+                  disabled={resolvingId !== null}
+                  loading={resolvingId === conflict.id}
+                  testID={`sync.keepLocal.${conflict.id}`}
+                />
+                <Button
+                  title={t('sync.keepRemote')}
+                  variant="ghost"
+                  size="small"
+                  onPress={() => resolve(conflict.id, 'remote')}
+                  disabled={resolvingId !== null}
+                  testID={`sync.keepRemote.${conflict.id}`}
+                />
+              </View>
+            </View>
+          ))}
           <Button
             title={retrying || status.isSyncing ? t('sync.retrying') : t('sync.now')}
             variant="secondary"
@@ -126,5 +175,17 @@ const styles = StyleSheet.create({
   button: {
     marginTop: spacing.md,
     alignSelf: 'flex-start',
+  },
+  conflict: {
+    marginTop: spacing.md,
+    paddingTop: spacing.sm,
+    borderTopWidth: 1,
+    borderTopColor: colors.divider,
+    gap: spacing.sm,
+  },
+  conflictActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
   },
 });

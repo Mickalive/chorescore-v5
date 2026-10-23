@@ -8,27 +8,51 @@
 
 import * as SQLite from 'expo-sqlite';
 
-let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
+export const DEFAULT_DATABASE_NAME = 'chorescore.db';
 
-export function getDatabase(): Promise<SQLite.SQLiteDatabase> {
-  if (!databasePromise) {
-    databasePromise = (async () => {
-      const database = await SQLite.openDatabaseAsync('chorescore.db');
-      try {
-        await initializeSchema(database);
-        await applyV4ColumnMigrations(database);
-        await initializeAttachmentLinks(database);
-        return database;
-      } catch (error) {
-        await database.closeAsync();
-        throw error;
-      }
-    })().catch((error) => {
-      databasePromise = null;
-      throw error;
-    });
+/**
+ * One open connection per database name. The app keeps using the default
+ * install database; tests open isolated files so two clients can be restarted
+ * independently in the same process without sharing a connection.
+ */
+const databasePromises = new Map<string, Promise<SQLite.SQLiteDatabase>>();
+
+export function getDatabase(name: string = DEFAULT_DATABASE_NAME): Promise<SQLite.SQLiteDatabase> {
+  const existing = databasePromises.get(name);
+  if (existing) return existing;
+  if (!/^[A-Za-z0-9_-]{1,80}\.db$/.test(name)) {
+    return Promise.reject(new Error('Invalid database name'));
   }
-  return databasePromise;
+  const opening = (async () => {
+    const database = await SQLite.openDatabaseAsync(name);
+    try {
+      await initializeSchema(database);
+      await applyV4ColumnMigrations(database);
+      await initializeAttachmentLinks(database);
+      return database;
+    } catch (error) {
+      await database.closeAsync();
+      throw error;
+    }
+  })().catch((error) => {
+    databasePromises.delete(name);
+    throw error;
+  });
+  databasePromises.set(name, opening);
+  return opening;
+}
+
+/** Close and forget one connection so the next access reopens the same file. */
+export async function closeDatabase(name: string = DEFAULT_DATABASE_NAME): Promise<void> {
+  const pending = databasePromises.get(name);
+  databasePromises.delete(name);
+  if (!pending) return;
+  try {
+    const database = await pending;
+    await database.closeAsync();
+  } catch {
+    // A failed/never-opened database has nothing left to close.
+  }
 }
 
 export async function initializeSchema(database: SQLite.SQLiteDatabase): Promise<void> {

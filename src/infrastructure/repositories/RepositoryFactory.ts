@@ -389,6 +389,10 @@ export class MaterializingSyncState implements SyncStateRepository {
   resolveConflicts(householdId: string, collection: SyncCollection, entityId: string): Promise<void> {
     return this.inner.resolveConflicts(householdId, collection, entityId);
   }
+
+  discardLocalRecord(householdId: string, collection: SyncCollection, entityId: string): Promise<void> {
+    return this.inner.discardLocalRecord(householdId, collection, entityId);
+  }
 }
 
 // ── Shared In-Memory Business Repo Snapshots ───────────────────
@@ -533,7 +537,9 @@ export { createInMemoryRepositories };
 // V3-06 REPAIR: The SQLite path now uses MaterializingSyncState with
 // sync recording wrappers, covering all 10 SYNC_COLLECTIONS.
 
-export async function createSqliteRepositories(): Promise<AllRepositories | null> {
+export async function createSqliteRepositories(
+  databaseName?: string,
+): Promise<AllRepositories | null> {
   try {
     const {
       SqliteUserRepository,
@@ -550,22 +556,25 @@ export async function createSqliteRepositories(): Promise<AllRepositories | null
       SqliteSyncStateRepository,
     } = await import('./SqliteRepositories');
 
-    // Force database initialization to verify expo-sqlite works
+    // Force database initialization to verify expo-sqlite works. The provider
+    // is lazily re-read so a closed/reopened file (test restart) is picked up
+    // by every repository and every transaction.
     const { getDatabase } = await import('../local/SqliteStorage');
-    const db = await getDatabase();
+    const databaseProvider = () => getDatabase(databaseName);
+    await databaseProvider();
 
     // Raw (unwrapped) repos — these hold the actual SQLite data
-    const rawMemberships = new SqliteMembershipRepository();
-    const rawHouseholds = new SqliteHouseholdRepository();
-    const rawMembers = new SqliteMemberRepository();
-    const rawContributions = new SqliteContributionEntryRepository();
-    const rawTasks = new SqlitePersistentTaskRepository();
-    const rawTodos = new SqliteTodoRepository();
-    const rawExpenses = new SqliteExpenseEntryRepository();
-    const rawSettlements = new SqliteSettlementRepository();
-    const rawCategories = new SqliteCategoryRepository();
-    const rawInvitations = new SqliteInvitationRepository();
-    const baseSyncState = new SqliteSyncStateRepository();
+    const rawMemberships = new SqliteMembershipRepository(databaseProvider);
+    const rawHouseholds = new SqliteHouseholdRepository(databaseProvider);
+    const rawMembers = new SqliteMemberRepository(databaseProvider);
+    const rawContributions = new SqliteContributionEntryRepository(databaseProvider);
+    const rawTasks = new SqlitePersistentTaskRepository(databaseProvider);
+    const rawTodos = new SqliteTodoRepository(databaseProvider);
+    const rawExpenses = new SqliteExpenseEntryRepository(databaseProvider);
+    const rawSettlements = new SqliteSettlementRepository(databaseProvider);
+    const rawCategories = new SqliteCategoryRepository(databaseProvider);
+    const rawInvitations = new SqliteInvitationRepository(databaseProvider);
+    const baseSyncState = new SqliteSyncStateRepository(databaseProvider);
 
     // Wrap ALL 10 business repos to record dirty sync records after writes
     const syncMemberships = new SyncRecordingMembershipRepository(rawMemberships, baseSyncState);
@@ -585,7 +594,9 @@ export async function createSqliteRepositories(): Promise<AllRepositories | null
     const materializingSync = new MaterializingSyncState(baseSyncState, () => repos);
 
     const withTransaction = async <T>(fn: () => Promise<T>): Promise<T> => {
-      // Real SQLite transaction: any throw rolls back all writes.
+      // Real SQLite transaction: any throw rolls back all writes. Resolve the
+      // connection at call time so a reopened file never uses a closed handle.
+      const db = await databaseProvider();
       let result: T;
       await db.withTransactionAsync(async () => {
         result = await fn();
@@ -595,7 +606,7 @@ export async function createSqliteRepositories(): Promise<AllRepositories | null
 
     let raw!: AllRepositories;
     raw = {
-      users: new SqliteUserRepository(),
+      users: new SqliteUserRepository(databaseProvider),
       memberships: rawMemberships,
       households: rawHouseholds,
       members: rawMembers,

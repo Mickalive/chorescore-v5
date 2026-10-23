@@ -1130,4 +1130,11 @@ export class InMemorySyncStateRepository implements SyncStateRepository {
       }
     }
   }
+
+  async discardLocalRecord(householdId: string, collection: SyncCollection, entityId: string): Promise<void> {
+    const key = `${householdId}:${collection}`;
+    const existing = this.records.get(key);
+    if (!existing) return;
+    this.records.set(key, existing.filter((record) => record.id !== entityId));
+  }
 }

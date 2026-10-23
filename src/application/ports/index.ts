@@ -117,6 +117,32 @@ export interface SyncGateway {
   createInvitation?(householdId: string, memberId: string): Promise<RemoteInvitation>;
   /** Remote collaboration: accept a server invitation and pull its group. */
   acceptInvitation?(token: string): Promise<RemoteInvitationAcceptance>;
+  /**
+   * Remote collaboration: complete a todo through the authority's single
+   * atomic endpoint. The server derives the ledger entry and audit identity,
+   * so two devices can never record the completion twice.
+   */
+  completeTodo?(
+    householdId: string,
+    todoId: string,
+    input: Record<string, unknown>,
+  ): Promise<void>;
+  /** Open conflicts are explicit; resolution never overwrites silently. */
+  getConflicts?(householdId: string): Promise<SyncConflictView[]>;
+  resolveConflict?(
+    householdId: string,
+    conflictId: string,
+    choice: 'local' | 'remote',
+  ): Promise<void>;
+}
+
+export interface SyncConflictView {
+  id: string;
+  collection: string;
+  entityId: string;
+  detectedAt: string;
+  localPayload: string | null;
+  remotePayload: string | null;
 }
 
 export interface RemoteInvitation {

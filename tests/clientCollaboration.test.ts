@@ -285,10 +285,22 @@ test('two independent clients share exact ledgers, targeted member links, confli
   await bob.sync.pullChanges(hid);
   // The background pull must not silently erase the local losing edit.
   expect((await bob.repos.contributions.getById(aliceEntry.id))?.label).toBe('Version Bob');
-  await bob.repos.contributions.update(aliceEntry.id, { label: 'Version arbitrée' });
-  await bob.sync.pushChanges(hid);
+  const kept = (await bob.sync.getConflicts!(hid))[0];
+  await bob.sync.resolveConflict!(hid, kept.id, 'local');
   await alice.sync.pullChanges(hid);
-  expect((await alice.repos.contributions.getById(aliceEntry.id))?.label).toBe('Version arbitrée');
+  expect((await alice.repos.contributions.getById(aliceEntry.id))?.label).toBe('Version Bob');
+  expect((await bob.repos.syncState.getConflicts(hid)).filter((conflict) => !conflict.resolvedAt)).toHaveLength(0);
+
+  // The same UI can deliberately take the authority payload instead.
+  await alice.repos.contributions.update(aliceEntry.id, { label: 'Version Alice 2' });
+  await alice.sync.pushChanges(hid);
+  await bob.repos.contributions.update(aliceEntry.id, { label: 'Version Bob 2' });
+  await expect(bob.sync.pushChanges(hid)).rejects.toThrow();
+  const remoteChoice = (await bob.sync.getConflicts!(hid))[0];
+  await bob.sync.resolveConflict!(hid, remoteChoice.id, 'remote');
+  expect((await bob.repos.contributions.getById(aliceEntry.id))?.label).toBe('Version Alice 2');
+  await alice.sync.pullChanges(hid);
+  expect((await alice.repos.contributions.getById(aliceEntry.id))?.label).toBe('Version Alice 2');
   expect((await bob.repos.syncState.getConflicts(hid)).filter((conflict) => !conflict.resolvedAt)).toHaveLength(0);
 
   // Deletion is a real tombstone, not a local disappearance.

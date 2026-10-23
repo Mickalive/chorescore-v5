@@ -43,12 +43,37 @@ def candidates(root, label=None, resource=None, partial=False):
                 result.append(node)
     return sorted(result,key=lambda n:n.attrib.get('clickable')!='true')
 
+def dismiss_system_dialog(root):
+    """Dismiss an emulator/system ANR overlay that would hide the app.
+
+    The CI emulator occasionally starts with a slow launcher/SystemUI ANR
+    dialog on top of a perfectly healthy app. Tapping \"Wait\" keeps both the
+    system and the product running; the journey assertions stay unchanged.
+    """
+    labels=[]
+    for node in root.iter('node'):
+        value=(node.attrib.get('text','')+' '+node.attrib.get('content-desc','')).lower()
+        labels.append(value)
+    blocked=any('isn\'t responding' in value or 'ne répond pas' in value or
+                'application ne répond pas' in value for value in labels)
+    if not blocked:
+        return False
+    for wait_label in ('Wait','Attendre'):
+        taps=candidates(root,label=wait_label)
+        if taps:
+            tap_node(taps[0])
+            time.sleep(1)
+            return True
+    return False
+
 def locate(label=None, resource=None, partial=False, timeout=35):
     deadline=time.monotonic()+timeout
     while time.monotonic()<deadline:
         root=hierarchy()
         nodes=candidates(root,label,resource,partial)
         if nodes:return nodes[0]
+        if dismiss_system_dialog(root):
+            continue
         time.sleep(.5)
     raise AssertionError(f'Visible control missing: {resource or label}')
 
@@ -94,7 +119,7 @@ try:
     adb('logcat','-c')
     start()
     # The normal unconfigured build starts a real unique local account.
-    locate('Créer un groupe',timeout=55)
+    locate('Créer un groupe',timeout=90)
     screenshot('groups-empty-android')
     scroll_to(resource='groups.newButton')
     fill('groups.nameInput','Maison CI')

@@ -346,6 +346,12 @@ export const CATALOG: Record<SupportedLocale, LocaleCatalog> = {
     'sync.now': 'Synchroniser maintenant',
     'sync.retrying': 'Synchronisation…',
     'sync.unavailable': 'État de synchronisation indisponible.',
+    'sync.conflictItem': '{collection} · {date}',
+    'sync.keepLocal': 'Garder ma version',
+    'sync.keepRemote': 'Prendre la version distante',
+    'sync.resolving': 'Résolution…',
+    'sync.resolveError': 'Impossible de résoudre ce conflit.',
+    'sync.resolved': 'Conflit résolu.',
 
     // ── Invitations ───────────────────────────────────────────
     'invite.title': 'Inviter',
@@ -779,6 +785,12 @@ export const CATALOG: Record<SupportedLocale, LocaleCatalog> = {
     'sync.now': 'Synchronize now',
     'sync.retrying': 'Synchronizing…',
     'sync.unavailable': 'Synchronization status is unavailable.',
+    'sync.conflictItem': '{collection} · {date}',
+    'sync.keepLocal': 'Keep my version',
+    'sync.keepRemote': 'Take the remote version',
+    'sync.resolving': 'Resolving…',
+    'sync.resolveError': 'Could not resolve this conflict.',
+    'sync.resolved': 'Conflict resolved.',
 
     // ── Invitations ───────────────────────────────────────────
     'invite.title': 'Invite',

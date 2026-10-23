@@ -220,4 +220,6 @@ export interface SyncStateRepository {
   getConflicts(householdId: string): Promise<SyncConflict[]>;
   /** Mark open conflicts for one entity as resolved after a successful push. */
   resolveConflicts(householdId: string, collection: SyncCollection, entityId: string): Promise<void>;
+  /** Drop one local outbox record after the user chose the remote version. */
+  discardLocalRecord(householdId: string, collection: SyncCollection, entityId: string): Promise<void>;
 }

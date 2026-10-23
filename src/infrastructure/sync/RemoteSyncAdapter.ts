@@ -357,6 +357,157 @@ export class RemoteSyncAdapter implements SyncGateway {
     return response;
   }
 
+  /**
+   * Send an atomic completion to the authority. The pending local outbox is
+   * drained first so the server sees the todo and its references. The returned
+   * ledger/todo rows are materialised through the raw repositories; a retry or
+   * a concurrent completion cannot create a second entry because the server
+   * owns the deterministic ledger id.
+   */
+  async completeTodo(
+    householdId: string,
+    todoId: string,
+    input: Record<string, unknown>,
+  ): Promise<void> {
+    if (!this.isAvailable()) throw new Error('Synchronisation indisponible');
+    await this.ensureRemoteGroup(
+      householdId,
+      (await this.repos().households.getById(householdId))?.ownerId ?? '',
+    ).catch(() => undefined);
+    await this.pushChanges(householdId);
+    const result = await this.request<{ revision: number; changes: ServerChange[] }>(
+      'POST',
+      `/groups/${encodeURIComponent(householdId)}/todos/${encodeURIComponent(todoId)}/complete`,
+      input,
+    );
+    const repos = this.repos();
+    await repos.withTransaction(async () => {
+      for (const change of result.changes) {
+        await this.materialize(change);
+        await repos.syncState.setRemoteVersion(
+          householdId,
+          change.collection,
+          change.id,
+          change.version,
+        );
+        await repos.syncState.resolveConflicts(householdId, change.collection, change.id);
+      }
+      const state = await this.state(householdId);
+      await repos.syncState.setGroupState({
+        ...state,
+        lastSyncedAt: new Date().toISOString(),
+        lastError: null,
+      });
+    });
+    // Learn the authoritative event and any changes made by other devices
+    // since the last pull without skipping revisions.
+    await this.pullChanges(householdId).catch((error) =>
+      this.setError(householdId, this.message(error)),
+    );
+    if (this.config.onRemoteChange) {
+      this.config.onRemoteChange({
+        householdId,
+        collections: result.changes.map((change) => change.collection),
+        receivedAt: new Date().toISOString(),
+      });
+    }
+    this.runtimeErrors.delete(householdId);
+  }
+
+  async getConflicts(householdId: string) {
+    const conflicts = await this.repos().syncState.getConflicts(householdId);
+    return conflicts
+      .filter((conflict) => !conflict.resolvedAt)
+      .map((conflict) => ({
+        id: conflict.id,
+        collection: conflict.collection,
+        entityId: conflict.entityId,
+        detectedAt: conflict.detectedAt,
+        localPayload: conflict.localPayload,
+        remotePayload: conflict.remotePayload,
+      }));
+  }
+
+  /**
+   * Resolve one conflict explicitly. "local" requeues the retained local
+   * payload at the newest authority version and pushes it; "remote" discards
+   * the local outbox row and materialises the authority payload. Neither path
+   * silently overwrites data without the user's choice.
+   */
+  async resolveConflict(
+    householdId: string,
+    conflictId: string,
+    choice: 'local' | 'remote',
+  ): Promise<void> {
+    const repos = this.repos();
+    // Learn the newest authority version/payload first. Open conflicts are
+    // preserved during this pull, so it can never erase the user's local edit.
+    await this.pullChanges(householdId);
+    const conflict = (await repos.syncState.getConflicts(householdId))
+      .find((entry) => entry.id === conflictId && !entry.resolvedAt);
+    if (!conflict) throw new Error('Conflit introuvable');
+    await repos.withTransaction(async () => {
+      await repos.syncState.deletePendingMutation(householdId);
+      if (choice === 'local') {
+        const revision = await repos.syncState.nextLocalRevision(
+          householdId,
+          conflict.collection,
+        );
+        await repos.syncState.storeLocalRecords(householdId, conflict.collection, [{
+          id: conflict.entityId,
+          householdId,
+          collection: conflict.collection,
+          revision,
+          updatedAt: new Date().toISOString(),
+          deletedAt: conflict.localPayload === null ? new Date().toISOString() : null,
+          payload: conflict.localPayload,
+        }]);
+        await repos.syncState.setRemoteVersion(
+          householdId,
+          conflict.collection,
+          conflict.entityId,
+          conflict.remoteVersion,
+        );
+      } else {
+        const value = conflict.remotePayload
+          ? (JSON.parse(conflict.remotePayload) as Record<string, unknown>)
+          : null;
+        await this.materialize({
+          collection: conflict.collection,
+          id: conflict.entityId,
+          value,
+          version: conflict.remoteVersion,
+        });
+        await repos.syncState.discardLocalRecord(
+          householdId,
+          conflict.collection,
+          conflict.entityId,
+        );
+        await repos.syncState.setRemoteVersion(
+          householdId,
+          conflict.collection,
+          conflict.entityId,
+          conflict.remoteVersion,
+        );
+      }
+      await repos.syncState.resolveConflicts(
+        householdId,
+        conflict.collection,
+        conflict.entityId,
+      );
+    });
+    if (choice === 'local') {
+      await this.pushChanges(householdId);
+      await this.pullChanges(householdId).catch(() => undefined);
+    } else if (this.config.onRemoteChange) {
+      this.config.onRemoteChange({
+        householdId,
+        collections: [conflict.collection],
+        receivedAt: new Date().toISOString(),
+      });
+    }
+  }
+
   async pullChanges(householdId: string): Promise<void> {
     if (!this.isAvailable() || this.active.has(householdId)) return;
     this.active.add(householdId);
@@ -407,11 +558,12 @@ export class RemoteSyncAdapter implements SyncGateway {
     const touched = new Set<SyncCollection>();
     let conflictDetected = false;
 
-    const openConflicts = new Set(
-      (await repos.syncState.getConflicts(householdId))
-        .filter((conflict) => !conflict.resolvedAt)
-        .map((conflict) => `${conflict.collection}:${conflict.entityId}`),
-    );
+    const openConflicts = new Map<string, SyncConflict>();
+    for (const conflict of await repos.syncState.getConflicts(householdId)) {
+      if (!conflict.resolvedAt) {
+        openConflicts.set(`${conflict.collection}:${conflict.entityId}`, conflict);
+      }
+    }
 
     await repos.withTransaction(async () => {
       for (const change of event.changes) {
@@ -425,7 +577,18 @@ export class RemoteSyncAdapter implements SyncGateway {
         // A resolved-by-user local edit may not have been pushed yet. While a
         // conflict is open we keep the local payload and only learn the new
         // server version, so a background pull can never silently erase it.
-        if (openConflicts.has(conflictKey)) {
+        // The newest authority payload is retained so the user can inspect and
+        // deliberately choose it instead of accepting a blind overwrite.
+        const open = openConflicts.get(conflictKey);
+        if (open) {
+          const remotePayload = change.value ? JSON.stringify(change.value) : null;
+          const updated = {
+            ...open,
+            remoteVersion: change.version,
+            remotePayload,
+          };
+          await repos.syncState.recordConflict(updated);
+          openConflicts.set(conflictKey, updated);
           await repos.syncState.setRemoteVersion(
             householdId,
             change.collection,
@@ -446,7 +609,7 @@ export class RemoteSyncAdapter implements SyncGateway {
         );
         if (pending) {
           conflictDetected = true;
-          await repos.syncState.recordConflict({
+          const conflict: SyncConflict = {
             id: this.conflictId(householdId, change),
             householdId,
             collection: change.collection,
@@ -457,8 +620,9 @@ export class RemoteSyncAdapter implements SyncGateway {
             localPayload: pending.payload,
             remotePayload: change.value ? JSON.stringify(change.value) : null,
             resolvedAt: null,
-          });
-          openConflicts.add(conflictKey);
+          };
+          await repos.syncState.recordConflict(conflict);
+          openConflicts.set(conflictKey, conflict);
           continue;
         }
 
