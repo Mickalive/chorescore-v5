@@ -22,6 +22,7 @@ import {
   ExpenseCompletionOutput,
   planTodoCompletion,
 } from '../../domain/services/todoCompletionService';
+import { todoCompletionEntryId } from '../../domain/services/todoCompletionId';
 
 /**
  * Complete a todo atomically.
@@ -58,10 +59,19 @@ export async function completeTodoAtomic(
       throw new Error('Todo does not belong to this household');
     }
     const result = planTodoCompletion({ ...input, todo });
+    // Deterministic id shared with the server: a retry after an ambiguous
+    // network result can never record the completion twice.
+    const entryId = await todoCompletionEntryId(todo.id);
     if (result.kind === 'expense') {
-      await repos.expenses.create(result.expenseEntry);
+      await repos.expenses.create({ ...result.expenseEntry, id: entryId } as Omit<
+        typeof result.expenseEntry,
+        'id'
+      >);
     } else {
-      await repos.contributions.create(result.contributionEntry);
+      await repos.contributions.create({ ...result.contributionEntry, id: entryId } as Omit<
+        typeof result.contributionEntry,
+        'id'
+      >);
     }
     await repos.todos.update(todo.id, {
       status: 'completed',

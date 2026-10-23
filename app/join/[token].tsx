@@ -39,7 +39,7 @@ export default function JoinScreen() {
   const { token } = useLocalSearchParams<{ token: string }>();
   const router = useRouter();
   const { t } = useI18n();
-  const { currentUser, repos, rawRepos, signIn, services } = useApp();
+  const { currentUser, repos, rawRepos, signIn, services, loadHouseholds } = useApp();
 
   const [status, setStatus] = useState<JoinStatus>('loading');
   const [errorMessage, setErrorMessage] = useState('');
@@ -54,6 +54,19 @@ export default function JoinScreen() {
     if (!token) {
       setStatus('error');
       setErrorMessage(t('join.invalidLink'));
+      return;
+    }
+
+    // Remote collaboration: the token lives on the server, so it cannot be
+    // resolved locally before acceptance. The server validates it atomically.
+    if (typeof services.sync.acceptInvitation === 'function') {
+      if (!currentUser) {
+        setStatus('error');
+        setErrorMessage(t('join.signInRequired'));
+        return;
+      }
+      setHouseholdName(t('join.sharedGroup'));
+      setStatus('ready');
       return;
     }
 
@@ -130,6 +143,15 @@ export default function JoinScreen() {
     setStatus('accepting');
 
     try {
+      if (typeof services.sync.acceptInvitation === 'function') {
+        await services.sync.acceptInvitation(token as string);
+        const local = await rawRepos.invitations.getByLinkToken(token as string);
+        if (local) await rawRepos.invitations.updateStatus(local.id, 'accepted');
+        await loadHouseholds(currentUser.userId);
+        setStatus('accepted');
+        return;
+      }
+
       // V3-06 REPAIR: Use rawRepos for the entire join flow. The user is
       // not yet a member of the household, so scoped repos would reject
       // all operations with CROSS_TENANT. Token-based invitation access
@@ -185,9 +207,9 @@ export default function JoinScreen() {
       });
 
       setStatus('accepted');
-    } catch {
+    } catch (err) {
       setStatus('error');
-      setErrorMessage(t('join.acceptError'));
+      setErrorMessage(err instanceof Error ? err.message : t('join.acceptError'));
     }
   };
 

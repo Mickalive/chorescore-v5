@@ -323,6 +323,49 @@ export interface SyncCursor {
   lastSyncedAt: string;
 }
 
+/**
+ * Remote collaboration state for one household. `lastRevision` is the server
+ * delta cursor (NOT the local outbox revision); it only advances after an
+ * entire server event has been materialised locally.
+ */
+export interface SyncGroupState {
+  householdId: string;
+  /** True once this local group has a matching server group. */
+  remoteKnown: boolean;
+  lastRevision: number;
+  lastSyncedAt: string | null;
+  lastError: string | null;
+}
+
+/** A durable record of a local/remote conflict that needs user attention. */
+export interface SyncConflict {
+  id: string;
+  householdId: string;
+  collection: SyncCollection;
+  entityId: string;
+  localRevision: number;
+  remoteVersion: number;
+  detectedAt: string;
+  localPayload: string | null;
+  remotePayload: string | null;
+  resolvedAt: string | null;
+}
+
+/**
+ * A push batch persisted before the network call so retries reuse the same
+ * operation id (server-side idempotency) and the local cursor advances
+ * exactly once.
+ */
+export interface PendingSyncMutation {
+  householdId: string;
+  operationId: string;
+  /** JSON array of `{collection,id,baseVersion,value}` sent to the server. */
+  changesJson: string;
+  /** JSON array of `{collection,id,revision}` consumed when the batch is acked. */
+  sentJson: string;
+  createdAt: string;
+}
+
 export type SyncCollection =
   | 'contribution_entries'
   | 'expense_entries'

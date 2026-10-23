@@ -70,6 +70,7 @@ export class CollaborationStore {
     id(input.id); id(input.ownerMemberId); text(input.name);
     requireValue(['minutes','points'].includes(input.unit), 'Invalid task unit');
     requireValue(Array.isArray(input.members) && input.members.length <= 200, 'Invalid members');
+    if (input.membershipId !== undefined) id(input.membershipId);
     const memberIds = new Set([input.ownerMemberId]);
     for (const member of input.members) { id(member.id); text(member.name,60); requireValue(!memberIds.has(member.id),'Duplicate member'); memberIds.add(member.id); }
     text(input.ownerName,60);
@@ -82,7 +83,7 @@ export class CollaborationStore {
       this.database.prepare('INSERT INTO groups VALUES(?,?,0,?)').run(input.id,uid,JSON.stringify(household));
       this.database.prepare('INSERT INTO access VALUES(?,?,?,?)').run(input.id,uid,input.ownerMemberId,'OWNER');
       const members = [{ id:input.ownerMemberId,name:input.ownerName,userId:uid }, ...input.members.map((m: Row) => ({id:m.id,name:m.name,userId:null}))];
-      const membership = { id:randomUUID(), householdId:input.id, userId:uid, role:'OWNER', joinedAt:now };
+      const membership = { id:input.membershipId ?? randomUUID(), householdId:input.id, userId:uid, role:'OWNER', joinedAt:now };
       return this.append(input.id,[{collection:'households',id:input.id,value:household},
         {collection:'memberships',id:membership.id,value:membership},
         ...members.map(member => ({collection:'members',id:member.id,value:{...member,householdId:input.id,joinedAt:now}}))]);
@@ -132,8 +133,23 @@ export class CollaborationStore {
       if (previous?.value && JSON.parse(previous.value).status === 'completed') throw new HttpError(409,'Completed todo cannot be reopened');
       text(value.title); participants(value.beneficiaryMemberIds);
       if (value.assigneeMemberId) member(value.assigneeMemberId);
-      requireValue(value.status === 'todo','Use atomic completion endpoint');
+      requireValue(value.status === 'todo' || value.status === 'completed','Invalid todo status');
       requireValue(value.kind === 'task' || value.kind === 'expense','Invalid todo kind');
+      if (value.status === 'completed') {
+        // A completion is accepted only together with (or after) the
+        // deterministic ledger entry written by the same atomic local
+        // operation. Balances are never taken from the todo payload.
+        const expected = `todo-${digest(change.id)}`;
+        const contribution = this.value(groupId,'contribution_entries',expected);
+        const expense = this.value(groupId,'expense_entries',expected);
+        requireValue(Boolean(contribution || expense),'Use atomic completion endpoint');
+        requireValue(
+          (value.kind === 'task' && Boolean(contribution)) ||
+            (value.kind === 'expense' && Boolean(expense)),
+          'Completion ledger mismatch',
+        );
+        requireValue(Number.isFinite(Date.parse(value.completedAt)),'Invalid completion date');
+      }
     } else if (change.collection === 'categories') {
       text(value.name,100);
       if (value.defaultTaskRatio) {

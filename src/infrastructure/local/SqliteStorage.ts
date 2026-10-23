@@ -249,6 +249,48 @@ export async function initializeSchema(database: SQLite.SQLiteDatabase): Promise
       PRIMARY KEY (id, collection)
     );
     CREATE INDEX IF NOT EXISTS idx_sync_records_dirty ON sync_records(householdId, collection, revision);
+
+    -- Remote collaboration metadata. Server revisions are intentionally kept
+    -- separate from local outbox revisions so a push retry can never make the
+    -- client skip a server delta.
+    CREATE TABLE IF NOT EXISTS sync_groups (
+      householdId TEXT PRIMARY KEY,
+      remoteKnown INTEGER NOT NULL DEFAULT 0,
+      lastRevision INTEGER NOT NULL DEFAULT 0,
+      lastSyncedAt TEXT,
+      lastError TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS sync_remote_versions (
+      householdId TEXT NOT NULL,
+      collection TEXT NOT NULL,
+      entityId TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      PRIMARY KEY (householdId, collection, entityId)
+    );
+
+    CREATE TABLE IF NOT EXISTS sync_pending_mutations (
+      householdId TEXT PRIMARY KEY,
+      operationId TEXT NOT NULL,
+      changesJson TEXT NOT NULL,
+      sentJson TEXT NOT NULL,
+      createdAt TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS sync_conflicts (
+      id TEXT PRIMARY KEY,
+      householdId TEXT NOT NULL,
+      collection TEXT NOT NULL,
+      entityId TEXT NOT NULL,
+      localRevision INTEGER NOT NULL,
+      remoteVersion INTEGER NOT NULL,
+      detectedAt TEXT NOT NULL,
+      localPayload TEXT,
+      remotePayload TEXT,
+      resolvedAt TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_sync_conflicts_household
+      ON sync_conflicts(householdId, resolvedAt);
   `);
 }
 

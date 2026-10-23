@@ -25,6 +25,9 @@ import {
   SyncCursor,
   SyncRecord,
   SyncCollection,
+  SyncGroupState,
+  SyncConflict,
+  PendingSyncMutation,
 } from '../../domain/entities';
 import {
   UserRepository,
@@ -295,7 +298,8 @@ export class SqliteHouseholdRepository implements HouseholdRepository {
     // Caller owns the transaction. Child deletion fires photo-link triggers;
     // file garbage collection then removes only unreferenced managed files.
     for (const table of ['contribution_entries','expense_entries','todo_items','persistent_tasks',
-      'settlements','categories','invitations','memberships','members','sync_records','sync_cursors','sync_sequences']) {
+      'settlements','categories','invitations','memberships','members','sync_records','sync_cursors',
+      'sync_sequences','sync_remote_versions','sync_pending_mutations','sync_conflicts','sync_groups']) {
       await db.runAsync(`DELETE FROM ${table} WHERE householdId = ?`, [id]);
     }
     await db.runAsync('DELETE FROM households WHERE id = ?', [id]);
@@ -703,7 +707,7 @@ export class SqliteContributionEntryRepository implements ContributionEntryRepos
     const db = await getDatabase();
     const created: ContributionEntry = {
       ...entry,
-      id: generateId('contribution'),
+      id: (entry as Partial<ContributionEntry>).id || generateId('contribution'),
     };
     await db.runAsync(CONTRIBUTION_INSERT_SQL, contributionParams(created));
     return created;
@@ -1199,7 +1203,7 @@ export class SqliteExpenseEntryRepository implements ExpenseEntryRepository {
     const db = await getDatabase();
     const created: ExpenseEntry = {
       ...entry,
-      id: generateId('expense'),
+      id: (entry as Partial<ExpenseEntry>).id || generateId('expense'),
     };
     await db.runAsync(EXPENSE_INSERT_SQL, expenseParams(created));
     return created;
@@ -1669,6 +1673,141 @@ export class SqliteSyncStateRepository implements SyncStateRepository {
       payload: r.payload,
     }));
   }
+
+  async getGroupState(householdId: string): Promise<SyncGroupState | null> {
+    const db = await getDatabase();
+    const row = await db.getFirstAsync<SyncGroupRow>(
+      'SELECT * FROM sync_groups WHERE householdId = ?',
+      [householdId],
+    );
+    return row
+      ? {
+          householdId: row.householdId,
+          remoteKnown: row.remoteKnown === 1,
+          lastRevision: row.lastRevision,
+          lastSyncedAt: row.lastSyncedAt,
+          lastError: row.lastError,
+        }
+      : null;
+  }
+
+  async setGroupState(state: SyncGroupState): Promise<void> {
+    const db = await getDatabase();
+    await db.runAsync(
+      `INSERT OR REPLACE INTO sync_groups
+        (householdId, remoteKnown, lastRevision, lastSyncedAt, lastError)
+       VALUES (?, ?, ?, ?, ?)`,
+      [state.householdId, state.remoteKnown ? 1 : 0, state.lastRevision, state.lastSyncedAt, state.lastError],
+    );
+  }
+
+  async getRemoteVersion(
+    householdId: string,
+    collection: SyncCollection,
+    entityId: string,
+  ): Promise<number> {
+    const db = await getDatabase();
+    const row = await db.getFirstAsync<{ version: number }>(
+      'SELECT version FROM sync_remote_versions WHERE householdId = ? AND collection = ? AND entityId = ?',
+      [householdId, collection, entityId],
+    );
+    return row?.version ?? 0;
+  }
+
+  async setRemoteVersion(
+    householdId: string,
+    collection: SyncCollection,
+    entityId: string,
+    version: number,
+  ): Promise<void> {
+    const db = await getDatabase();
+    await db.runAsync(
+      `INSERT INTO sync_remote_versions (householdId, collection, entityId, version)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(householdId, collection, entityId) DO UPDATE SET version = excluded.version`,
+      [householdId, collection, entityId, version],
+    );
+  }
+
+  async getPendingMutation(householdId: string): Promise<PendingSyncMutation | null> {
+    const db = await getDatabase();
+    const row = await db.getFirstAsync<PendingSyncMutationRow>(
+      'SELECT * FROM sync_pending_mutations WHERE householdId = ?',
+      [householdId],
+    );
+    return row
+      ? {
+          householdId: row.householdId,
+          operationId: row.operationId,
+          changesJson: row.changesJson,
+          sentJson: row.sentJson,
+          createdAt: row.createdAt,
+        }
+      : null;
+  }
+
+  async savePendingMutation(mutation: PendingSyncMutation): Promise<void> {
+    const db = await getDatabase();
+    await db.runAsync(
+      `INSERT OR REPLACE INTO sync_pending_mutations
+        (householdId, operationId, changesJson, sentJson, createdAt)
+       VALUES (?, ?, ?, ?, ?)`,
+      [
+        mutation.householdId,
+        mutation.operationId,
+        mutation.changesJson,
+        mutation.sentJson,
+        mutation.createdAt,
+      ],
+    );
+  }
+
+  async deletePendingMutation(householdId: string): Promise<void> {
+    const db = await getDatabase();
+    await db.runAsync('DELETE FROM sync_pending_mutations WHERE householdId = ?', [householdId]);
+  }
+
+  async recordConflict(conflict: SyncConflict): Promise<void> {
+    const db = await getDatabase();
+    await db.runAsync(
+      `INSERT OR REPLACE INTO sync_conflicts
+        (id, householdId, collection, entityId, localRevision, remoteVersion,
+         detectedAt, localPayload, remotePayload, resolvedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        conflict.id,
+        conflict.householdId,
+        conflict.collection,
+        conflict.entityId,
+        conflict.localRevision,
+        conflict.remoteVersion,
+        conflict.detectedAt,
+        conflict.localPayload,
+        conflict.remotePayload,
+        conflict.resolvedAt,
+      ],
+    );
+  }
+
+  async getConflicts(householdId: string): Promise<SyncConflict[]> {
+    const db = await getDatabase();
+    const rows = await db.getAllAsync<SyncConflictRow>(
+      'SELECT * FROM sync_conflicts WHERE householdId = ? ORDER BY detectedAt DESC',
+      [householdId],
+    );
+    return rows.map((row) => ({
+      id: row.id,
+      householdId: row.householdId,
+      collection: row.collection as SyncCollection,
+      entityId: row.entityId,
+      localRevision: row.localRevision,
+      remoteVersion: row.remoteVersion,
+      detectedAt: row.detectedAt,
+      localPayload: row.localPayload,
+      remotePayload: row.remotePayload,
+      resolvedAt: row.resolvedAt,
+    }));
+  }
 }
 
 interface SyncCursorRow {
@@ -1686,4 +1825,33 @@ interface SyncRecordRow {
   updatedAt: string;
   deletedAt: string | null;
   payload: string | null;
+}
+
+interface SyncGroupRow {
+  householdId: string;
+  remoteKnown: number;
+  lastRevision: number;
+  lastSyncedAt: string | null;
+  lastError: string | null;
+}
+
+interface PendingSyncMutationRow {
+  householdId: string;
+  operationId: string;
+  changesJson: string;
+  sentJson: string;
+  createdAt: string;
+}
+
+interface SyncConflictRow {
+  id: string;
+  householdId: string;
+  collection: string;
+  entityId: string;
+  localRevision: number;
+  remoteVersion: number;
+  detectedAt: string;
+  localPayload: string | null;
+  remotePayload: string | null;
+  resolvedAt: string | null;
 }

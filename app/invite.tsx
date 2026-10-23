@@ -75,22 +75,48 @@ export default function InviteScreen() {
     });
   }, [services, t]);
 
+  const remoteInvitations =
+    collaborationAvailable && typeof services.sync.createInvitation === 'function';
+
   const handleCreateAndShare = async () => {
     if (!collaborationAvailable) {
       Alert.alert(t('invite.unavailableTitle'), t('invite.unavailableBody'));
       return;
     }
     if (!currentHouseholdId || !currentUser) return;
+    if (remoteInvitations && !targetMember) {
+      Alert.alert(t('invite.targetRequiredTitle'), t('invite.targetRequiredBody'));
+      return;
+    }
     setIsSubmitting(true);
     try {
       const household = await repos.households.getById(currentHouseholdId);
       if (!household) throw new Error(t('invite.groupNotFound'));
 
+      if (remoteInvitations) {
+        // Real collaboration: the server issues an opaque, expiring token for
+        // this exact named member. The local row only mirrors it for history.
+        const remote = await services.sync.createInvitation!(
+          currentHouseholdId,
+          targetMember!.id,
+        );
+        const localInvitation = createInvitation({
+          household,
+          invitedByUserId: currentUser.userId,
+          targetMemberId: targetMember!.id,
+        });
+        const created = await repos.invitations.create({
+          ...localInvitation,
+          linkToken: remote.token,
+          expiresAt: remote.expiresAt,
+        });
+        await shareLink(created.linkToken, household.name);
+        await loadInvitations();
+        return;
+      }
+
       // Reuse the current pending link so repeated taps never pile up
-      // one-time invitations. The reuse is scoped to the SAME target: a
-      // link-only invitation is only reused for the link-only screen, and a
-      // targeted invitation is only reused for the exact same member — never
-      // for a different member (V4-09: the link is by member id, not by name).
+      // one-time invitations. The reuse is scoped to the SAME target.
       const existing = existingInvitations.find(
         (inv) => (inv.targetMemberId ?? null) === (targetMember?.id ?? null),
       );
@@ -136,7 +162,9 @@ export default function InviteScreen() {
           <Text variant="body" style={styles.hint}>
             {targetMember
               ? t('invite.targetedHint', { name: targetMember.name })
-              : t('invite.linkOnlyHint')}
+              : remoteInvitations
+                ? t('invite.targetRequiredBody')
+                : t('invite.linkOnlyHint')}
           </Text>
           <Button
             title={targetMember
@@ -144,7 +172,12 @@ export default function InviteScreen() {
               : t('invite.createLink')}
             variant="primary"
             onPress={handleCreateAndShare}
-            disabled={!collaborationAvailable || !currentHouseholdId || isSubmitting}
+            disabled={
+              !collaborationAvailable ||
+              !currentHouseholdId ||
+              isSubmitting ||
+              (remoteInvitations && !targetMember)
+            }
             loading={isSubmitting}
             style={styles.shareButton}
           />

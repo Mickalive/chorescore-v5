@@ -32,6 +32,9 @@ import {
   SyncCursor,
   SyncRecord,
   SyncCollection,
+  SyncGroupState,
+  SyncConflict,
+  PendingSyncMutation,
 } from '../../domain/entities';
 import {
   UserRepository,
@@ -96,6 +99,15 @@ export interface AllRepositories {
   settlements: SettlementRepository;
   invitations: InvitationRepository;
   syncState: SyncStateRepository;
+
+  /**
+   * Unwrapped business repositories. Remote deltas must be materialised
+   * through these so applying authoritative server state does not create new
+   * dirty outbox records (which would otherwise ping-pong forever).
+   * In-memory and SQLite both expose the same underlying rows as the wrapped
+   * repositories above.
+   */
+  raw: AllRepositories;
 
   /**
    * Run `fn` inside a storage-level transaction.
@@ -328,6 +340,51 @@ export class MaterializingSyncState implements SyncStateRepository {
   ): Promise<SyncRecord[]> {
     return this.inner.getDirtyRecords(householdId, collection, sinceRevision);
   }
+
+  getGroupState(householdId: string): Promise<SyncGroupState | null> {
+    return this.inner.getGroupState(householdId);
+  }
+
+  setGroupState(state: SyncGroupState): Promise<void> {
+    return this.inner.setGroupState(state);
+  }
+
+  getRemoteVersion(
+    householdId: string,
+    collection: SyncCollection,
+    entityId: string,
+  ): Promise<number> {
+    return this.inner.getRemoteVersion(householdId, collection, entityId);
+  }
+
+  setRemoteVersion(
+    householdId: string,
+    collection: SyncCollection,
+    entityId: string,
+    version: number,
+  ): Promise<void> {
+    return this.inner.setRemoteVersion(householdId, collection, entityId, version);
+  }
+
+  getPendingMutation(householdId: string): Promise<PendingSyncMutation | null> {
+    return this.inner.getPendingMutation(householdId);
+  }
+
+  savePendingMutation(mutation: PendingSyncMutation): Promise<void> {
+    return this.inner.savePendingMutation(mutation);
+  }
+
+  deletePendingMutation(householdId: string): Promise<void> {
+    return this.inner.deletePendingMutation(householdId);
+  }
+
+  recordConflict(conflict: SyncConflict): Promise<void> {
+    return this.inner.recordConflict(conflict);
+  }
+
+  getConflicts(householdId: string): Promise<SyncConflict[]> {
+    return this.inner.getConflicts(householdId);
+  }
 }
 
 // ── Shared In-Memory Business Repo Snapshots ───────────────────
@@ -389,6 +446,63 @@ function createInMemoryRepositories(): AllRepositories {
   let repos: AllRepositories;
   const materializingSync = new MaterializingSyncState(baseSyncState, () => repos);
 
+  const withTransaction = async <T>(fn: () => Promise<T>): Promise<T> => {
+    // In-memory equivalent of a DB transaction: snapshot ALL affected repos
+    // (business repos + sync buffer + remote metadata), run the work, and
+    // restore on any failure so a partial write can never survive.
+    const contribSnap = contributionRepo.snapshot();
+    const todoSnap = todoRepo.snapshot();
+    const expenseSnap = expenseRepo.snapshot();
+    const settlementSnap = settlementRepo.snapshot();
+    const taskSnap = taskRepo.snapshot();
+    const memberSnap = memberRepo.snapshot();
+    const categorySnap = categoryRepo.snapshot();
+    const membershipSnap = membershipRepo.snapshot();
+    const householdSnap = householdRepo.snapshot();
+    const invitationSnap = invitationRepo.snapshot();
+    const syncCursorsSnap = baseSyncState.snapshotCursors();
+    const syncSequencesSnap = baseSyncState.snapshotSequences();
+    const syncRecordsSnap = baseSyncState.snapshotRecords();
+    const metadataSnap = baseSyncState.snapshotMetadata();
+    try {
+      return await fn();
+    } catch (err) {
+      contributionRepo.restoreFromSnapshot(contribSnap);
+      todoRepo.restoreFromSnapshot(todoSnap);
+      expenseRepo.restoreFromSnapshot(expenseSnap);
+      settlementRepo.restoreFromSnapshot(settlementSnap);
+      taskRepo.restoreFromSnapshot(taskSnap);
+      memberRepo.restoreFromSnapshot(memberSnap);
+      categoryRepo.restoreFromSnapshot(categorySnap);
+      membershipRepo.restoreFromSnapshot(membershipSnap);
+      householdRepo.restoreFromSnapshot(householdSnap);
+      invitationRepo.restoreFromSnapshot(invitationSnap);
+      baseSyncState.restoreCursors(syncCursorsSnap);
+      baseSyncState.restoreSequences(syncSequencesSnap);
+      baseSyncState.restoreRecords(syncRecordsSnap);
+      baseSyncState.restoreMetadata(metadataSnap);
+      throw err;
+    }
+  };
+
+  let raw!: AllRepositories;
+  raw = {
+    users: userRepo,
+    memberships: membershipRepo,
+    households: householdRepo,
+    members: memberRepo,
+    categories: categoryRepo,
+    contributions: contributionRepo,
+    tasks: taskRepo,
+    todos: todoRepo,
+    expenses: expenseRepo,
+    settlements: settlementRepo,
+    invitations: invitationRepo,
+    syncState: materializingSync,
+    raw,
+    withTransaction,
+  };
+
   repos = {
     users: userRepo,
     memberships: syncMemberships,
@@ -402,43 +516,8 @@ function createInMemoryRepositories(): AllRepositories {
     settlements: syncSettlements,
     invitations: syncInvitations,
     syncState: materializingSync,
-    withTransaction: async <T>(fn: () => Promise<T>): Promise<T> => {
-      // V3-06 REPAIR: In-memory equivalent of a DB transaction: snapshot ALL
-      // affected repos (business repos + sync buffer), run the work, and restore
-      // on any failure so a partial write can never survive.
-      const contribSnap = contributionRepo.snapshot();
-      const todoSnap = todoRepo.snapshot();
-      const expenseSnap = expenseRepo.snapshot();
-      const settlementSnap = settlementRepo.snapshot();
-      const taskSnap = taskRepo.snapshot();
-      const memberSnap = memberRepo.snapshot();
-      const categorySnap = categoryRepo.snapshot();
-      const membershipSnap = membershipRepo.snapshot();
-      const householdSnap = householdRepo.snapshot();
-      const invitationSnap = invitationRepo.snapshot();
-      // Snapshot base sync state (cursors + records)
-      const syncCursorsSnap = baseSyncState.snapshotCursors();
-      const syncSequencesSnap = baseSyncState.snapshotSequences();
-      const syncRecordsSnap = baseSyncState.snapshotRecords();
-      try {
-        return await fn();
-      } catch (err) {
-        contributionRepo.restoreFromSnapshot(contribSnap);
-        todoRepo.restoreFromSnapshot(todoSnap);
-        expenseRepo.restoreFromSnapshot(expenseSnap);
-        settlementRepo.restoreFromSnapshot(settlementSnap);
-        taskRepo.restoreFromSnapshot(taskSnap);
-        memberRepo.restoreFromSnapshot(memberSnap);
-        categoryRepo.restoreFromSnapshot(categorySnap);
-        membershipRepo.restoreFromSnapshot(membershipSnap);
-        householdRepo.restoreFromSnapshot(householdSnap);
-        invitationRepo.restoreFromSnapshot(invitationSnap);
-        baseSyncState.restoreCursors(syncCursorsSnap);
-        baseSyncState.restoreSequences(syncSequencesSnap);
-        baseSyncState.restoreRecords(syncRecordsSnap);
-        throw err;
-      }
-    },
+    raw,
+    withTransaction,
   };
 
   return serializeTransactions(repos);
@@ -501,8 +580,35 @@ export async function createSqliteRepositories(): Promise<AllRepositories | null
     let repos: AllRepositories;
     const materializingSync = new MaterializingSyncState(baseSyncState, () => repos);
 
-    repos = {
+    const withTransaction = async <T>(fn: () => Promise<T>): Promise<T> => {
+      // Real SQLite transaction: any throw rolls back all writes.
+      let result: T;
+      await db.withTransactionAsync(async () => {
+        result = await fn();
+      });
+      return result!;
+    };
+
+    let raw!: AllRepositories;
+    raw = {
       users: new SqliteUserRepository(),
+      memberships: rawMemberships,
+      households: rawHouseholds,
+      members: rawMembers,
+      categories: rawCategories,
+      contributions: rawContributions,
+      tasks: rawTasks,
+      todos: rawTodos,
+      expenses: rawExpenses,
+      settlements: rawSettlements,
+      invitations: rawInvitations,
+      syncState: baseSyncState,
+      raw,
+      withTransaction,
+    };
+
+    repos = {
+      users: raw.users,
       memberships: syncMemberships,
       households: syncHouseholds,
       members: syncMembers,
@@ -514,14 +620,8 @@ export async function createSqliteRepositories(): Promise<AllRepositories | null
       settlements: syncSettlements,
       invitations: syncInvitations,
       syncState: materializingSync,
-      withTransaction: async <T>(fn: () => Promise<T>): Promise<T> => {
-        // Real SQLite transaction: any throw rolls back all writes.
-        let result: T;
-        await db.withTransactionAsync(async () => {
-          result = await fn();
-        });
-        return result!;
-      },
+      raw,
+      withTransaction,
     };
 
     return serializeTransactions(repos);

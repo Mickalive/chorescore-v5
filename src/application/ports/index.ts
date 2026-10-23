@@ -108,6 +108,27 @@ export interface SyncGateway {
   pushChanges(householdId: string): Promise<void>;
   pullChanges(householdId: string): Promise<void>;
   getStatus(householdId: string): Promise<SyncStatus>;
+
+  /** Remote collaboration: discover groups and pull every accessible group. */
+  discoverGroups?(userId: string): Promise<void>;
+  /** Remote collaboration: create the server group if it does not exist yet. */
+  ensureRemoteGroup?(householdId: string, userId: string): Promise<void>;
+  /** Remote collaboration: create a server invitation for a named member. */
+  createInvitation?(householdId: string, memberId: string): Promise<RemoteInvitation>;
+  /** Remote collaboration: accept a server invitation and pull its group. */
+  acceptInvitation?(token: string): Promise<RemoteInvitationAcceptance>;
+}
+
+export interface RemoteInvitation {
+  token: string;
+  groupId: string;
+  memberId: string;
+  expiresAt: string;
+}
+
+export interface RemoteInvitationAcceptance {
+  groupId: string;
+  memberId: string;
 }
 
 export interface SyncStatus {
@@ -115,6 +136,7 @@ export interface SyncStatus {
   lastSyncedAt: string | null;
   pendingChanges: number;
   error: string | null;
+  conflicts: number;
 }
 
 // ── Analytics Port ─────────────────────────────────────────────

@@ -23,6 +23,7 @@ import { LocalNotificationAdapter } from '../../infrastructure/local/LocalNotifi
 import { LocalCalendarAdapter } from '../../infrastructure/local/LocalCalendarAdapter';
 import { LocalSecureStorageAdapter } from '../../infrastructure/local/LocalSecureStorageAdapter';
 import { LocalSyncAdapter } from '../../infrastructure/local/LocalSyncAdapter';
+import { RemoteSyncAdapter } from '../../infrastructure/sync/RemoteSyncAdapter';
 import { LocalResearchAnalyticsAdapter } from '../../infrastructure/local/LocalResearchAnalyticsAdapter';
 import { LocalAttachmentAdapter } from '../../infrastructure/local/LocalAttachmentAdapter';
 import { E2EAttachmentAdapter } from '../../infrastructure/local/E2EAttachmentAdapter';
@@ -157,10 +158,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => { cancelled = true; };
   }, [ensureReposReady]);
 
-  const servicesRef = useRef({
-    auth: firebaseAuthConfig() && !isE2EAuthEnabled()
+  const servicesRef = useRef((() => {
+    const auth = firebaseAuthConfig() && !isE2EAuthEnabled()
       ? new FirebaseAuthAdapter(firebaseAuthConfig()!, new LocalSecureStorageAdapter())
-      : new LocalAuthAdapter({ secureStorage: new LocalSecureStorageAdapter() }),
+      : new LocalAuthAdapter({ secureStorage: new LocalSecureStorageAdapter() });
+    const collaborationUrl = (process.env.EXPO_PUBLIC_COLLAB_URL ?? '').trim();
+    const sync: SyncGateway =
+      auth instanceof FirebaseAuthAdapter && collaborationUrl
+        ? new RemoteSyncAdapter({
+            baseUrl: collaborationUrl,
+            getAccessToken: () => auth.getIdToken(),
+            getRepos: () => rawReposRef.current,
+          })
+        : new LocalSyncAdapter();
+    return {
+    auth,
     // V4-09: the normal build uses the real native share sheet. The explicit,
     // secretless E2E build gets a deterministic adapter so the share journey
     // can be driven without a SystemUI sheet the harness cannot dismiss.
@@ -168,7 +180,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     notifications: new LocalNotificationAdapter(),
     calendar: new LocalCalendarAdapter(),
     secureStorage: new LocalSecureStorageAdapter(),
-    sync: new LocalSyncAdapter(),
+    sync,
     analytics: new LocalResearchAnalyticsAdapter(),
     // V4-01/V4-04: honest adapter in a normal build — reports unavailable
     // until a real photo provider is configured; the UI then hides the photo
@@ -177,13 +189,35 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     attachments: (isE2EAuthEnabled()
       ? new E2EAttachmentAdapter(true)
       : new LocalAttachmentAdapter()) as AttachmentGateway,
-  });
+    };
+  })());
 
   // ── Data-change signal (pub/sub) ──────────────────────────────
   // Lightweight mechanism so screens can notify each other of writes
   // without full re-reads.  Each subscriber receives the change type
   // and the affected householdId so it can decide whether to refresh.
   const dataChangeListenersRef = useRef<Set<DataChangeCallback>>(new Set());
+
+  const syncTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const schedulePush = useCallback((householdId: string) => {
+    const sync = servicesRef.current.sync;
+    if (!sync.isAvailable()) return;
+    const previous = syncTimersRef.current.get(householdId);
+    if (previous) clearTimeout(previous);
+    const timer = setTimeout(() => {
+      syncTimersRef.current.delete(householdId);
+      void (async () => {
+        try {
+          await sync.pushChanges(householdId);
+          await sync.pullChanges(householdId);
+        } catch {
+          // The adapter stores a durable error/pending batch for the next retry.
+        }
+      })();
+    }, 500);
+    (timer as unknown as { unref?: () => void }).unref?.();
+    syncTimersRef.current.set(householdId, timer);
+  }, []);
 
   const emitDataChange = useCallback((type: DataChangeType, householdId: string) => {
     // Cleanup uses indexed reference metadata; failures retain a durable queue.
@@ -193,11 +227,43 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     for (const listener of dataChangeListenersRef.current) {
       try { listener(type, householdId); } catch { /* swallow */ }
     }
-  }, []);
+    schedulePush(householdId);
+  }, [schedulePush]);
 
   const subscribeToDataChanges = useCallback((callback: DataChangeCallback): (() => void) => {
     dataChangeListenersRef.current.add(callback);
     return () => { dataChangeListenersRef.current.delete(callback); };
+  }, []);
+
+  const loadHouseholdsRef = useRef<(userId?: string) => Promise<void>>(async () => undefined);
+
+  useEffect(() => {
+    const sync = servicesRef.current.sync;
+    if (!(sync instanceof RemoteSyncAdapter)) return;
+    sync.setOnRemoteChange((signal) => {
+      const types = new Set<DataChangeType>();
+      for (const collection of signal.collections) {
+        if (collection === 'contribution_entries') types.add('contribution');
+        else if (collection === 'expense_entries') types.add('expense');
+        else if (collection === 'settlements') types.add('settlement');
+        else if (collection === 'households') types.add('household');
+        else if (collection === 'members' || collection === 'memberships') types.add('member');
+        else if (collection === 'todo_items' || collection === 'persistent_tasks') types.add('todo');
+      }
+      for (const type of types) {
+        for (const listener of dataChangeListenersRef.current) {
+          try { listener(type, signal.householdId); } catch { /* swallow */ }
+        }
+      }
+      if (
+        signal.collections.includes('households') ||
+        signal.collections.includes('members') ||
+        signal.collections.includes('memberships')
+      ) {
+        void loadHouseholdsRef.current();
+      }
+    });
+    return () => { sync.setOnRemoteChange(() => undefined); };
   }, []);
 
   // Auth state listener
@@ -227,12 +293,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const repos = reposRef.current;
     const uid = userId ?? currentUser?.userId;
     if (!uid || !repos) return;
+    const sync = servicesRef.current.sync;
+    if (sync.isAvailable() && sync.discoverGroups) {
+      await sync.discoverGroups(uid).catch(() => undefined);
+    }
     const loaded = await loadHouseholdsForUser(repos, uid);
     setHouseholds(loaded);
     if (loaded.length > 0 && !currentHouseholdId) {
       setCurrentHouseholdId(loaded[0].id);
     }
+    if (sync.isAvailable()) {
+      for (const household of loaded) void sync.startSync(household.id);
+    }
   }, [currentUser, currentHouseholdId, ensureReposReady]);
+
+  useEffect(() => {
+    loadHouseholdsRef.current = loadHouseholds;
+  }, [loadHouseholds]);
 
   const applySignedInUser = useCallback(async (user: AuthUser) => {
     // V3-06 REPAIR: Always wrap from the RAW repos, never from an
@@ -305,9 +382,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // V3-06 REPAIR: Reset scoped repos to raw repos so the next signIn
     // wraps from the unscoped set, not from the previous user's scoped set.
     reposRef.current = rawReposRef.current;
+    for (const household of households) void servicesRef.current.sync.stopSync(household.id);
+    for (const timer of syncTimersRef.current.values()) clearTimeout(timer);
+    syncTimersRef.current.clear();
     setHouseholds([]);
     setCurrentHouseholdId(null);
-  }, []);
+  }, [households]);
 
   const createHousehold = useCallback(async (name: string, memberNames: string[] = [], contributionUnit: ContributionUnit = 'minutes') => {
     if (!currentUser) throw new Error('Not authenticated');
@@ -318,6 +398,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       memberNames,
       contributionUnit,
     });
+    await servicesRef.current.sync.ensureRemoteGroup?.(result.household.id, currentUser.userId)
+      .catch(() => undefined);
     emitDataChange('household', result.household.id);
     emitDataChange('member', result.household.id);
     await loadHouseholds(currentUser.userId);
