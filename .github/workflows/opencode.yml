@@ -40,6 +40,8 @@ jobs:
           ref: feat/product-reconstruction
           fetch-depth: 1
           persist-credentials: false
+      - name: Record starting revision
+        run: git rev-parse HEAD > "$RUNNER_TEMP/opencode-base-head"
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -124,18 +126,21 @@ jobs:
           set -euo pipefail
           git add -A
           python3 - <<'PY'
-          import subprocess
-          paths=subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines()
+          import subprocess,os
+          base=open(os.environ['RUNNER_TEMP']+'/opencode-base-head').read().strip()
+          paths=subprocess.check_output(['git','diff',base,'--name-only'],text=True).splitlines()
           blocked=[p for p in paths if p.startswith('.github/workflows/') or p=='opencode.json' or p=='.github/OPENCODE_MISSION.md' or p.startswith('.opencode-ci/')]
           assert not blocked, 'Worker changed its execution controls or diagnostics: '+str(blocked)
           PY
-          if git diff --cached --quiet; then
+          if ! git diff --cached --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m 'OpenCode: implement and verify the next ChoreScore product slice'
+          fi
+          if [ "$(git rev-parse HEAD)" = "$(cat "$RUNNER_TEMP/opencode-base-head")" ]; then
             echo 'No source change: no commit or claim of delivery.' >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'OpenCode: implement and verify the next ChoreScore product slice'
           gh auth setup-git
           git push origin HEAD:feat/product-reconstruction
           gh workflow run android-apk.yml --ref feat/product-reconstruction
@@ -144,7 +149,11 @@ jobs:
         if: always()
         run: |
           git add -N .
-          git diff --binary > "$RUNNER_TEMP/opencode-proposed.patch"
+          if [ -f "$RUNNER_TEMP/opencode-base-head" ]; then
+            git diff --binary "$(cat "$RUNNER_TEMP/opencode-base-head")" > "$RUNNER_TEMP/opencode-proposed.patch"
+          else
+            git diff --binary > "$RUNNER_TEMP/opencode-proposed.patch"
+          fi
       - name: Worker evidence
         if: always()
         uses: actions/upload-artifact@v4
