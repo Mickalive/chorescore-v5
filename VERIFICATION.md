@@ -40,3 +40,11 @@ Reproduire avec Node 24, `npm ci`, puis `npm test`. Pour le navigateur : Chromiu
 Prochain verrou d'acceptation : installer le candidat Android et exécuter les parcours natifs. La collaboration requiert ensuite un vrai projet Firebase et son backend sécurisé ; ni les tests de callbacks réseau, ni les réponses Firebase simulées des tests unitaires ne constituent cette preuve.
 
 Candidat local du code mobile `5eefb93` également compilé avec succès (incrémental, 58 s), SHA-256 `496e6aa018be847663d72cd21817c25426054be949277f3bea90f0a4ad262ac0`. Toujours aucune validation native à déduire de cette compilation.
+
+
+## Mise à jour GitHub — 23 octobre 2026
+
+- OpenCode a livré le commit `8525adb` : renommage des membres conservant leur identifiant et correction du sélecteur du scénario Android.
+- [Run Android 39925369061](https://github.com/Mickalive/chorescore-v5/actions/runs/39925369061) **réussi** sur ce commit : TypeScript, tests métier/SQLite, tests HTTP serveur, compilation release et étape `Verify installed release APK on Android` effectivement exécutés et réussis. Ce scénario couvre le lancement, groupe, tâche/dépense, balances, redémarrage et partage ; il ne prouve pas les photos/rappels ni la collaboration. Les anciennes mentions « premier résultat natif à relever » ci-dessus sont dépassées par ce résultat.
+- Les cinq dépôts ont été recensés et les cahiers historiques récupérés, y compris V4 dans la branche du dépôt V3 (le dépôt V4 lui-même est vide). Références, évolution des exigences et critères cumulatifs : [CROSS_REPOSITORY_REQUIREMENTS.md](docs/CROSS_REPOSITORY_REQUIREMENTS.md).
+- La série `39971192327` a été annulée pour intégrer ces sources avant reprise ; elle n'est pas présentée comme une livraison. La prochaine priorité reste le raccordement réel client/serveur, pas un nouveau renommage périphérique.

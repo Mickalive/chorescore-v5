@@ -16,4 +16,4 @@ Deliver a cohesive, attractive, installable Android app for shared household **t
 - Never claim tests or screenshots you did not actually run or view. When cloud/emulator access is unavailable, say exactly what was and wasn't tested, then continue independent work.
 
 ## Execution
-Read `CODEX_MISSION.md` first, then `PRODUCT.md`, `VERIFICATION.md`, `docs/V4_CONSTITUTION.md`, and the code. Implement rather than merely writing an audit. Do not ask the owner for code-review decisions on every minor change. Only surface true external credential/product-design blockers.
+Read `docs/CROSS_REPOSITORY_REQUIREMENTS.md` and its pinned historical source manifest, then `CODEX_MISSION.md`, then `PRODUCT.md`, `VERIFICATION.md`, `docs/V4_CONSTITUTION.md`, and the code. Implement rather than merely writing an audit. Do not ask the owner for code-review decisions on every minor change. Only surface true external credential/product-design blockers.
