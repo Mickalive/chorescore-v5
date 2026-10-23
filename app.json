@@ -15,14 +15,36 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "app.chorescore.v5"
+      "bundleIdentifier": "app.chorescore.v5",
+      "associatedDomains": [
+        "applinks:chorescore.app"
+      ]
     },
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#FFF5EB"
       },
       "package": "app.chorescore.v5",
-      "intentFilters": []
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "chorescore.app",
+              "pathPrefix": "/join"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ],
+      "permissions": [
+        "android.permission.SCHEDULE_EXACT_ALARM"
+      ]
     },
     "web": {
       "bundler": "metro"
@@ -31,7 +53,8 @@
       "expo-router",
       "expo-font",
       "expo-sharing",
-      "expo-sqlite"
+      "expo-sqlite",
+      "expo-notifications"
     ],
     "experiments": {
       "typedRoutes": true

@@ -1,3 +1,7 @@
+import { DateTimeField } from '../../src/ui/components/DateTimeField';
+import { taskUpdatePayload, expenseUpdatePayload } from '../../src/features/entries/editPayload';
+import { PhotoField } from '../../src/features/entries/PhotoField';
+import { LoadingState, ErrorState } from '../../src/ui/components/States';
 /**
  * ChoreScore V4 — Add Tab
  *
@@ -24,7 +28,6 @@ import {
   TextInput,
   TouchableOpacity,
   Alert,
-  Image,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { ScreenContainer } from '../../src/ui/components/ScreenContainer';
@@ -37,9 +40,7 @@ import { useI18n } from '../../src/i18n';
 import {
   Attachment,
   Category,
-  ContributionEntry,
   ContributionUnit,
-  ExpenseEntry,
   ExpenseSplitMode,
   Member,
   PersistentTask,
@@ -134,60 +135,6 @@ function amountMinorToRaw(amountMinor: number): string {
   return `${whole}.${cents.toString().padStart(2, '0')}`;
 }
 
-/**
- * Build the update payload for an edited task.
- *
- * The explicit `undefined` entries are deliberate: the repository merges the
- * partial over the existing row, and SQLite writes `NULL` for undefined, so an
- * edit can genuinely *remove* a note, a photo, a category or a custom split.
- * Spreading the draft alone would keep stale values when a field is omitted.
- */
-function taskUpdatePayload(
-  draft: Omit<ContributionEntry, 'id'>,
-  modifiedBy: string,
-): Partial<ContributionEntry> {
-  return {
-    label: draft.label,
-    performedByMemberId: draft.performedByMemberId,
-    beneficiaryMemberIds: draft.beneficiaryMemberIds,
-    value: draft.value,
-    unit: draft.unit,
-    persistentTaskId: draft.persistentTaskId,
-    occurredAt: draft.occurredAt,
-    categoryId: draft.categoryId,
-    categoryLabelSnapshot: draft.categoryLabelSnapshot,
-    note: draft.note,
-    attachments: draft.attachments,
-    splitMode: draft.splitMode,
-    splitWeights: draft.splitWeights,
-    splitSource: draft.splitSource,
-    modifiedBy,
-  };
-}
-
-/** Same "edit can clear a field" contract as {@link taskUpdatePayload}. */
-function expenseUpdatePayload(
-  draft: Omit<ExpenseEntry, 'id'>,
-  modifiedBy: string,
-): Partial<ExpenseEntry> {
-  return {
-    title: draft.title,
-    amountMinor: draft.amountMinor,
-    currency: draft.currency,
-    paidByMemberId: draft.paidByMemberId,
-    participantMemberIds: draft.participantMemberIds,
-    splitMode: draft.splitMode,
-    customShares: draft.customShares,
-    category: draft.category,
-    categoryId: draft.categoryId,
-    categoryLabelSnapshot: draft.categoryLabelSnapshot,
-    note: draft.note,
-    attachments: draft.attachments,
-    occurredAt: draft.occurredAt,
-    modifiedBy,
-  };
-}
-
 interface CategoryOption {
   id: string | null;
   name: string;
@@ -212,9 +159,12 @@ export default function AddScreen() {
   const [mode, setMode] = useState<EntryMode>('task');
   const [members, setMembers] = useState<Member[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [loadedGroupId, setLoadedGroupId] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState(false);
   const [householdUnit, setHouseholdUnit] = useState<ContributionUnit>('minutes');
   const [persistentTasks, setPersistentTasks] = useState<PersistentTask[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const submittingRef = useRef(false);
 
   // Task split choice + raw weights
   const [taskSplitChoice, setTaskSplitChoice] = useState<TaskSplitChoice>('equal');
@@ -282,14 +232,15 @@ export default function AddScreen() {
 
   const loadHousehold = useCallback(async () => {
     if (!currentHouseholdId) return;
-    const householdMembers = await repos.members.getByHousehold(currentHouseholdId);
+    const [householdMembers, household, tasks, groupCategories] = await Promise.all([
+      repos.members.getByHousehold(currentHouseholdId), repos.households.getById(currentHouseholdId),
+      repos.tasks.getByHousehold(currentHouseholdId), repos.categories.getByHousehold(currentHouseholdId),
+    ]);
+    if (!household) throw new Error('Group is unavailable');
     setMembers(householdMembers);
-
-    const household = await repos.households.getById(currentHouseholdId);
-    if (household) setHouseholdUnit(household.contributionUnit);
-
-    setPersistentTasks(await repos.tasks.getByHousehold(currentHouseholdId));
-    await loadCategories();
+    setHouseholdUnit(household.contributionUnit);
+    setPersistentTasks(tasks);
+    setCategories(groupCategories);
 
     if (householdMembers.length > 0) {
       setTaskForm((prev) => ({
@@ -314,9 +265,7 @@ export default function AddScreen() {
   useEffect(() => {
     if (initialLoadDoneRef.current) return;
     initialLoadDoneRef.current = true;
-    loadHousehold().catch(() => {
-      // Keep the form usable; a later focus/retry can reload.
-    });
+    loadHousehold().then(() => setLoadedGroupId(currentHouseholdId)).catch(() => setLoadError(true));
   }, [loadHousehold]);
 
   // ── Pre-fill the form when editing an existing entry ───────
@@ -509,15 +458,19 @@ export default function AddScreen() {
 
   // ── Category management ────────────────────────────────────
 
+  const categorySubmittingRef = useRef(false);
+  const [categoryBusy,setCategoryBusy] = useState(false);
+
   const resetCategoryDraft = () =>
     setCategoryDraft({ name: '', ratioEnabled: false, weights: {} });
 
   const handleCreateCategory = async () => {
-    if (!currentHouseholdId) return;
+    if (!currentHouseholdId || categorySubmittingRef.current) return;
+    categorySubmittingRef.current = true; setCategoryBusy(true);
     try {
       const allMemberIds = members.map((m) => m.id);
       const weights = categoryDraft.ratioEnabled
-        ? taskWeightsFromRaw(allMemberIds, categoryDraft.weights)
+        ? taskWeightsFromRaw(allMemberIds, Object.fromEntries(allMemberIds.map(id => [id,categoryDraft.weights[id] ?? '1'])))
         : null;
       if (categoryDraft.ratioEnabled && !weights) {
         Alert.alert(t('state.error'), t('add.categoryError'));
@@ -528,16 +481,16 @@ export default function AddScreen() {
         name: categoryDraft.name,
         defaultTaskRatio: weights,
       });
-      await repos.categories.create({
+      await repos.withTransaction(async () => repos.categories.create({
         householdId: draft.householdId,
         name: draft.name,
         defaultTaskRatio: draft.defaultTaskRatio,
-      });
+      }));
       resetCategoryDraft();
       await loadCategories();
     } catch {
       Alert.alert(t('state.error'), t('add.categoryError'));
-    }
+    } finally { categorySubmittingRef.current = false; setCategoryBusy(false); }
   };
 
   const startRenameCategory = (category: Category) => {
@@ -547,7 +500,7 @@ export default function AddScreen() {
 
   const handleRenameCategory = async (category: Category) => {
     try {
-      await repos.categories.update(category.id, renameCategory(editingCategoryName));
+      await repos.withTransaction(async () => repos.categories.update(category.id, renameCategory(editingCategoryName)));
       setEditingCategoryId(null);
       await loadCategories();
     } catch {
@@ -566,7 +519,7 @@ export default function AddScreen() {
           style: 'destructive',
           onPress: async () => {
             try {
-              await repos.categories.delete(category.id);
+              await repos.withTransaction(async () => repos.categories.delete(category.id));
               setTaskForm((prev) =>
                 prev.categoryId === category.id ? { ...prev, categoryId: null } : prev,
               );
@@ -609,7 +562,7 @@ export default function AddScreen() {
         Alert.alert(t('state.error'), t('add.categoryError'));
         return;
       }
-      await repos.categories.update(category.id, setCategoryDefaultTaskRatio(weights));
+      await repos.withTransaction(async () => repos.categories.update(category.id, setCategoryDefaultTaskRatio(weights)));
       setRatioCategoryId(null);
       await loadCategories();
       Alert.alert(t('add.categoryRatio'), t('add.categoryRatioSaved'));
@@ -620,7 +573,7 @@ export default function AddScreen() {
 
   const handleClearCategoryRatio = async (category: Category) => {
     try {
-      await repos.categories.update(category.id, { defaultTaskRatio: null });
+      await repos.withTransaction(async () => repos.categories.update(category.id, { defaultTaskRatio: null }));
       setRatioCategoryId(null);
       await loadCategories();
     } catch {
@@ -647,7 +600,7 @@ export default function AddScreen() {
   };
 
   const submitTask = async () => {
-    if (!currentHouseholdId || isSubmitting) return;
+    if (!currentHouseholdId || submittingRef.current) return;
     const value = parsePositiveNumber(taskForm.value);
     if (value === null) {
       Alert.alert(t('state.error'), t('add.errorValue'));
@@ -658,6 +611,7 @@ export default function AddScreen() {
       return;
     }
 
+    submittingRef.current = true;
     setIsSubmitting(true);
     try {
       const built = buildTaskDraft({
@@ -685,16 +639,16 @@ export default function AddScreen() {
       }
 
       if (isEditing && editEntryId) {
-        await repos.contributions.update(
+        await repos.withTransaction(async () => repos.contributions.update(
           editEntryId,
           taskUpdatePayload(built.draft, currentUser?.userId || ''),
-        );
+        ));
         emitDataChange('contribution', currentHouseholdId);
         router.back();
         return;
       }
 
-      const created = await repos.contributions.create(built.draft);
+      const created = await repos.withTransaction(async () => repos.contributions.create(built.draft));
       emitDataChange('contribution', currentHouseholdId);
       setLastCreated({
         kind: 'task',
@@ -710,6 +664,7 @@ export default function AddScreen() {
     } catch {
       Alert.alert(t('state.error'), isEditing ? t('add.errorEdit') : t('add.errorTask'));
     } finally {
+      submittingRef.current = false;
       setIsSubmitting(false);
     }
   };
@@ -733,7 +688,7 @@ export default function AddScreen() {
   };
 
   const submitExpense = async () => {
-    if (!currentHouseholdId || isSubmitting) return;
+    if (!currentHouseholdId || submittingRef.current) return;
     if (parsedAmountMinor === null) {
       Alert.alert(t('state.error'), t('add.errorAmount'));
       return;
@@ -743,6 +698,7 @@ export default function AddScreen() {
       return;
     }
 
+    submittingRef.current = true;
     setIsSubmitting(true);
     try {
       const built = buildExpenseDraft({
@@ -769,16 +725,16 @@ export default function AddScreen() {
       }
 
       if (isEditing && editEntryId) {
-        await repos.expenses.update(
+        await repos.withTransaction(async () => repos.expenses.update(
           editEntryId,
           expenseUpdatePayload(built.draft, currentUser?.userId || ''),
-        );
+        ));
         emitDataChange('expense', currentHouseholdId);
         router.back();
         return;
       }
 
-      const created = await repos.expenses.create(built.draft);
+      const created = await repos.withTransaction(async () => repos.expenses.create(built.draft));
       emitDataChange('expense', currentHouseholdId);
       setLastCreated({
         kind: 'expense',
@@ -793,6 +749,7 @@ export default function AddScreen() {
     } catch {
       Alert.alert(t('state.error'), isEditing ? t('add.errorEdit') : t('add.errorExpense'));
     } finally {
+      submittingRef.current = false;
       setIsSubmitting(false);
     }
   };
@@ -827,22 +784,6 @@ export default function AddScreen() {
     });
   };
 
-  const pickDateTime = (current: Date, onPick: (date: Date) => void) => {
-    Alert.alert(t('add.dateTime'), formatDateTimeShort(current), [
-      { text: t('add.dateNow'), onPress: () => onPick(new Date()) },
-      { text: t('add.dateHourAgo'), onPress: () => onPick(new Date(Date.now() - 3600000)) },
-      {
-        text: t('add.dateYesterday'),
-        onPress: () => {
-          const d = new Date();
-          d.setDate(d.getDate() - 1);
-          onPick(d);
-        },
-      },
-      { text: t('action.cancel'), style: 'cancel' },
-    ]);
-  };
-
   // A stored task keeps its own unit: editing it must never relabel minutes as
   // points (or the reverse) just because the group later changed its unit.
   const activeTaskUnit = isEditing ? taskEditUnit ?? householdUnit : householdUnit;
@@ -860,6 +801,7 @@ export default function AddScreen() {
         return (
           <TouchableOpacity
             key={option.id ?? 'none'}
+            testID={`add.category.${option.id ?? 'none'}`}
             style={[styles.memberChip, selected && styles.memberChipActive]}
             onPress={() => onSelect(option.id)}
             accessibilityRole="button"
@@ -876,51 +818,10 @@ export default function AddScreen() {
   );
 
   const renderPhotoField = (
-    attachments: Attachment[],
-    onChange: (next: Attachment[]) => void,
-    addButtonTestID: string,
-  ) => (
-    <View style={styles.inputGroup}>
-      <Text variant="caption">{t('add.photoOptional')}</Text>
-      {attachments.map((attachment) => (
-        <View key={attachment.id} style={styles.shareRow}>
-          {attachment.ref.startsWith('file:') && (
-            <Image source={{ uri: attachment.ref }} style={styles.photoThumbnail} resizeMode="cover" />
-          )}
-          <Text variant="body" style={styles.shareName}>
-            {t('add.photoAttached')}
-          </Text>
-          <TouchableOpacity
-            onPress={() => onChange(removePhoto(attachments, attachment.id))}
-            style={styles.actionButton}
-          >
-            <Text variant="caption" color={colors.balanceNegative}>
-              {t('add.photoRemove')}
-            </Text>
-          </TouchableOpacity>
-        </View>
-      ))}
-      {attachments.length > 0 && !attachmentsAvailable ? (
-        <Text variant="caption" color={colors.textMuted} style={styles.hint}>
-          {t('add.photoMissing')}
-        </Text>
-      ) : null}
-      {attachmentsAvailable ? (
-        <Button
-          testID={addButtonTestID}
-          title={t('add.photoAdd')}
-          variant="secondary"
-          size="small"
-          onPress={() => addPhoto((attachment) => onChange([...attachments, attachment]))}
-          style={styles.photoButton}
-        />
-      ) : (
-        <Text variant="caption" color={colors.textMuted} style={styles.hint}>
-          {t('add.photoUnavailable')}
-        </Text>
-      )}
-    </View>
-  );
+    attachments: Attachment[], onChange: (next: Attachment[]) => void, addButtonTestID: string,
+  ) => <PhotoField attachments={attachments} available={attachmentsAvailable} testID={addButtonTestID}
+    onAdd={() => addPhoto(photo => onChange([...attachments, photo]))}
+    onRemove={id => onChange(removePhoto(attachments, id))} />;
 
   const renderCategoryManager = () => (
     <View style={styles.managerSection}>
@@ -934,6 +835,7 @@ export default function AddScreen() {
         placeholderTextColor={colors.textMuted}
       />
       <TouchableOpacity
+        testID="add.categoryDraftRatioToggle"
         style={styles.managerRow}
         onPress={() =>
           setCategoryDraft((prev) => ({ ...prev, ratioEnabled: !prev.ratioEnabled }))
@@ -947,12 +849,14 @@ export default function AddScreen() {
         </Text>
       </TouchableOpacity>
       {categoryDraft.ratioEnabled &&
-        members.map((member) => (
+        members.map((member, index) => (
           <View key={member.id} style={styles.shareRow}>
             <Text variant="caption" style={styles.shareName}>
               {t('add.categoryWeightFor', { name: member.name })}
             </Text>
             <TextInput
+              testID={`add.categoryWeight.${index}`}
+              accessibilityLabel={t('add.categoryWeightFor', { name: member.name })}
               style={[styles.input, styles.shareInput]}
               value={categoryDraft.weights[member.id] ?? '1'}
               onChangeText={(value) =>
@@ -973,7 +877,8 @@ export default function AddScreen() {
         variant="secondary"
         size="small"
         onPress={handleCreateCategory}
-        disabled={!categoryDraft.name.trim()}
+        disabled={!categoryDraft.name.trim() || categoryBusy}
+        loading={categoryBusy}
         style={styles.managerAction}
       />
 
@@ -1045,6 +950,7 @@ export default function AddScreen() {
                       {t('add.categoryWeightFor', { name: member.name })}
                     </Text>
                     <TextInput
+                      accessibilityLabel={t('add.categoryWeightFor', { name: member.name })}
                       style={[styles.input, styles.shareInput]}
                       value={categoryRatioWeights[member.id] ?? '1'}
                       onChangeText={(value) =>
@@ -1080,6 +986,15 @@ export default function AddScreen() {
 
   // ── Render ─────────────────────────────────────────────────
 
+  if (loadedGroupId !== currentHouseholdId) {
+    return <ScreenContainer>{loadError
+      ? <ErrorState title={t('state.error')} message={t('state.genericError')}
+          retryLabel={t('action.retry')} onRetry={() => {
+            setLoadError(false);
+            loadHousehold().then(() => setLoadedGroupId(currentHouseholdId)).catch(() => setLoadError(true));
+          }} />
+      : <LoadingState message={t('state.loading')} />}</ScreenContainer>;
+  }
   return (
     <ScreenContainer>
       <View style={styles.header}>
@@ -1092,6 +1007,7 @@ export default function AddScreen() {
       {!isEditing && (
         <View style={styles.modeSwitch}>
           <TouchableOpacity
+            testID="add.mode.task"
             style={[styles.modeButton, mode === 'task' && styles.modeButtonActive]}
             onPress={() => setMode('task')}
             accessibilityRole="button"
@@ -1106,6 +1022,7 @@ export default function AddScreen() {
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
+            testID="add.mode.expense"
             style={[styles.modeButton, mode === 'expense' && styles.modeButtonActive]}
             onPress={() => setMode('expense')}
             accessibilityRole="button"
@@ -1202,6 +1119,7 @@ export default function AddScreen() {
             <Text variant="caption">{t('add.split')}</Text>
             <View style={styles.splitRow}>
               <TouchableOpacity
+                testID="add.taskSplit.equal"
                 style={[styles.splitButton, effectiveSplitChoice === 'equal' && styles.splitButtonActive]}
                 onPress={() => setTaskSplitChoice('equal')}
               >
@@ -1214,6 +1132,7 @@ export default function AddScreen() {
               </TouchableOpacity>
               {taskCategoryHasRatio && (
                 <TouchableOpacity
+                  testID="add.taskSplit.category"
                   style={[
                     styles.splitButton,
                     effectiveSplitChoice === 'category' && styles.splitButtonActive,
@@ -1233,6 +1152,7 @@ export default function AddScreen() {
                 </TouchableOpacity>
               )}
               <TouchableOpacity
+                testID="add.taskSplit.custom"
                 style={[styles.splitButton, effectiveSplitChoice === 'custom' && styles.splitButtonActive]}
                 onPress={() => setTaskSplitChoice('custom')}
               >
@@ -1255,12 +1175,14 @@ export default function AddScreen() {
                   {t('add.taskSplitMissingWeight')}
                 </Text>
               ) : (
-                taskForm.beneficiaryMemberIds.map((memberId) => (
+                taskForm.beneficiaryMemberIds.map((memberId, index) => (
                   <View key={memberId} style={styles.shareRow}>
                     <Text variant="body" style={styles.shareName}>
                       {memberName(memberId)}
                     </Text>
                     <TextInput
+                      testID={`add.taskWeight.${index}`}
+                      accessibilityLabel={`${t('add.weights')} ${memberName(memberId)}`}
                       style={[styles.input, styles.shareInput]}
                       value={taskWeightRaw[memberId] ?? '1'}
                       onChangeText={(value) =>
@@ -1285,11 +1207,12 @@ export default function AddScreen() {
           <View style={styles.inputGroup}>
             <Text variant="caption">{t('add.performedBy')}</Text>
             <View style={styles.chipRow}>
-              {members.map((m) => {
+              {members.map((m, index) => {
                 const selected = taskForm.performedByMemberId === m.id;
                 return (
                   <TouchableOpacity
                     key={m.id}
+                    testID={`add.taskPerformer.${index}`}
                     style={[styles.memberChip, selected && styles.memberChipActive]}
                     onPress={() => setTaskForm((prev) => ({ ...prev, performedByMemberId: m.id }))}
                   >
@@ -1306,11 +1229,12 @@ export default function AddScreen() {
           <View style={styles.inputGroup}>
             <Text variant="caption">{t('add.beneficiaries')}</Text>
             <View style={styles.chipRow}>
-              {members.map((m) => {
+              {members.map((m, index) => {
                 const selected = taskForm.beneficiaryMemberIds.includes(m.id);
                 return (
                   <TouchableOpacity
                     key={m.id}
+                    testID={`add.taskBeneficiary.${index}`}
                     style={[styles.memberChip, selected && styles.memberChipActive]}
                     onPress={() => toggleBeneficiary(m.id)}
                   >
@@ -1343,24 +1267,11 @@ export default function AddScreen() {
             'add.taskPhotoButton',
           )}
 
-          {/* Date / Time */}
-          <View style={styles.inputGroup}>
-            <Text variant="caption">{t('add.dateTime')}</Text>
-            <TouchableOpacity
-              style={styles.dateTimeButton}
-              onPress={() =>
-                pickDateTime(taskForm.occurredAt, (date) =>
-                  setTaskForm((prev) => ({ ...prev, occurredAt: date })),
-                )
-              }
-              accessibilityRole="button"
-              accessibilityLabel={t('a11y.chooseDateTime')}
-            >
-              <Text variant="body">{formatDateTimeShort(taskForm.occurredAt)}</Text>
-            </TouchableOpacity>
-          </View>
+          <DateTimeField label={t('add.dateTime')} value={taskForm.occurredAt}
+            testID="add.taskDateTime" onChange={(date) => { if(date) setTaskForm(prev => ({...prev,occurredAt:date})); }} />
 
           <Button
+            testID="add.taskSubmit"
             title={isEditing ? t('add.update') : t('add.addTask')}
             variant="primary"
             onPress={submitTask}
@@ -1375,6 +1286,7 @@ export default function AddScreen() {
           />
 
           <TouchableOpacity
+            testID="add.categoryManagerToggle"
             style={styles.manageToggle}
             onPress={() => setCategoriesOpen((prev) => !prev)}
             accessibilityRole="button"
@@ -1486,6 +1398,7 @@ export default function AddScreen() {
             <Text variant="caption">{t('add.split')}</Text>
             <View style={styles.splitRow}>
               <TouchableOpacity
+                testID="add.expenseSplit.equal"
                 style={[styles.splitButton, expenseForm.splitMode === 'equal' && styles.splitButtonActive]}
                 onPress={() => setExpenseForm((prev) => ({ ...prev, splitMode: 'equal' }))}
               >
@@ -1497,6 +1410,7 @@ export default function AddScreen() {
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
+                testID="add.expenseSplit.custom"
                 style={[styles.splitButton, expenseForm.splitMode === 'custom' && styles.splitButtonActive]}
                 onPress={() => setExpenseForm((prev) => ({ ...prev, splitMode: 'custom' }))}
               >
@@ -1521,6 +1435,7 @@ export default function AddScreen() {
                   </Text>
                   <TextInput
                     testID="add.expenseShare"
+                    accessibilityLabel={`${t('add.customShares')} ${memberName(memberId)}`}
                     style={[styles.input, styles.shareInput]}
                     value={expenseForm.customShares[memberId] || ''}
                     onChangeText={(value) =>
@@ -1566,24 +1481,11 @@ export default function AddScreen() {
             'add.expensePhotoButton',
           )}
 
-          {/* Date / Time */}
-          <View style={styles.inputGroup}>
-            <Text variant="caption">{t('add.dateTime')}</Text>
-            <TouchableOpacity
-              style={styles.dateTimeButton}
-              onPress={() =>
-                pickDateTime(expenseForm.occurredAt, (date) =>
-                  setExpenseForm((prev) => ({ ...prev, occurredAt: date })),
-                )
-              }
-              accessibilityRole="button"
-              accessibilityLabel={t('a11y.chooseDateTime')}
-            >
-              <Text variant="body">{formatDateTimeShort(expenseForm.occurredAt)}</Text>
-            </TouchableOpacity>
-          </View>
+          <DateTimeField label={t('add.dateTime')} value={expenseForm.occurredAt}
+            testID="add.expenseDateTime" onChange={(date) => { if(date) setExpenseForm(prev => ({...prev,occurredAt:date})); }} />
 
           <Button
+            testID="add.expenseSubmit"
             title={isEditing ? t('add.update') : t('add.addExpense')}
             variant="primary"
             onPress={submitExpense}
@@ -1598,6 +1500,7 @@ export default function AddScreen() {
           />
 
           <TouchableOpacity
+            testID="add.categoryManagerToggle"
             style={styles.manageToggle}
             onPress={() => setCategoriesOpen((prev) => !prev)}
             accessibilityRole="button"

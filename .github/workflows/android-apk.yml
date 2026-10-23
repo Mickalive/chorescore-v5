@@ -3,13 +3,14 @@ name: Android candidate APK
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: chorescore-v5-apk-${{ github.sha }}
+  group: chorescore-v5-apk-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -20,7 +21,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: npm
       - uses: actions/setup-java@v4
         with:
@@ -31,22 +32,51 @@ jobs:
         run: npm ci --no-audit --no-fund
       - name: TypeScript verification
         run: npm run typecheck
+      - name: Domain and disk-backed SQLite integration tests
+        run: npm test
+      - name: Collaboration server HTTP integration tests
+        run: npm run test:backend
       - name: Build release-mode Android APK
         run: |
           set -euo pipefail
           unset EXPO_PUBLIC_E2E_AUTH
           npx --no-install expo prebuild --platform android --no-install --clean
-          (cd android && ./gradlew :app:assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon)
+          (cd android && ./gradlew :app:assembleRelease -PreactNativeArchitectures=arm64-v8a,x86_64 --max-workers=2 --no-daemon)
           apk=$(find android/app/build/outputs/apk/release -type f -name '*.apk' | head -1)
           test -n "$apk" && test -s "$apk"
           mkdir -p release
           cp "$apk" release/ChoreScore-V5.apk
           unzip -t release/ChoreScore-V5.apk | tail -1
-          unzip -Z1 release/ChoreScore-V5.apk | grep -q '^lib/arm64-v8a/'
+          unzip -Z1 release/ChoreScore-V5.apk > release/APK-CONTENTS.txt
+          grep -q '^lib/arm64-v8a/' release/APK-CONTENTS.txt
+          grep -q '^lib/x86_64/' release/APK-CONTENTS.txt
           sha256sum release/ChoreScore-V5.apk > release/SHA256.txt
       - uses: actions/upload-artifact@v4
         with:
           name: ChoreScore-V5-APK
           path: release/
           if-no-files-found: error
+          retention-days: 14
+
+      - name: Enable hardware acceleration for native acceptance
+        run: |
+          test -c /dev/kvm
+          sudo chmod 666 /dev/kvm
+      - name: Verify installed release APK on Android
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          profile: pixel_2
+          emulator-options: -no-window -gpu swiftshader -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: python3 scripts/android/verify-device.py release/ChoreScore-V5.apk
+      - name: Preserve actual native evidence and failure diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChoreScore-Android-evidence
+          path: android-evidence/
+          if-no-files-found: warn
           retention-days: 14

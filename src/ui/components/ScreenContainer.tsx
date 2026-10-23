@@ -10,7 +10,7 @@
  */
 
 import React from 'react';
-import { View, StyleSheet, ScrollView, ViewStyle } from 'react-native';
+import { View, StyleSheet, ScrollView, ViewStyle, KeyboardAvoidingView, Platform } from 'react-native';
 import { SafeAreaView, Edge } from 'react-native-safe-area-context';
 import { colors, spacing } from '../design-system/theme';
 
@@ -35,6 +35,8 @@ export function ScreenContainer({
       style={styles.scrollView}
       contentContainerStyle={[padded && styles.padded, styles.scrollContent]}
       showsVerticalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode="on-drag"
     >
       {children}
     </ScrollView>
@@ -46,9 +48,9 @@ export function ScreenContainer({
 
   return (
     <SafeAreaView style={styles.safeArea} edges={edges}>
-      <View style={[styles.container, style]}>
+      <KeyboardAvoidingView style={[styles.container, style]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         {content}
-      </View>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }

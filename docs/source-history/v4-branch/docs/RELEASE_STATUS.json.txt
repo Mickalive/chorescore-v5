@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "milestone": "v4-rc",
+  "lastCycle": "38054862134",
+  "activeCriteria": [],
+  "pendingArtifact": "V4-09-RELEASE",
+  "progressSummary": "V4-09 ready for the single deterministic release workflow; all legacy factory/finalizer/repair loops retired.",
+  "criteria": [
+    {
+      "id": "V4-01",
+      "status": "complete",
+      "evidence": [
+        "audit-accepted-37819892012",
+        "trusted-verification-526-tests-privacy-71-cost-21-android-build-green"
+      ]
+    },
+    {
+      "id": "V4-02",
+      "status": "complete",
+      "evidence": [
+        "audit-accepted-37847659453"
+      ]
+    },
+    {
+      "id": "V4-03",
+      "status": "complete",
+      "evidence": [
+        "audit-accepted-37858935787"
+      ]
+    },
+    {
+      "id": "V4-04",
+      "status": "complete",
+      "evidence": [
+        "audit-accepted-37864743792"
+      ]
+    },
+    {
+      "id": "V4-05",
+      "status": "complete",
+      "evidence": [
+        "audit-accepted-37871782896"
+      ]
+    },
+    {
+      "id": "V4-06",
+      "status": "complete",
+      "evidence": [
+        "audit-accepted-37876759565"
+      ]
+    },
+    {
+      "id": "V4-07",
+      "status": "complete",
+      "evidence": [
+        "audit-accepted-37884528721"
+      ]
+    },
+    {
+      "id": "V4-08",
+      "status": "complete",
+      "evidence": [
+        "audit-accepted-37887082027"
+      ]
+    },
+    {
+      "id": "V4-09",
+      "status": "in_progress",
+      "evidence": [
+        "audit-accepted-37888867393",
+        "audit-accepted-37900691065",
+        "audit-accepted-37911408311",
+        "audit-accepted-37953161595",
+        "audit-accepted-37967732186",
+        "audit-accepted-37978957064",
+        "audit-accepted-38010351520",
+        "audit-accepted-38023053815",
+        "audit-accepted-38028956169",
+        "audit-accepted-38039935345",
+        "audit-accepted-38046041207",
+        "audit-accepted-38054862134"
+      ]
+    }
+  ],
+  "openFindings": [],
+  "factoryHealth": {
+    "stalled": false,
+    "consecutiveNoProgress": 0,
+    "lastProductSha": "00d2efd67658e75721e89c426ab214d19b87ab00",
+    "reason": null,
+    "releaseInfraRetries": 0
+  }
+}

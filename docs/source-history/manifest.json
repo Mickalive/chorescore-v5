@@ -1,0 +1,248 @@
+{
+  "purpose": "Historical evidence; current V5 scope and explicit owner instructions prevail. Never treat archived complete claims as proof.",
+  "empty_repository": {
+    "repository": "Mickalive/chorescore-v4",
+    "size": 0,
+    "branches": []
+  },
+  "files": [
+    {
+      "repository": "Mickalive/Chorescore",
+      "revision": "6e4c7f7043841d7f9f0150f492c5a2da4139e405",
+      "path": "MAIN_PROMPT.md",
+      "snapshot": "docs/source-history/v1/MAIN_PROMPT.md",
+      "sha256": "45f88cdb1fb5052fa826c3735888534e179e5d9056331554cfc4c0daf6b684bb"
+    },
+    {
+      "repository": "Mickalive/Chorescore",
+      "revision": "6e4c7f7043841d7f9f0150f492c5a2da4139e405",
+      "path": "AGENTS.md",
+      "snapshot": "docs/source-history/v1/AGENTS.md.txt",
+      "sha256": "944b91b8f7615d869b292e262597568151e01c32f33a765f417fe75e41c44e17"
+    },
+    {
+      "repository": "Mickalive/Chorescore",
+      "revision": "6e4c7f7043841d7f9f0150f492c5a2da4139e405",
+      "path": "docs/product-decisions.md",
+      "snapshot": "docs/source-history/v1/docs/product-decisions.md",
+      "sha256": "d6cbf42cd74d091e6579ba5d7cfb3feb83cdac543ce736c9e82349075a6c6496"
+    },
+    {
+      "repository": "Mickalive/Chorescore",
+      "revision": "6e4c7f7043841d7f9f0150f492c5a2da4139e405",
+      "path": "docs/architecture.md",
+      "snapshot": "docs/source-history/v1/docs/architecture.md",
+      "sha256": "89a569c97bfbdeef4ef170ba00fcda80992c2e3b75c54541eab4d5c63c9e26cf"
+    },
+    {
+      "repository": "Mickalive/Chorescore",
+      "revision": "6e4c7f7043841d7f9f0150f492c5a2da4139e405",
+      "path": "src/components/theme.ts",
+      "snapshot": "docs/source-history/v1/src/components/theme.ts.txt",
+      "sha256": "c52c69a63448c315918c16f807d21ff7d6ea7c097675fdfcf095e502f4e0ba09"
+    },
+    {
+      "repository": "Mickalive/Chorescore",
+      "revision": "6e4c7f7043841d7f9f0150f492c5a2da4139e405",
+      "path": "src/components/MetricCard.tsx",
+      "snapshot": "docs/source-history/v1/src/components/MetricCard.tsx.txt",
+      "sha256": "adbd0a5a0a0a47136603f1501d9663d4ce694e22d43deba554ec04bfa864dfd2"
+    },
+    {
+      "repository": "Mickalive/Chorescore",
+      "revision": "6e4c7f7043841d7f9f0150f492c5a2da4139e405",
+      "path": "src/components/ScreenHeader.tsx",
+      "snapshot": "docs/source-history/v1/src/components/ScreenHeader.tsx.txt",
+      "sha256": "0b341dd64b3f2d0c1bd1447fb18c041b92f448a670f0fb9f4bc4bddf143f45f7"
+    },
+    {
+      "repository": "Mickalive/Chorescore",
+      "revision": "6e4c7f7043841d7f9f0150f492c5a2da4139e405",
+      "path": "src/components/TaskRow.tsx",
+      "snapshot": "docs/source-history/v1/src/components/TaskRow.tsx.txt",
+      "sha256": "5530b333941248b299145122348dfb2d3fac1240fb7311a81472f261de184fd2"
+    },
+    {
+      "repository": "Mickalive/Chorescore",
+      "revision": "6e4c7f7043841d7f9f0150f492c5a2da4139e405",
+      "path": "app/(tabs)/index.tsx",
+      "snapshot": "docs/source-history/v1/app/(tabs)/index.tsx.txt",
+      "sha256": "738bcf775551f9d1547952f2141f8255e5993bfa7e1655157d98149c0d398cd7"
+    },
+    {
+      "repository": "Mickalive/Chorescore",
+      "revision": "6e4c7f7043841d7f9f0150f492c5a2da4139e405",
+      "path": "app/(tabs)/score.tsx",
+      "snapshot": "docs/source-history/v1/app/(tabs)/score.tsx.txt",
+      "sha256": "8d92e20d725753e46f07db82870deb8c79ff2aa67d87ddf87d107b3f3c604b3e"
+    },
+    {
+      "repository": "Mickalive/Chorescore-V2",
+      "revision": "e847f87292744928744bdb40f283291a7b06b2be",
+      "path": "MAIN_PROMPT.md",
+      "snapshot": "docs/source-history/v2/MAIN_PROMPT.md",
+      "sha256": "5de43e04168b68d38966cf16174d99f8efc509c6f4b572779d46fb9dae6e2702"
+    },
+    {
+      "repository": "Mickalive/Chorescore-V2",
+      "revision": "e847f87292744928744bdb40f283291a7b06b2be",
+      "path": "AGENTS.md",
+      "snapshot": "docs/source-history/v2/AGENTS.md.txt",
+      "sha256": "8e10bc0ddb5e2507918dffcf004a4857a038b638694bb2d79d6bff04b60a4862"
+    },
+    {
+      "repository": "Mickalive/Chorescore-V2",
+      "revision": "e847f87292744928744bdb40f283291a7b06b2be",
+      "path": "docs/PRODUCT_BLUEPRINT.md",
+      "snapshot": "docs/source-history/v2/docs/PRODUCT_BLUEPRINT.md",
+      "sha256": "80b33248602f26bcedf8944b0b986212c586d5898b91d765fbcb019f490651f3"
+    },
+    {
+      "repository": "Mickalive/Chorescore-V2",
+      "revision": "e847f87292744928744bdb40f283291a7b06b2be",
+      "path": "docs/DESIGN_BRIEF.md",
+      "snapshot": "docs/source-history/v2/docs/DESIGN_BRIEF.md",
+      "sha256": "9267bea1d35befb64b14155e3d28810e645943c6b49dd0a56c084c8372f95448"
+    },
+    {
+      "repository": "Mickalive/Chorescore-V2",
+      "revision": "e847f87292744928744bdb40f283291a7b06b2be",
+      "path": "docs/DESIGN_CONTRACT.md",
+      "snapshot": "docs/source-history/v2/docs/DESIGN_CONTRACT.md",
+      "sha256": "74ff0a4fbfb44cd298648b24e1469598f3ef44b262f5da87c5a806670b27006e"
+    },
+    {
+      "repository": "Mickalive/Chorescore-V2",
+      "revision": "e847f87292744928744bdb40f283291a7b06b2be",
+      "path": "docs/DATA_PRODUCT_PRIVACY.md",
+      "snapshot": "docs/source-history/v2/docs/DATA_PRODUCT_PRIVACY.md",
+      "sha256": "023ce1c77cbdc2a7ca51b5d958aa4ef594559763ba708f83ac66ef9724683d27"
+    },
+    {
+      "repository": "Mickalive/Chorescore-V2",
+      "revision": "e847f87292744928744bdb40f283291a7b06b2be",
+      "path": "docs/QUALITY_GATES.md",
+      "snapshot": "docs/source-history/v2/docs/QUALITY_GATES.md",
+      "sha256": "4d25e515aa9bcc45fa3972b8947d14724f1ecbf37cbb6d293bf60ab801e10ab5"
+    },
+    {
+      "repository": "Mickalive/Chorescore-V2",
+      "revision": "e847f87292744928744bdb40f283291a7b06b2be",
+      "path": "docs/architecture.md",
+      "snapshot": "docs/source-history/v2/docs/architecture.md",
+      "sha256": "968dada96c96d2c0f68687a098ed5dba8c8f858052393375f03b392e2cf1d5f7"
+    },
+    {
+      "repository": "Mickalive/Chorescore-V2",
+      "revision": "e847f87292744928744bdb40f283291a7b06b2be",
+      "path": "docs/REFERENCE_SCENARIOS.json",
+      "snapshot": "docs/source-history/v2/docs/REFERENCE_SCENARIOS.json.txt",
+      "sha256": "816d32321177dde23dcab694c5a337fe5026e761adea24f7dc246e8d46a314f5"
+    },
+    {
+      "repository": "Mickalive/Chorescore-V2",
+      "revision": "e847f87292744928744bdb40f283291a7b06b2be",
+      "path": "docs/ROADMAP.md",
+      "snapshot": "docs/source-history/v2/docs/ROADMAP.md",
+      "sha256": "81b18d34e59908a6caaec1275583140053b2168f3b445a8aa111d568388ca8df"
+    },
+    {
+      "repository": "Mickalive/Chorescore-V2",
+      "revision": "e847f87292744928744bdb40f283291a7b06b2be",
+      "path": "docs/MONETIZATION.md",
+      "snapshot": "docs/source-history/v2/docs/MONETIZATION.md",
+      "sha256": "3fd64a80638090cb5becdb709038f68d2500bb4d3f8b71e811f3d468458bb05f"
+    },
+    {
+      "repository": "Mickalive/Chorescore-V2",
+      "revision": "e847f87292744928744bdb40f283291a7b06b2be",
+      "path": "docs/SUBSCRIPTION_REFERENCE_V1.md",
+      "snapshot": "docs/source-history/v2/docs/SUBSCRIPTION_REFERENCE_V1.md",
+      "sha256": "1b6f17949d0ab6ab7c206fb4e72665b60bc8f9359e4cd64b6aeab40c6edb0f95"
+    },
+    {
+      "repository": "Mickalive/Chorescore-V2",
+      "revision": "e847f87292744928744bdb40f283291a7b06b2be",
+      "path": "src/domain/calculations/score.ts",
+      "snapshot": "docs/source-history/v2/src/domain/calculations/score.ts.txt",
+      "sha256": "e55de65112f97e2c0e79b8f33e3701ea70204432cb16f0f22818437e1b087f26"
+    },
+    {
+      "repository": "Mickalive/chorescore-v3",
+      "revision": "69e0bcdfeaf6e8dab0295e4c2394774a1b4b07a5",
+      "path": "docs/V3_CONSTITUTION.md",
+      "snapshot": "docs/source-history/v3-v4/docs/V3_CONSTITUTION.md",
+      "sha256": "9e75898fafde319789c7b07a6a80d6ba628bc053607ec5ce17ae033b0b984d98"
+    },
+    {
+      "repository": "Mickalive/chorescore-v3",
+      "revision": "b767e3b6acb371d830e6be32414cecd24fe7038f",
+      "path": "docs/V3_BACKEND_FRUGAL.md",
+      "snapshot": "docs/source-history/v3-v4/docs/V3_BACKEND_FRUGAL.md",
+      "sha256": "b878a569ed75b7088a7bdc707cae6916796d6269ef02c859e03429c39a9944ad"
+    },
+    {
+      "repository": "Mickalive/chorescore-v3",
+      "revision": "b6f7b945b7adeb1aa3f4543bdd2b62ad3b0997d3",
+      "path": "docs/V2_TO_V3_MIGRATION.md",
+      "snapshot": "docs/source-history/v3-v4/docs/V2_TO_V3_MIGRATION.md",
+      "sha256": "1512f2a64a8d941667d1c1d468df21d52db3fc1ab731bc4bdca5054a058f9e88"
+    },
+    {
+      "repository": "Mickalive/chorescore-v3",
+      "revision": "41ff2e6b672152cddac1ee380fa7d63f9b4639d5",
+      "path": "docs/V4_CONSTITUTION.md",
+      "snapshot": "docs/source-history/v3-v4/docs/V4_CONSTITUTION.md",
+      "sha256": "adb5a43abedb6833f800d3169ad9a7cb320bf1b9d7bbc47a79076cbf3c1015c7"
+    },
+    {
+      "repository": "Mickalive/chorescore-v3",
+      "revision": "4da123c6ef1f3b4cb9621b8e55ae96b69df65d07",
+      "path": "docs/V4_RELEASE_ENGINEERING.md",
+      "snapshot": "docs/source-history/v3-v4/docs/V4_RELEASE_ENGINEERING.md",
+      "sha256": "d6c965f5a32b1365c1202fcd61c8520d3f2554e758f8edc96dc700d4f2b68234"
+    },
+    {
+      "repository": "Mickalive/chorescore-v3",
+      "revision": "509481ae9a50a32e4f04455fe22d4db60554ef88",
+      "path": "docs/CI_EFFICIENCY_POLICY.md",
+      "snapshot": "docs/source-history/v3-v4/docs/CI_EFFICIENCY_POLICY.md",
+      "sha256": "d62797f438dbc5ac687af12b2d353f3ca1004162a409cc9168e5d0b9c87a3b06"
+    },
+    {
+      "repository": "Mickalive/chorescore-v3",
+      "revision": "24041c9ff0adc9d88af534ef7e019699915d6ebe",
+      "path": "MAIN_PROMPT.md",
+      "snapshot": "docs/source-history/v4-branch/MAIN_PROMPT.md",
+      "sha256": "37613640ad2b281cdfe4792d1ffc871c98c551780ec6cb9c9b5bcc732563a943"
+    },
+    {
+      "repository": "Mickalive/chorescore-v3",
+      "revision": "24041c9ff0adc9d88af534ef7e019699915d6ebe",
+      "path": "AGENTS.md",
+      "snapshot": "docs/source-history/v4-branch/AGENTS.md.txt",
+      "sha256": "42b100b630d58a69d627cb88adc9f984e50ae5e2ce191743b056fba8e42a8620"
+    },
+    {
+      "repository": "Mickalive/chorescore-v3",
+      "revision": "24041c9ff0adc9d88af534ef7e019699915d6ebe",
+      "path": "docs/ROADMAP.md",
+      "snapshot": "docs/source-history/v4-branch/docs/ROADMAP.md",
+      "sha256": "0b8222c6ea35ffcc79554709bffc06dcfc69872826bf7cb9b3bd55b97a076eb3"
+    },
+    {
+      "repository": "Mickalive/chorescore-v3",
+      "revision": "24041c9ff0adc9d88af534ef7e019699915d6ebe",
+      "path": "docs/V4_CONSTITUTION.md",
+      "snapshot": "docs/source-history/v4-branch/docs/V4_CONSTITUTION.md",
+      "sha256": "adb5a43abedb6833f800d3169ad9a7cb320bf1b9d7bbc47a79076cbf3c1015c7"
+    },
+    {
+      "repository": "Mickalive/chorescore-v3",
+      "revision": "24041c9ff0adc9d88af534ef7e019699915d6ebe",
+      "path": "docs/RELEASE_STATUS.json",
+      "snapshot": "docs/source-history/v4-branch/docs/RELEASE_STATUS.json.txt",
+      "sha256": "7a2c07dce48eeef8b6652f67b23971c4600226946c69c71d5178bec9faf97181"
+    }
+  ]
+}

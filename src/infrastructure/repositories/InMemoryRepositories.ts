@@ -21,6 +21,9 @@ import {
   SyncCursor,
   SyncRecord,
   SyncCollection,
+  SyncGroupState,
+  SyncConflict,
+  PendingSyncMutation,
 } from '../../domain/entities';
 import {
   UserRepository,
@@ -825,6 +828,9 @@ export class InMemorySettlementRepository implements SettlementRepository {
 
 export class InMemoryInvitationRepository implements InvitationRepository {
   private items = new Map<string, Invitation>();
+  snapshot(): Map<string,Invitation> { return new Map([...this.items].map(([id,row]) => [id,{...row}])); }
+  restoreFromSnapshot(rows: Map<string,Invitation>): void { this.items = new Map(rows); }
+
 
   seed(items: Invitation[]): void {
     for (const inv of items) {
@@ -912,8 +918,54 @@ export class InMemoryInvitationRepository implements InvitationRepository {
 // ── V3-06: InMemory Sync State Repository ──────────────────────
 
 export class InMemorySyncStateRepository implements SyncStateRepository {
+  private sequences = new Map<string, number>();
+  snapshotSequences(): Map<string,number> { return new Map(this.sequences); }
+  restoreSequences(rows: Map<string,number>): void { this.sequences = new Map(rows); }
+  clearHousehold(householdId: string): void {
+    for (const map of [this.sequences,this.cursors,this.records,this.remoteVersions,this.pendingMutations,this.conflicts]) {
+      for (const key of map.keys()) if(key.startsWith(`${householdId}:`) || key === householdId) map.delete(key);
+    }
+    this.groupStates.delete(householdId);
+  }
+
+  async nextLocalRevision(householdId: string, collection: SyncCollection): Promise<number> {
+    const key = `${householdId}:${collection}`;
+    const previous = this.sequences.get(key) ?? Math.max(
+      this.cursors.get(key)?.lastRevision ?? 0,
+      (this.records.get(key) ?? []).reduce((max, record) => Math.max(max, record.revision), 0),
+    );
+    this.sequences.set(key, previous + 1);
+    return previous + 1;
+  }
+
   private cursors = new Map<string, SyncCursor>();
   private records = new Map<string, SyncRecord[]>();
+  private groupStates = new Map<string, SyncGroupState>();
+  private remoteVersions = new Map<string, number>();
+  private pendingMutations = new Map<string, PendingSyncMutation>();
+  private conflicts = new Map<string, SyncConflict>();
+
+  snapshotMetadata(): unknown {
+    return {
+      groupStates: new Map(Array.from(this.groupStates, ([k, v]) => [k, { ...v }])),
+      remoteVersions: new Map(this.remoteVersions),
+      pendingMutations: new Map(Array.from(this.pendingMutations, ([k, v]) => [k, { ...v }])),
+      conflicts: new Map(Array.from(this.conflicts, ([k, v]) => [k, { ...v }])),
+    };
+  }
+
+  restoreMetadata(snapshot: unknown): void {
+    const snap = snapshot as {
+      groupStates: Map<string, SyncGroupState>;
+      remoteVersions: Map<string, number>;
+      pendingMutations: Map<string, PendingSyncMutation>;
+      conflicts: Map<string, SyncConflict>;
+    };
+    this.groupStates = new Map(snap.groupStates);
+    this.remoteVersions = new Map(snap.remoteVersions);
+    this.pendingMutations = new Map(snap.pendingMutations);
+    this.conflicts = new Map(snap.conflicts);
+  }
 
   // V3-06 REPAIR: Snapshot/restore for transactional rollback of sync state
   snapshotCursors(): Map<string, SyncCursor> {
@@ -1019,5 +1071,70 @@ export class InMemorySyncStateRepository implements SyncStateRepository {
     const key = `${householdId}:${collection}`;
     const existing = this.records.get(key) ?? [];
     return existing.filter((r) => r.revision > sinceRevision);
+  }
+
+  async getGroupState(householdId: string): Promise<SyncGroupState | null> {
+    const state = this.groupStates.get(householdId);
+    return state ? { ...state } : null;
+  }
+
+  async setGroupState(state: SyncGroupState): Promise<void> {
+    this.groupStates.set(state.householdId, { ...state });
+  }
+
+  async getRemoteVersion(
+    householdId: string,
+    collection: SyncCollection,
+    entityId: string,
+  ): Promise<number> {
+    return this.remoteVersions.get(`${householdId}:${collection}:${entityId}`) ?? 0;
+  }
+
+  async setRemoteVersion(
+    householdId: string,
+    collection: SyncCollection,
+    entityId: string,
+    version: number,
+  ): Promise<void> {
+    this.remoteVersions.set(`${householdId}:${collection}:${entityId}`, version);
+  }
+
+  async getPendingMutation(householdId: string): Promise<PendingSyncMutation | null> {
+    const mutation = this.pendingMutations.get(householdId);
+    return mutation ? { ...mutation } : null;
+  }
+
+  async savePendingMutation(mutation: PendingSyncMutation): Promise<void> {
+    this.pendingMutations.set(mutation.householdId, { ...mutation });
+  }
+
+  async deletePendingMutation(householdId: string): Promise<void> {
+    this.pendingMutations.delete(householdId);
+  }
+
+  async recordConflict(conflict: SyncConflict): Promise<void> {
+    this.conflicts.set(conflict.id, { ...conflict });
+  }
+
+  async getConflicts(householdId: string): Promise<SyncConflict[]> {
+    return Array.from(this.conflicts.values())
+      .filter((conflict) => conflict.householdId === householdId)
+      .map((conflict) => ({ ...conflict }));
+  }
+
+  async resolveConflicts(householdId: string, collection: SyncCollection, entityId: string): Promise<void> {
+    for (const [id, conflict] of this.conflicts) {
+      if (conflict.householdId === householdId && conflict.collection === collection &&
+          conflict.entityId === entityId && !conflict.resolvedAt) {
+        this.conflicts.set(id, { ...conflict, resolvedAt: new Date().toISOString() });
+      }
+    }
+  }
+
+  async discardLocalRecord(householdId: string, collection: SyncCollection, entityId: string): Promise<void> {
+    const key = `${householdId}:${collection}`;
+    const existing = this.records.get(key);
+    if (!existing) return;
+    this.records.set(key, existing.filter((record) => record.id !== entityId));
   }
 }

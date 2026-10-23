@@ -26,8 +26,7 @@ import { useApp } from '../src/features/app/AppContext';
 import { useI18n } from '../src/i18n';
 import { Invitation, Member } from '../src/domain/entities';
 import { createInvitation } from '../src/domain/services/invitationService';
-
-const DEEP_LINK_BASE = 'https://chorescore.app/join';
+import { buildInviteLink } from '../src/features/invitations/inviteLink';
 
 export default function InviteScreen() {
   const router = useRouter();
@@ -38,6 +37,7 @@ export default function InviteScreen() {
   const [existingInvitations, setExistingInvitations] = useState<Invitation[]>([]);
   const [targetMember, setTargetMember] = useState<Member | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [revokingId, setRevokingId] = useState<string | null>(null);
 
   const loadInvitations = useCallback(async () => {
     if (!currentHouseholdId) return;
@@ -65,7 +65,7 @@ export default function InviteScreen() {
   }, [memberId, currentHouseholdId, repos]);
 
   const shareLink = useCallback(async (token: string, groupName?: string) => {
-    const link = `${DEEP_LINK_BASE}/${token}`;
+    const link = buildInviteLink(token);
     await services.share.share({
       title: groupName ? t('invite.shareTitle', { group: groupName }) : t('invite.linkTitle'),
       message: groupName
@@ -75,22 +75,48 @@ export default function InviteScreen() {
     });
   }, [services, t]);
 
+  const remoteInvitations =
+    collaborationAvailable && typeof services.sync.createInvitation === 'function';
+
   const handleCreateAndShare = async () => {
     if (!collaborationAvailable) {
       Alert.alert(t('invite.unavailableTitle'), t('invite.unavailableBody'));
       return;
     }
     if (!currentHouseholdId || !currentUser) return;
+    if (remoteInvitations && !targetMember) {
+      Alert.alert(t('invite.targetRequiredTitle'), t('invite.targetRequiredBody'));
+      return;
+    }
     setIsSubmitting(true);
     try {
       const household = await repos.households.getById(currentHouseholdId);
       if (!household) throw new Error(t('invite.groupNotFound'));
 
+      if (remoteInvitations) {
+        // Real collaboration: the server issues an opaque, expiring token for
+        // this exact named member. The local row only mirrors it for history.
+        const remote = await services.sync.createInvitation!(
+          currentHouseholdId,
+          targetMember!.id,
+        );
+        const localInvitation = createInvitation({
+          household,
+          invitedByUserId: currentUser.userId,
+          targetMemberId: targetMember!.id,
+        });
+        const created = await repos.invitations.create({
+          ...localInvitation,
+          linkToken: remote.token,
+          expiresAt: remote.expiresAt,
+        });
+        await shareLink(created.linkToken, household.name);
+        await loadInvitations();
+        return;
+      }
+
       // Reuse the current pending link so repeated taps never pile up
-      // one-time invitations. The reuse is scoped to the SAME target: a
-      // link-only invitation is only reused for the link-only screen, and a
-      // targeted invitation is only reused for the exact same member — never
-      // for a different member (V4-09: the link is by member id, not by name).
+      // one-time invitations. The reuse is scoped to the SAME target.
       const existing = existingInvitations.find(
         (inv) => (inv.targetMemberId ?? null) === (targetMember?.id ?? null),
       );
@@ -112,6 +138,35 @@ export default function InviteScreen() {
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const revoke = (invitation: Invitation) => {
+    if (!currentHouseholdId || !services.sync.revokeInvitation || revokingId) return;
+    Alert.alert(
+      t('invite.revokeConfirmTitle'),
+      t('invite.revokeConfirmBody'),
+      [
+        { text: t('action.cancel'), style: 'cancel' },
+        {
+          text: t('invite.revoke'),
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              setRevokingId(invitation.id);
+              try {
+                await services.sync.revokeInvitation!(currentHouseholdId, invitation.linkToken);
+                await repos.invitations.updateStatus(invitation.id, 'revoked');
+                await loadInvitations();
+              } catch {
+                Alert.alert(t('state.error'), t('invite.revokeError'));
+              } finally {
+                setRevokingId(null);
+              }
+            })();
+          },
+        },
+      ],
+    );
   };
 
   return (
@@ -136,7 +191,9 @@ export default function InviteScreen() {
           <Text variant="body" style={styles.hint}>
             {targetMember
               ? t('invite.targetedHint', { name: targetMember.name })
-              : t('invite.linkOnlyHint')}
+              : remoteInvitations
+                ? t('invite.targetRequiredBody')
+                : t('invite.linkOnlyHint')}
           </Text>
           <Button
             title={targetMember
@@ -144,7 +201,12 @@ export default function InviteScreen() {
               : t('invite.createLink')}
             variant="primary"
             onPress={handleCreateAndShare}
-            disabled={!collaborationAvailable || !currentHouseholdId || isSubmitting}
+            disabled={
+              !collaborationAvailable ||
+              !currentHouseholdId ||
+              isSubmitting ||
+              (remoteInvitations && !targetMember)
+            }
             loading={isSubmitting}
             style={styles.shareButton}
           />
@@ -170,12 +232,25 @@ export default function InviteScreen() {
                       })}
                     </Text>
                   </View>
-                  <Button
-                    title={t('invite.reshare')}
-                    variant="ghost"
-                    size="small"
-                    onPress={() => shareLink(inv.linkToken)}
-                  />
+                  <View style={styles.inviteActions}>
+                    <Button
+                      title={t('invite.reshare')}
+                      variant="ghost"
+                      size="small"
+                      onPress={() => shareLink(inv.linkToken)}
+                    />
+                    {collaborationAvailable && services.sync.revokeInvitation && (
+                      <Button
+                        title={t('invite.revoke')}
+                        variant="ghost"
+                        size="small"
+                        onPress={() => revoke(inv)}
+                        loading={revokingId === inv.id}
+                        disabled={revokingId !== null}
+                        testID={`invite.revoke.${inv.id}`}
+                      />
+                    )}
+                  </View>
                 </View>
               </Card>
             ))}
@@ -217,5 +292,9 @@ const styles = StyleSheet.create({
   },
   inviteInfo: {
     flex: 1,
+  },
+  inviteActions: {
+    alignItems: 'flex-end',
+    gap: spacing.xs,
   },
 });

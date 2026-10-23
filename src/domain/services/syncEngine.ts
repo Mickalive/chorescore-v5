@@ -152,8 +152,16 @@ export async function pushDeltas(
     if (dirtyRecords.length > 0) {
       const pushedRecords = await pushRemoteRecords(collection, dirtyRecords);
 
+      if (pushedRecords.length === 0) throw new Error('Incomplete sync acknowledgement');
       if (pushedRecords.length > 0) {
-        const maxRev = pushedRecords.reduce((max, r) => Math.max(max, r.revision), 0);
+        const acknowledged = new Set(pushedRecords.map(record => record.id));
+        if (acknowledged.size !== dirtyRecords.length || pushedRecords.length !== dirtyRecords.length ||
+            dirtyRecords.some(record => !acknowledged.has(record.id))) {
+          throw new Error('Incomplete sync acknowledgement');
+        }
+        // A remote revision belongs to a different sequence. Advancing a LOCAL
+        // outbox cursor to it can permanently skip later offline edits.
+        const maxRev = dirtyRecords.reduce((max, r) => Math.max(max, r.revision), 0);
         await syncState.setCursor({
           householdId,
           collection,

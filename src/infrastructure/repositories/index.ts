@@ -20,6 +20,9 @@ import {
   SyncCursor,
   SyncRecord,
   SyncCollection,
+  SyncGroupState,
+  SyncConflict,
+  PendingSyncMutation,
 } from '../../domain/entities';
 
 /**
@@ -175,6 +178,8 @@ export interface InvitationRepository extends SeedableRepository<Invitation> {
 // ── V3-06: Sync State Repository ───────────────────────────────
 
 export interface SyncStateRepository {
+  /** Reserve a monotonically increasing, persisted local outbox sequence. */
+  nextLocalRevision(householdId: string, collection: SyncCollection): Promise<number>;
   getCursor(householdId: string, collection: SyncCollection): Promise<SyncCursor | null>;
   setCursor(cursor: SyncCursor): Promise<void>;
   /**
@@ -196,4 +201,25 @@ export interface SyncStateRepository {
   storeLocalRecords(householdId: string, collection: SyncCollection, records: SyncRecord[]): Promise<void>;
   /** Get all local records for a collection since a given revision (for push). */
   getDirtyRecords(householdId: string, collection: SyncCollection, sinceRevision: number): Promise<SyncRecord[]>;
+
+  // ── Remote collaboration metadata (server revisions are distinct from
+  // local outbox revisions; never reuse one for the other). ──────────────
+  getGroupState(householdId: string): Promise<SyncGroupState | null>;
+  setGroupState(state: SyncGroupState): Promise<void>;
+  getRemoteVersion(householdId: string, collection: SyncCollection, entityId: string): Promise<number>;
+  setRemoteVersion(
+    householdId: string,
+    collection: SyncCollection,
+    entityId: string,
+    version: number,
+  ): Promise<void>;
+  getPendingMutation(householdId: string): Promise<PendingSyncMutation | null>;
+  savePendingMutation(mutation: PendingSyncMutation): Promise<void>;
+  deletePendingMutation(householdId: string): Promise<void>;
+  recordConflict(conflict: SyncConflict): Promise<void>;
+  getConflicts(householdId: string): Promise<SyncConflict[]>;
+  /** Mark open conflicts for one entity as resolved after a successful push. */
+  resolveConflicts(householdId: string, collection: SyncCollection, entityId: string): Promise<void>;
+  /** Drop one local outbox record after the user chose the remote version. */
+  discardLocalRecord(householdId: string, collection: SyncCollection, entityId: string): Promise<void>;
 }

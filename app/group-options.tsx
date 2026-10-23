@@ -1,3 +1,5 @@
+import { DeleteGroupCard } from '../src/features/groups/DeleteGroupCard';
+import { SyncStatusCard } from '../src/features/groups/SyncStatusCard';
 /**
  * ChoreScore V3 — Group Options Screen
  *
@@ -37,7 +39,7 @@ import { planUnitChange, validateUnitChange } from '../src/domain/services/unitC
 export default function GroupOptionsScreen() {
   const router = useRouter();
   const { t } = useI18n();
-  const { currentHouseholdId, repos, emitDataChange, addMember } = useApp();
+  const { currentHouseholdId, repos, emitDataChange, addMember, renameMember } = useApp();
   const [household, setHousehold] = useState<Household | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [newMemberName, setNewMemberName] = useState('');
@@ -49,6 +51,9 @@ export default function GroupOptionsScreen() {
   const [rateMoneyAmount, setRateMoneyAmount] = useState('');
   const [rateCurrency, setRateCurrency] = useState('CHF');
   const [isSaving, setIsSaving] = useState(false);
+  const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
+  const [editingMemberName, setEditingMemberName] = useState('');
+  const [isRenamingMember, setIsRenamingMember] = useState(false);
 
   const loadHousehold = useCallback(async () => {
     if (!currentHouseholdId) return;
@@ -94,12 +99,43 @@ export default function GroupOptionsScreen() {
     }
   };
 
+  const startRenameMember = (member: Member) => {
+    setEditingMemberId(member.id);
+    setEditingMemberName(member.name);
+  };
+
+  const cancelRenameMember = () => {
+    setEditingMemberId(null);
+    setEditingMemberName('');
+  };
+
+  const handleRenameMember = async () => {
+    if (!currentHouseholdId || !editingMemberId) return;
+    const trimmed = editingMemberName.trim();
+    if (!trimmed) return;
+    const current = members.find((member) => member.id === editingMemberId);
+    if (current && current.name === trimmed) {
+      cancelRenameMember();
+      return;
+    }
+    setIsRenamingMember(true);
+    try {
+      await renameMember(currentHouseholdId, editingMemberId, trimmed);
+      cancelRenameMember();
+      await loadMembers();
+    } catch {
+      Alert.alert(t('state.error'), t('groupOptions.memberRenameError'));
+    } finally {
+      setIsRenamingMember(false);
+    }
+  };
+
   const handleSaveName = async () => {
     if (!currentHouseholdId || !name.trim() || !household) return;
     if (name.trim() === household.name) return;
     setIsSaving(true);
     try {
-      await repos.households.update(currentHouseholdId, { name: name.trim() });
+      await repos.withTransaction(async () => repos.households.update(currentHouseholdId, { name: name.trim() }));
       setHousehold({ ...household, name: name.trim() });
       emitDataChange('household', currentHouseholdId);
     } catch {
@@ -126,9 +162,9 @@ export default function GroupOptionsScreen() {
             setIsSaving(true);
             try {
               const result = planUnitChange(household, newUnit);
-              await repos.households.update(currentHouseholdId, {
+              await repos.withTransaction(async () => repos.households.update(currentHouseholdId, {
                 contributionUnit: newUnit,
-              });
+              }));
               setUnit(newUnit);
               setHousehold(result.updatedHousehold);
               emitDataChange('household', currentHouseholdId);
@@ -169,7 +205,7 @@ export default function GroupOptionsScreen() {
         updates.contributionToMoneyRate = null;
       }
 
-      await repos.households.update(currentHouseholdId, updates);
+      await repos.withTransaction(async () => repos.households.update(currentHouseholdId, updates));
       setHousehold({ ...household, ...updates });
       emitDataChange('household', currentHouseholdId);
       Alert.alert(t('action.ok'), t('groupOptions.saved'));
@@ -195,7 +231,7 @@ export default function GroupOptionsScreen() {
       <ScrollView contentContainerStyle={styles.scrollContent}>
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()}>
+          <TouchableOpacity onPress={() => router.back()} testID="groupOptions.back">
             <Text variant="caption" color={colors.textSecondary}>
               {'< '}
               {t('action.back')}
@@ -239,23 +275,66 @@ export default function GroupOptionsScreen() {
           ) : (
             members.map((member) => (
               <View key={member.id} style={styles.memberRow}>
-                <View style={styles.memberInfo}>
-                  <Text variant="body" style={styles.memberName}>{member.name}</Text>
-                  <Text variant="caption" color={colors.textSecondary}>
-                    {isLinkedMember(member)
-                      ? t('groupOptions.linkedMember')
-                      : t('groupOptions.namedMember')}
-                  </Text>
-                </View>
-                {!isLinkedMember(member) && (
-                  <Button
-                    title={t('groupOptions.inviteMember')}
-                    variant="ghost"
-                    size="small"
-                    onPress={() =>
-                      router.push({ pathname: '/invite', params: { memberId: member.id } })
-                    }
-                  />
+                {editingMemberId === member.id ? (
+                  <View style={styles.memberRenameRow}>
+                    <TextInput
+                      style={[styles.input, styles.memberRenameInput]}
+                      value={editingMemberName}
+                      onChangeText={setEditingMemberName}
+                      onSubmitEditing={handleRenameMember}
+                      submitBehavior="blurAndSubmit"
+                      returnKeyType="done"
+                      autoFocus
+                      testID="groupOptions.memberRenameInput"
+                    />
+                    <Button
+                      title={t('action.save')}
+                      variant="primary"
+                      size="small"
+                      onPress={handleRenameMember}
+                      disabled={!editingMemberName.trim() || isRenamingMember}
+                      loading={isRenamingMember}
+                      testID="groupOptions.memberRenameSave"
+                    />
+                    <Button
+                      title={t('action.cancel')}
+                      variant="ghost"
+                      size="small"
+                      onPress={cancelRenameMember}
+                      disabled={isRenamingMember}
+                    />
+                  </View>
+                ) : (
+                  <>
+                    <View style={styles.memberInfo}>
+                      <Text variant="body" style={styles.memberName}>{member.name}</Text>
+                      <Text variant="caption" color={colors.textSecondary}>
+                        {isLinkedMember(member)
+                          ? t('groupOptions.linkedMember')
+                          : t('groupOptions.namedMember')}
+                      </Text>
+                    </View>
+                    <View style={styles.memberActions}>
+                      <Button
+                        title={t('action.edit')}
+                        variant="ghost"
+                        size="small"
+                        onPress={() => startRenameMember(member)}
+                        accessibilityLabel={t('groupOptions.renameMember', { name: member.name })}
+                        testID="groupOptions.memberRename"
+                      />
+                      {!isLinkedMember(member) && (
+                        <Button
+                          title={t('groupOptions.inviteMember')}
+                          variant="ghost"
+                          size="small"
+                          onPress={() =>
+                            router.push({ pathname: '/invite', params: { memberId: member.id } })
+                          }
+                        />
+                      )}
+                    </View>
+                  </>
                 )}
               </View>
             ))
@@ -268,6 +347,7 @@ export default function GroupOptionsScreen() {
               placeholder={t('groupOptions.addMemberPlaceholder')}
               placeholderTextColor={colors.textMuted}
               onSubmitEditing={handleAddMember}
+              submitBehavior="blurAndSubmit"
               returnKeyType="done"
             />
             <Button
@@ -280,6 +360,12 @@ export default function GroupOptionsScreen() {
             />
           </View>
         </Card>
+
+        {/* Honest synchronization state, including outbox and conflicts */}
+        <Text variant="sectionTitle" style={styles.sectionTitle}>
+          {t('sync.title')}
+        </Text>
+        <SyncStatusCard householdId={household.id} />
 
         {/* Invitation by link */}
         <Card style={styles.card}>
@@ -348,6 +434,7 @@ export default function GroupOptionsScreen() {
               accessibilityRole="switch"
               accessibilityLabel={t('groupOptions.compensationToggle')}
               accessibilityState={{ checked: compensationEnabled }}
+              testID="groupOptions.compensationToggle"
             >
               <View style={[styles.toggleKnob, compensationEnabled && styles.toggleKnobActive]} />
             </TouchableOpacity>
@@ -360,6 +447,7 @@ export default function GroupOptionsScreen() {
               </Text>
               <View style={styles.rateRow}>
                 <TextInput
+                  testID="groupOptions.rateContribution"
                   style={[styles.input, styles.rateInput]}
                   value={rateContributionValue}
                   onChangeText={setRateContributionValue}
@@ -370,6 +458,7 @@ export default function GroupOptionsScreen() {
                 <Text variant="body" style={styles.rateLabel}>{unitLabel}</Text>
                 <Text variant="body" style={styles.rateEquals}>=</Text>
                 <TextInput
+                  testID="groupOptions.rateMoney"
                   style={[styles.input, styles.rateInput]}
                   value={rateMoneyAmount}
                   onChangeText={setRateMoneyAmount}
@@ -378,6 +467,7 @@ export default function GroupOptionsScreen() {
                   keyboardType="decimal-pad"
                 />
                 <TextInput
+                  testID="groupOptions.rateCurrency"
                   style={[styles.input, styles.currencyInput]}
                   value={rateCurrency}
                   onChangeText={(value) => setRateCurrency(value.toUpperCase().slice(0, 3))}
@@ -397,8 +487,10 @@ export default function GroupOptionsScreen() {
             onPress={handleSaveCompensation}
             disabled={isSaving}
             style={{ marginTop: spacing.md }}
+            testID="groupOptions.save"
           />
         </Card>
+        {household ? <DeleteGroupCard household={household} /> : null}
       </ScrollView>
     </ScreenContainer>
   );
@@ -450,6 +542,20 @@ const styles = StyleSheet.create({
   memberInfo: {
     flex: 1,
     marginRight: spacing.sm,
+  },
+  memberActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  memberRenameRow: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  memberRenameInput: {
+    flex: 1,
   },
   memberName: {
     flex: 1,

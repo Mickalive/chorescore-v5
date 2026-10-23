@@ -1,3 +1,4 @@
+import { FirebaseAuthAdapter, firebaseAuthConfig } from '../../infrastructure/cloud/FirebaseAuthAdapter';
 /**
  * ChoreScore V3 — App Context
  *
@@ -22,6 +23,8 @@ import { LocalNotificationAdapter } from '../../infrastructure/local/LocalNotifi
 import { LocalCalendarAdapter } from '../../infrastructure/local/LocalCalendarAdapter';
 import { LocalSecureStorageAdapter } from '../../infrastructure/local/LocalSecureStorageAdapter';
 import { LocalSyncAdapter } from '../../infrastructure/local/LocalSyncAdapter';
+import { HttpMediaGateway, UnavailableMediaGateway } from '../../infrastructure/sync/HttpMediaGateway';
+import { RemoteSyncAdapter } from '../../infrastructure/sync/RemoteSyncAdapter';
 import { LocalResearchAnalyticsAdapter } from '../../infrastructure/local/LocalResearchAnalyticsAdapter';
 import { LocalAttachmentAdapter } from '../../infrastructure/local/LocalAttachmentAdapter';
 import { E2EAttachmentAdapter } from '../../infrastructure/local/E2EAttachmentAdapter';
@@ -32,11 +35,12 @@ import {
   AllRepositories,
 } from '../../infrastructure/repositories/RepositoryFactory';
 import { createScopedRepositories } from '../../infrastructure/repositories/ScopedRepositoryFacade';
-import { AuthUser, AttachmentGateway, SystemShareGateway, SyncGateway } from '../../application/ports';
-import { Household, Member } from '../../domain/entities';
+import { AuthUser, AttachmentGateway, MediaGateway, SystemShareGateway, SyncGateway } from '../../application/ports';
+import { ContributionUnit, Household, Member } from '../../domain/entities';
 import {
   addGroupMember,
   createGroupWithMembers,
+  renameGroupMember,
 } from '../../application/use-cases/groupMembers';
 import { loadHouseholdsForUser } from './demoFixture';
 
@@ -68,13 +72,15 @@ interface AppState {
   households: Household[];
   currentHouseholdId: string | null;
   setCurrentHouseholdId: (id: string | null) => void;
-  createHousehold: (name: string, memberNames?: string[]) => Promise<Household>;
+  createHousehold: (name: string, memberNames?: string[], contributionUnit?: ContributionUnit) => Promise<Household>;
   loadHouseholds: (userId?: string) => Promise<void>;
 
   // Members
   getMembersForHousehold: (householdId: string) => Promise<Member[]>;
   /** Add a named member to an existing group (post-creation). */
   addMember: (householdId: string, name: string) => Promise<Member>;
+  /** Rename a member while preserving its id and ledger history. */
+  renameMember: (householdId: string, memberId: string, name: string) => Promise<Member>;
 
   // Repositories (exposed for screens — scoped to current user)
   repos: AllRepositories;
@@ -94,6 +100,8 @@ interface AppState {
     calendar: LocalCalendarAdapter;
     /** V4-01: photo attachments behind an honest port (no provider faked). */
     attachments: AttachmentGateway;
+    /** Private cloud media; unavailable in local-only builds. */
+    media: MediaGateway;
     sync: SyncGateway;
   };
 }
@@ -115,6 +123,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [households, setHouseholds] = useState<Household[]>([]);
   const [currentHouseholdId, setCurrentHouseholdId] = useState<string | null>(null);
   const [reposReady, setReposReady] = useState(false);
+  const [authRestored, setAuthRestored] = useState(false);
 
   // Start with a real (in-memory) repository set so screens always receive a
   // working provider; it is replaced by the SQLite-backed set once ready.
@@ -152,8 +161,29 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => { cancelled = true; };
   }, [ensureReposReady]);
 
-  const servicesRef = useRef({
-    auth: new LocalAuthAdapter({ secureStorage: new LocalSecureStorageAdapter() }),
+  const servicesRef = useRef((() => {
+    const auth = firebaseAuthConfig() && !isE2EAuthEnabled()
+      ? new FirebaseAuthAdapter(firebaseAuthConfig()!, new LocalSecureStorageAdapter())
+      : new LocalAuthAdapter({ secureStorage: new LocalSecureStorageAdapter() });
+    const collaborationUrl = (process.env.EXPO_PUBLIC_COLLAB_URL ?? '').trim();
+    const remote = auth instanceof FirebaseAuthAdapter && collaborationUrl.length > 0;
+    const media = remote
+      ? new HttpMediaGateway({
+          baseUrl: collaborationUrl,
+          getAccessToken: () => auth.getIdToken(),
+        })
+      : new UnavailableMediaGateway();
+    const sync: SyncGateway =
+      remote
+        ? new RemoteSyncAdapter({
+            baseUrl: collaborationUrl,
+            getAccessToken: () => auth.getIdToken(),
+            getRepos: () => rawReposRef.current,
+            media,
+          })
+        : new LocalSyncAdapter();
+    return {
+    auth,
     // V4-09: the normal build uses the real native share sheet. The explicit,
     // secretless E2E build gets a deterministic adapter so the share journey
     // can be driven without a SystemUI sheet the harness cannot dismiss.
@@ -161,16 +191,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     notifications: new LocalNotificationAdapter(),
     calendar: new LocalCalendarAdapter(),
     secureStorage: new LocalSecureStorageAdapter(),
-    sync: new LocalSyncAdapter(),
+    sync,
+    media,
     analytics: new LocalResearchAnalyticsAdapter(),
     // V4-01/V4-04: honest adapter in a normal build — reports unavailable
     // until a real photo provider is configured; the UI then hides the photo
     // action instead of faking a pick. The explicit, secretless E2E build gets
     // a deterministic offline source so the real photo journey can be driven.
-    attachments: isE2EAuthEnabled()
+    attachments: (isE2EAuthEnabled()
       ? new E2EAttachmentAdapter(true)
-      : new LocalAttachmentAdapter(),
-  });
+      : new LocalAttachmentAdapter()) as AttachmentGateway,
+    };
+  })());
 
   // ── Data-change signal (pub/sub) ──────────────────────────────
   // Lightweight mechanism so screens can notify each other of writes
@@ -178,19 +210,80 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // and the affected householdId so it can decide whether to refresh.
   const dataChangeListenersRef = useRef<Set<DataChangeCallback>>(new Set());
 
+  const syncTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const schedulePush = useCallback((householdId: string) => {
+    const sync = servicesRef.current.sync;
+    if (!sync.isAvailable()) return;
+    const previous = syncTimersRef.current.get(householdId);
+    if (previous) clearTimeout(previous);
+    const timer = setTimeout(() => {
+      syncTimersRef.current.delete(householdId);
+      void (async () => {
+        try {
+          await sync.pushChanges(householdId);
+          await sync.pullChanges(householdId);
+        } catch {
+          // The adapter stores a durable error/pending batch for the next retry.
+        }
+      })();
+    }, 500);
+    (timer as unknown as { unref?: () => void }).unref?.();
+    syncTimersRef.current.set(householdId, timer);
+  }, []);
+
   const emitDataChange = useCallback((type: DataChangeType, householdId: string) => {
+    // Cleanup uses indexed reference metadata; failures retain a durable queue.
+    void ensureReposReady().then(() => rawReposRef.current.withTransaction(async () => {
+      await servicesRef.current.attachments.collectGarbage?.();
+    })).catch(() => undefined);
     for (const listener of dataChangeListenersRef.current) {
       try { listener(type, householdId); } catch { /* swallow */ }
     }
-  }, []);
+    schedulePush(householdId);
+  }, [schedulePush]);
 
   const subscribeToDataChanges = useCallback((callback: DataChangeCallback): (() => void) => {
     dataChangeListenersRef.current.add(callback);
     return () => { dataChangeListenersRef.current.delete(callback); };
   }, []);
 
+  const loadHouseholdsRef = useRef<(userId?: string) => Promise<void>>(async () => undefined);
+
+  useEffect(() => {
+    const sync = servicesRef.current.sync;
+    if (!(sync instanceof RemoteSyncAdapter)) return;
+    sync.setOnRemoteChange((signal) => {
+      const types = new Set<DataChangeType>();
+      for (const collection of signal.collections) {
+        if (collection === 'contribution_entries') types.add('contribution');
+        else if (collection === 'expense_entries') types.add('expense');
+        else if (collection === 'settlements') types.add('settlement');
+        else if (collection === 'households') types.add('household');
+        else if (collection === 'members' || collection === 'memberships') types.add('member');
+        else if (collection === 'todo_items' || collection === 'persistent_tasks') types.add('todo');
+      }
+      for (const type of types) {
+        for (const listener of dataChangeListenersRef.current) {
+          try { listener(type, signal.householdId); } catch { /* swallow */ }
+        }
+      }
+      if (
+        signal.collections.includes('households') ||
+        signal.collections.includes('members') ||
+        signal.collections.includes('memberships')
+      ) {
+        void loadHouseholdsRef.current();
+      }
+    });
+    return () => { sync.setOnRemoteChange(() => undefined); };
+  }, []);
+
   // Auth state listener
   useEffect(() => {
+    servicesRef.current.notifications.initialize();
+    void ensureReposReady().then(() => rawReposRef.current.withTransaction(async () => {
+      await servicesRef.current.attachments.collectGarbage?.();
+    })).catch(() => undefined);
     const unsubscribe = servicesRef.current.auth.onAuthStateChanged((user) => {
       setCurrentUser(user);
     });
@@ -201,10 +294,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // repositories are initialized, so an early sign-in can never race the
   // local store (reposReady is consumed here and by signIn/loadHouseholds).
   useEffect(() => {
-    if (reposReady) {
+    if (reposReady && authRestored) {
       setIsLoading(false);
     }
-  }, [reposReady]);
+  }, [reposReady, authRestored]);
 
   const loadHouseholds = useCallback(async (userId?: string) => {
     // Gate on repository readiness so the local store is always available.
@@ -212,12 +305,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const repos = reposRef.current;
     const uid = userId ?? currentUser?.userId;
     if (!uid || !repos) return;
+    const sync = servicesRef.current.sync;
+    if (sync.isAvailable() && sync.discoverGroups) {
+      await sync.discoverGroups(uid).catch(() => undefined);
+    }
     const loaded = await loadHouseholdsForUser(repos, uid);
     setHouseholds(loaded);
     if (loaded.length > 0 && !currentHouseholdId) {
       setCurrentHouseholdId(loaded[0].id);
     }
+    if (sync.isAvailable()) {
+      for (const household of loaded) void sync.startSync(household.id);
+    }
   }, [currentUser, currentHouseholdId, ensureReposReady]);
+
+  useEffect(() => {
+    loadHouseholdsRef.current = loadHouseholds;
+  }, [loadHouseholds]);
 
   const applySignedInUser = useCallback(async (user: AuthUser) => {
     // V3-06 REPAIR: Always wrap from the RAW repos, never from an
@@ -246,12 +350,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     (async () => {
       await ensureReposReady();
       const token = await servicesRef.current.auth.restoreSession().catch(() => null);
-      if (cancelled || !token) return;
+      if (cancelled) return;
+      if (!token) { setAuthRestored(true); return; }
       const user = servicesRef.current.auth.getCurrentUser();
       if (user) {
         await applySignedInUserRef.current(user);
       }
+      if (!cancelled) setAuthRestored(true);
     })().catch(() => {
+      if (!cancelled) setAuthRestored(true);
       // A failed restore must never block the app: the sign-in screen remains.
     });
     return () => { cancelled = true; };
@@ -287,18 +394,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // V3-06 REPAIR: Reset scoped repos to raw repos so the next signIn
     // wraps from the unscoped set, not from the previous user's scoped set.
     reposRef.current = rawReposRef.current;
+    for (const household of households) void servicesRef.current.sync.stopSync(household.id);
+    for (const timer of syncTimersRef.current.values()) clearTimeout(timer);
+    syncTimersRef.current.clear();
     setHouseholds([]);
     setCurrentHouseholdId(null);
-  }, []);
+  }, [households]);
 
-  const createHousehold = useCallback(async (name: string, memberNames: string[] = []) => {
+  const createHousehold = useCallback(async (name: string, memberNames: string[] = [], contributionUnit: ContributionUnit = 'minutes') => {
     if (!currentUser) throw new Error('Not authenticated');
     await ensureReposReady();
     const result = await createGroupWithMembers(reposRef.current, {
       name,
       owner: { userId: currentUser.userId, displayName: currentUser.displayName || 'Membre' },
       memberNames,
+      contributionUnit,
     });
+    await servicesRef.current.sync.ensureRemoteGroup?.(result.household.id, currentUser.userId)
+      .catch(() => undefined);
     emitDataChange('household', result.household.id);
     emitDataChange('member', result.household.id);
     await loadHouseholds(currentUser.userId);
@@ -312,6 +425,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const addMember = useCallback(async (householdId: string, name: string) => {
     await ensureReposReady();
     const member = await addGroupMember(reposRef.current, householdId, name);
+    emitDataChange('member', householdId);
+    return member;
+  }, [ensureReposReady, emitDataChange]);
+
+  const renameMember = useCallback(async (householdId: string, memberId: string, name: string) => {
+    await ensureReposReady();
+    const member = await renameGroupMember(reposRef.current, householdId, memberId, name);
     emitDataChange('member', householdId);
     return member;
   }, [ensureReposReady, emitDataChange]);
@@ -330,6 +450,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     loadHouseholds,
     getMembersForHousehold,
     addMember,
+    renameMember,
     repos: reposRef.current,
     rawRepos: rawReposRef.current,
     emitDataChange,
@@ -339,6 +460,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       notifications: servicesRef.current.notifications,
       calendar: servicesRef.current.calendar,
       attachments: servicesRef.current.attachments,
+      media: servicesRef.current.media,
       sync: servicesRef.current.sync,
     },
   };

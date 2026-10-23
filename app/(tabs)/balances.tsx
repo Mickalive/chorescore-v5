@@ -140,7 +140,7 @@ const HISTORY_PAGE_SIZE = 20;
 export default function BalancesScreen() {
   const { t } = useI18n();
   const router = useRouter();
-  const { currentHouseholdId, repos, services, subscribeToDataChanges, emitDataChange } = useApp();
+  const { currentHouseholdId, currentUser, repos, services, subscribeToDataChanges, emitDataChange } = useApp();
   const [period, setPeriod] = useState<Period>('all-time');
   const [household, setHousehold] = useState<Household | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
@@ -593,7 +593,9 @@ export default function BalancesScreen() {
       currency: rate.currency,
       rateSnapshot: rate,
       occurredAt: new Date().toISOString(),
-      createdBy: household.ownerId,
+      // Audit identity of the member who performed the settlement. The
+      // authority replaces this with the authenticated uid when syncing.
+      createdBy: currentUser?.userId ?? household.ownerId,
     };
 
     // Run precondition validation
@@ -612,7 +614,7 @@ export default function BalancesScreen() {
     }
 
     // Persist the immutable settlement — use the returned entity (real id)
-    const persistedSettlement = await repos.settlements.create(settlementData);
+    const persistedSettlement = await repos.withTransaction(async () => repos.settlements.create(settlementData));
 
     // Update local state with the real persisted entity
     const newSettlements = [...settlements, persistedSettlement];
@@ -646,7 +648,7 @@ export default function BalancesScreen() {
     setCompenserCreditor('');
     setCompenserValue('');
   }, [
-    currentHouseholdId, household, compenserPreview, compenserCreditor, compenserValue,
+    currentHouseholdId, currentUser, household, compenserPreview, compenserCreditor, compenserValue,
     unit, contributions, expenses, memberIds, settlements, repos, emitDataChange,
   ]);
 
@@ -714,10 +716,10 @@ export default function BalancesScreen() {
           onPress: async () => {
             try {
               if (isTask) {
-                await repos.contributions.delete(entryId);
+                await repos.withTransaction(async () => repos.contributions.delete(entryId));
                 emitDataChange('contribution', currentHouseholdId);
               } else {
-                await repos.expenses.delete(entryId);
+                await repos.withTransaction(async () => repos.expenses.delete(entryId));
                 emitDataChange('expense', currentHouseholdId);
               }
             } catch {
@@ -918,6 +920,7 @@ export default function BalancesScreen() {
                 size="small"
                 style={{ marginTop: spacing.md }}
                 onPress={() => setShowCompenser(true)}
+                testID="balances.compensateButton"
               />
             )}
           </Card>
@@ -946,9 +949,10 @@ export default function BalancesScreen() {
         <Card style={styles.historyCard}>
           {historyPage && historyPage.entries.length > 0 ? (
             <>
-              {historyPage.entries.map((entry) => (
+              {historyPage.entries.map((entry, index) => (
                 <TouchableOpacity
                   key={entry.entry.id}
+                  testID={`balances.history.index.${index}`}
                   style={styles.historyRow}
                   onPress={() => setSelectedEntry(entry)}
                   accessibilityRole="button"
@@ -1013,6 +1017,7 @@ export default function BalancesScreen() {
             {selectedEntry && selectedEntry.type !== 'cross-ledger-settlement' && (
               <>
                 <TouchableOpacity
+                  testID="balances.editEntry"
                   style={styles.actionSheetButton}
                   onPress={() => handleEditEntry(selectedEntry)}
                   accessibilityRole="button"
@@ -1024,6 +1029,7 @@ export default function BalancesScreen() {
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
+                  testID="balances.deleteEntry"
                   style={styles.actionSheetButton}
                   onPress={() => handleDeleteEntry(selectedEntry)}
                   accessibilityRole="button"
@@ -1037,6 +1043,7 @@ export default function BalancesScreen() {
 
             {selectedEntry && (
               <TouchableOpacity
+                testID="balances.shareEntry"
                 style={styles.actionSheetButton}
                 onPress={() => handleShareEntry(selectedEntry)}
                 accessibilityRole="button"
@@ -1046,6 +1053,7 @@ export default function BalancesScreen() {
             )}
 
             <TouchableOpacity
+              testID="balances.closeEntryActions"
               style={styles.actionSheetButton}
               onPress={closeEntryActions}
               accessibilityRole="button"
@@ -1086,6 +1094,7 @@ export default function BalancesScreen() {
                     compenserCreditor === mid && styles.memberSelectBtnActive,
                   ]}
                   onPress={() => setCompenserCreditor(mid)}
+                  testID={`balances.compenserCreditor.${mid}`}
                 >
                   <Text
                     variant="caption"
@@ -1106,6 +1115,7 @@ export default function BalancesScreen() {
                   key={preset}
                   style={[styles.presetBtn, compenserValue === preset && styles.presetBtnActive]}
                   onPress={() => setCompenserValue(preset)}
+                  testID={`balances.compenserPreset.${preset}`}
                 >
                   <Text variant="caption" color={compenserValue === preset ? colors.textOnPrimary : colors.text}>
                     {preset}
@@ -1185,6 +1195,7 @@ export default function BalancesScreen() {
               disabled={!compenserPreview}
               onPress={handleCompenserConfirm}
               style={{ marginTop: spacing.lg }}
+              testID="balances.compenserConfirm"
             />
           </ScrollView>
         </ScreenContainer>

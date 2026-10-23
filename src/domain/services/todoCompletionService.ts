@@ -171,7 +171,7 @@ function planTaskCompletion(input: CompletionInput): TaskCompletionOutput {
   }
   // Optional note/photo: validated and bounded here, absent stays absent so
   // a plain V3-shaped completion keeps the exact baseline entry shape.
-  const note = normalizeNote(input.note);
+  const note = normalizeNote(input.note === undefined ? todo.notes : input.note);
   if (note !== undefined) contributionEntry.note = note;
   const attachments = normalizeAttachments(input.attachments);
   if (attachments !== undefined) contributionEntry.attachments = attachments;
@@ -233,7 +233,7 @@ function planExpenseCompletion(input: ExpenseCompletionInput): ExpenseCompletion
   if (todoKindOf(todo) !== 'expense') {
     throw new Error('Expense completion input requires a todo of kind expense');
   }
-  if (!Number.isInteger(amountMinor) || amountMinor <= 0) {
+  if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
     throw new Error(`Expense amount must be a positive integer in minor units, got ${amountMinor}`);
   }
   if (!paidByMemberId) {
@@ -250,7 +250,7 @@ function planExpenseCompletion(input: ExpenseCompletionInput): ExpenseCompletion
   const nowIso = new Date().toISOString();
   // Explicit completion note wins, otherwise carry the todo's note along
   // (already stored data is carried verbatim, only new input is validated).
-  const note = normalizeNote(input.note) ?? (todo.notes.trim().length > 0 ? todo.notes.trim() : undefined);
+  const note = normalizeNote(input.note === undefined ? todo.notes : input.note);
 
   const expenseEntry: Omit<ExpenseEntry, 'id'> = {
     householdId: todo.householdId,
