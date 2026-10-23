@@ -140,7 +140,7 @@ const HISTORY_PAGE_SIZE = 20;
 export default function BalancesScreen() {
   const { t } = useI18n();
   const router = useRouter();
-  const { currentHouseholdId, repos, services, subscribeToDataChanges, emitDataChange } = useApp();
+  const { currentHouseholdId, currentUser, repos, services, subscribeToDataChanges, emitDataChange } = useApp();
   const [period, setPeriod] = useState<Period>('all-time');
   const [household, setHousehold] = useState<Household | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
@@ -593,7 +593,9 @@ export default function BalancesScreen() {
       currency: rate.currency,
       rateSnapshot: rate,
       occurredAt: new Date().toISOString(),
-      createdBy: household.ownerId,
+      // Audit identity of the member who performed the settlement. The
+      // authority replaces this with the authenticated uid when syncing.
+      createdBy: currentUser?.userId ?? household.ownerId,
     };
 
     // Run precondition validation
@@ -646,7 +648,7 @@ export default function BalancesScreen() {
     setCompenserCreditor('');
     setCompenserValue('');
   }, [
-    currentHouseholdId, household, compenserPreview, compenserCreditor, compenserValue,
+    currentHouseholdId, currentUser, household, compenserPreview, compenserCreditor, compenserValue,
     unit, contributions, expenses, memberIds, settlements, repos, emitDataChange,
   ]);
 
@@ -918,6 +920,7 @@ export default function BalancesScreen() {
                 size="small"
                 style={{ marginTop: spacing.md }}
                 onPress={() => setShowCompenser(true)}
+                testID="balances.compensateButton"
               />
             )}
           </Card>
@@ -1091,6 +1094,7 @@ export default function BalancesScreen() {
                     compenserCreditor === mid && styles.memberSelectBtnActive,
                   ]}
                   onPress={() => setCompenserCreditor(mid)}
+                  testID={`balances.compenserCreditor.${mid}`}
                 >
                   <Text
                     variant="caption"
@@ -1111,6 +1115,7 @@ export default function BalancesScreen() {
                   key={preset}
                   style={[styles.presetBtn, compenserValue === preset && styles.presetBtnActive]}
                   onPress={() => setCompenserValue(preset)}
+                  testID={`balances.compenserPreset.${preset}`}
                 >
                   <Text variant="caption" color={compenserValue === preset ? colors.textOnPrimary : colors.text}>
                     {preset}
@@ -1190,6 +1195,7 @@ export default function BalancesScreen() {
               disabled={!compenserPreview}
               onPress={handleCompenserConfirm}
               style={{ marginTop: spacing.lg }}
+              testID="balances.compenserConfirm"
             />
           </ScrollView>
         </ScreenContainer>

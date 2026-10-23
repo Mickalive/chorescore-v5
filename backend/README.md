@@ -20,8 +20,9 @@ Tous les endpoints sauf `/health` exigent `Authorization: Bearer <Firebase ID to
 - `POST /groups/:id/invites/:token/revoke` : propriétaire seulement.
 - `POST /invites/:token/accept` : rattache le compte au membre ciblé sans recréer son identité ni fusionner par nom. Répétable par le même compte ; un autre compte est refusé.
 - `POST /groups/:id/todos/:todoId/complete` : paramètres métier de `todoCompletionService`, sans todo/household/identité d’audit fournis par le client. Écriture ledger et complétion dans la même transaction. Une seconde complétion échoue, même depuis un autre compte.
+- Mutations `settlements` : une compensation n’est acceptée que si elle est activée avec un taux explicite dans le groupe, que l’unité et l’instantané de taux correspondent au taux courant, que le montant est exactement converti et que les deux soldes autoritaires restent suffisants. Elle est immuable (aucune édition/suppression générique) et son `createdBy` est imposé par le serveur.
 
-Les membres autorisés peuvent écrire les tâches, dépenses, todos, modèles, catégories, profils de membres et réglages du groupe. Un membre nommé non lié peut être créé ou renommé, mais son `userId` reste serveur : seul le propriétaire modifie les réglages du groupe, et les identités de membre, propriétaire et dates d’adhésion sont préservées. Les ACL, groupes et adhésions ne sont jamais accessibles par les mutations génériques. Tous les membres référencés doivent appartenir au groupe. Les calculs utilisent le domaine commun à l’application. Les soldes ne sont pas des données acceptées du client.
+Les membres autorisés peuvent écrire les tâches, dépenses, todos, modèles, catégories, profils de membres et réglages du groupe, ainsi que les compensations validées. Un membre nommé non lié peut être créé ou renommé, mais son `userId` reste serveur : seul le propriétaire modifie les réglages du groupe, et les identités de membre, propriétaire et dates d’adhésion sont préservées. Les ACL, groupes et adhésions ne sont jamais accessibles par les mutations génériques. Tous les membres référencés doivent appartenir au groupe. Les calculs utilisent le domaine commun à l’application. Les soldes ne sont pas des données acceptées du client.
 
 ## Vérification exécutée
 
@@ -39,4 +40,4 @@ Les membres autorisés peuvent écrire les tâches, dépenses, todos, modèles, 
 
 ## Travail restant avant activation
 
-Déployer ce serveur avec un vrai domaine et un vrai projet Firebase, puis vérifier le flux complet sur deux appareils authentifiés. L’interface de synchronisation existe mais son rendu Android n’a pas encore été observé. Ajouter la limitation de débit et la révocation de session côté hébergement/identité. Aucune compensation n’est exposée par l’API serveur ; elle devra être ajoutée comme opération atomique auditée avant d’être annoncée collaborativement.
+Déployer ce serveur avec un vrai domaine et un vrai projet Firebase, puis vérifier le flux complet sur deux appareils authentifiés. L’interface de synchronisation existe mais son rendu Android n’a pas encore été observé. Ajouter la limitation de débit et la révocation de session côté hébergement/identité. La compensation est désormais validée et synchronisée par l’autorité, mais son écran natif de conflit/aperçu n’est pas encore prouvé sur deux appareils.

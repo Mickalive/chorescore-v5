@@ -6,11 +6,13 @@ import { HttpError } from './auth';
 import { calculateContributionBalances } from '../src/domain/calculations/contributionLedger';
 import { allocateExpense } from '../src/domain/calculations/expenseLedger';
 import { CompletionInput, ExpenseCompletionInput, planTodoCompletion } from '../src/domain/services/todoCompletionService';
-import { ContributionEntry, ExpenseEntry, Household, TodoItem } from '../src/domain/entities';
+import { ContributionEntry, CrossLedgerSettlement, ExpenseEntry, Household, TodoItem } from '../src/domain/entities';
+import { quoteCrossLedgerMoneyAmount } from '../src/domain/calculations/crossLedgerSettlement';
+import { validateSettlementPreconditions } from '../src/domain/calculations/settlementPreconditions';
 
 type Row = Record<string, any>;
 export interface Change { collection: string; id: string; baseVersion: number; value: Row | null; }
-const editable = new Set(['contribution_entries','expense_entries','todo_items','persistent_tasks','categories','members','households']);
+const editable = new Set(['contribution_entries','expense_entries','todo_items','persistent_tasks','categories','members','households','settlements']);
 const idPattern = /^[A-Za-z0-9_-]{1,128}$/;
 function requireValue(condition: unknown, message: string): asserts condition {
   if (!condition) throw new HttpError(400, message);
@@ -63,6 +65,10 @@ export class CollaborationStore {
   private value(groupId: string, collection: string, entityId: string): Row | null {
     const row = this.record(groupId,collection,entityId);
     return row?.value ? JSON.parse(row.value) : null;
+  }
+  private values(groupId: string, collection: string): Row[] {
+    return (this.database.prepare('SELECT value FROM records WHERE groupId=? AND collection=? AND value IS NOT NULL')
+      .all(groupId,collection) as Row[]).map(row => JSON.parse(row.value));
   }
   private append(groupId: string, changes: Array<Omit<Change,'baseVersion'>>) {
     const group = this.database.prepare('UPDATE groups SET revision=revision+1 WHERE id=? RETURNING revision').get(groupId) as Row;
@@ -206,7 +212,8 @@ export class CollaborationStore {
     if (change.value === null) {
       // Group/member removal changes membership and needs a dedicated,
       // auditable operation; the generic editor must not orphan history.
-      if (change.collection === 'members' || change.collection === 'households') {
+      if (change.collection === 'members' || change.collection === 'households' ||
+          change.collection === 'settlements') {
         throw new HttpError(400,'This record cannot be deleted through mutations');
       }
       return;
@@ -290,6 +297,52 @@ export class CollaborationStore {
         value.userId = null;
         value.joinedAt = new Date().toISOString();
       }
+      return;
+    }
+    if (change.collection === 'settlements') {
+      // Compensation is a closed, auditable accounting operation: the server
+      // validates it against the authoritative household rate and both ledgers.
+      // It is never an arbitrary client-supplied balance mutation and it can
+      // never be deleted or rewritten through the generic editor.
+      requireValue(previous?.value === undefined || previous?.value === null,'Settlements are immutable');
+      const household = this.value(groupId,'households',groupId) as Household | null;
+      requireValue(household?.crossLedgerCompensationEnabled === true,'Compensation is not enabled');
+      const rate = household?.contributionToMoneyRate;
+      if (!rate) throw new HttpError(400,'A compensation rate is required');
+      requireValue(value.contributionUnit === household.contributionUnit,'Settlement unit does not match the group unit');
+      member(value.contributionCreditorMemberId); member(value.counterpartyMemberId);
+      requireValue(value.contributionCreditorMemberId !== value.counterpartyMemberId,'Settlement members must differ');
+      requireValue(Number.isFinite(value.contributionValue) && value.contributionValue > 0,'Invalid settlement contribution value');
+      requireValue(Number.isSafeInteger(value.moneyAmountMinor) && value.moneyAmountMinor > 0,'Invalid settlement money amount');
+      requireValue(typeof value.currency === 'string' && /^[A-Z]{3}$/.test(value.currency),'Invalid settlement currency');
+      requireValue(Number.isFinite(Date.parse(value.occurredAt)),'Invalid settlement date');
+      const snapshot = value.rateSnapshot;
+      requireValue(snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot),'Invalid rate snapshot');
+      requireValue(
+        snapshot.contributionValue === rate.contributionValue &&
+        snapshot.contributionUnit === rate.contributionUnit &&
+        snapshot.moneyAmountMinor === rate.moneyAmountMinor &&
+        snapshot.currency === rate.currency,
+        'Settlement rate changed; a new preview is required',
+      );
+      requireValue(
+        quoteCrossLedgerMoneyAmount(value.contributionValue,value.contributionUnit,snapshot) === value.moneyAmountMinor,
+        'Settlement amount does not match its rate snapshot',
+      );
+      const members = this.values(groupId,'members').map(item => item.id);
+      const proposal = {...value,id:change.id,householdId:groupId} as CrossLedgerSettlement;
+      const preconditions = validateSettlementPreconditions(
+        proposal,
+        this.values(groupId,'contribution_entries') as ContributionEntry[],
+        this.values(groupId,'expense_entries') as ExpenseEntry[],
+        members,
+        this.values(groupId,'settlements') as CrossLedgerSettlement[],
+        true,
+      );
+      requireValue(preconditions.valid,preconditions.errors[0] ?? 'Settlement rejected');
+      // Immutable audit fields are owned by the authority.
+      value.createdBy = uid;
+      delete value.modifiedBy;
       return;
     }
     if (change.collection === 'contribution_entries') {

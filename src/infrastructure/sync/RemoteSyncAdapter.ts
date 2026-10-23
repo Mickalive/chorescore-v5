@@ -40,15 +40,19 @@ import type {
 } from '../../application/ports';
 
 const WRITABLE: SyncCollection[] = [
+  // Named members and group settings are ordinary group data: adding a member,
+  // renaming one or enabling compensation must reach the other devices before
+  // dependent records are validated by the authority.
+  'members',
+  'households',
+  'categories',
   'contribution_entries',
   'expense_entries',
   'todo_items',
   'persistent_tasks',
-  'categories',
-  // Named members and group settings are ordinary group data: adding a member
-  // or renaming one must reach the other devices, not only the creator's phone.
-  'members',
-  'households',
+  // Compensation is validated against the now-current rate and both ledgers,
+  // so it is always pushed after the records it depends on.
+  'settlements',
 ];
 const BASELINE: SyncCollection[] = ['households', 'memberships', 'members'];
 const PAGE_GUARD = 200;

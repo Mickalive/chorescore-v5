@@ -231,7 +231,7 @@ export default function GroupOptionsScreen() {
       <ScrollView contentContainerStyle={styles.scrollContent}>
         {/* Header */}
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()}>
+          <TouchableOpacity onPress={() => router.back()} testID="groupOptions.back">
             <Text variant="caption" color={colors.textSecondary}>
               {'< '}
               {t('action.back')}
@@ -432,6 +432,7 @@ export default function GroupOptionsScreen() {
               accessibilityRole="switch"
               accessibilityLabel={t('groupOptions.compensationToggle')}
               accessibilityState={{ checked: compensationEnabled }}
+              testID="groupOptions.compensationToggle"
             >
               <View style={[styles.toggleKnob, compensationEnabled && styles.toggleKnobActive]} />
             </TouchableOpacity>
@@ -444,6 +445,7 @@ export default function GroupOptionsScreen() {
               </Text>
               <View style={styles.rateRow}>
                 <TextInput
+                  testID="groupOptions.rateContribution"
                   style={[styles.input, styles.rateInput]}
                   value={rateContributionValue}
                   onChangeText={setRateContributionValue}
@@ -454,6 +456,7 @@ export default function GroupOptionsScreen() {
                 <Text variant="body" style={styles.rateLabel}>{unitLabel}</Text>
                 <Text variant="body" style={styles.rateEquals}>=</Text>
                 <TextInput
+                  testID="groupOptions.rateMoney"
                   style={[styles.input, styles.rateInput]}
                   value={rateMoneyAmount}
                   onChangeText={setRateMoneyAmount}
@@ -462,6 +465,7 @@ export default function GroupOptionsScreen() {
                   keyboardType="decimal-pad"
                 />
                 <TextInput
+                  testID="groupOptions.rateCurrency"
                   style={[styles.input, styles.currencyInput]}
                   value={rateCurrency}
                   onChangeText={(value) => setRateCurrency(value.toUpperCase().slice(0, 3))}
@@ -481,6 +485,7 @@ export default function GroupOptionsScreen() {
             onPress={handleSaveCompensation}
             disabled={isSaving}
             style={{ marginTop: spacing.md }}
+            testID="groupOptions.save"
           />
         </Card>
         {household ? <DeleteGroupCard household={household} /> : null}

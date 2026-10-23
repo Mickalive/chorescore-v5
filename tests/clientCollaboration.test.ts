@@ -210,6 +210,79 @@ test('two independent clients share exact ledgers, targeted member links, confli
   expect([...aMoney.values()].reduce((sum, value) => sum + value, 0)).toBe(0);
   expect(bMoney).toEqual(aMoney);
 
+  // Cross-ledger compensation is an explicit, rate-snapshotted operation.
+  // The authority validates it against both authoritative ledgers and syncs it.
+  const rate = {
+    contributionValue: 1,
+    contributionUnit: 'points' as const,
+    moneyAmountMinor: 10,
+    currency: 'CHF',
+  };
+  await alice.repos.households.update(hid, {
+    crossLedgerCompensationEnabled: true,
+    contributionToMoneyRate: rate,
+  });
+  await pushAndPull(alice, bob, hid);
+  expect(await bob.repos.households.getById(hid)).toMatchObject({
+    crossLedgerCompensationEnabled: true,
+    contributionToMoneyRate: rate,
+  });
+  const settlement = await bob.repos.settlements.create({
+    householdId: hid,
+    contributionCreditorMemberId: ownerMember.id,
+    counterpartyMemberId: bobMember.id,
+    contributionValue: 5,
+    contributionUnit: 'points',
+    moneyAmountMinor: 50,
+    currency: 'CHF',
+    rateSnapshot: rate,
+    occurredAt: new Date().toISOString(),
+    createdBy: 'bob',
+  });
+  await pushAndPull(bob, alice, hid);
+  expect(await alice.repos.settlements.getById(settlement.id)).toMatchObject({
+    contributionValue: 5,
+    moneyAmountMinor: 50,
+    rateSnapshot: rate,
+    createdBy: 'bob',
+  });
+  expect(await alice.repos.settlements.getByHousehold(hid)).toHaveLength(1);
+
+  // A stale rate, an over-settlement and an edit/delete are all refused by the
+  // authority without changing the ledger.
+  const compensateMutation = (operationId: string, change: Record<string, unknown>) =>
+    nodeFetch(`${baseUrl}/groups/${hid}/mutations`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token('bob')}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ operationId, changes: [change] }),
+    });
+  const stale = await compensateMutation('stale-rate', {
+    collection: 'settlements', id: 'settlement-stale', baseVersion: 0,
+    value: {
+      id: 'settlement-stale', householdId: hid,
+      contributionCreditorMemberId: ownerMember.id, counterpartyMemberId: bobMember.id,
+      contributionValue: 1, contributionUnit: 'points', moneyAmountMinor: 10, currency: 'CHF',
+      rateSnapshot: { ...rate, moneyAmountMinor: 20 },
+      occurredAt: new Date().toISOString(), createdBy: 'bob',
+    },
+  });
+  expect(stale.status).toBe(400);
+  const over = await compensateMutation('over-settlement', {
+    collection: 'settlements', id: 'settlement-over', baseVersion: 0,
+    value: {
+      id: 'settlement-over', householdId: hid,
+      contributionCreditorMemberId: ownerMember.id, counterpartyMemberId: bobMember.id,
+      contributionValue: 5, contributionUnit: 'points', moneyAmountMinor: 50, currency: 'CHF',
+      rateSnapshot: rate, occurredAt: new Date().toISOString(), createdBy: 'bob',
+    },
+  });
+  expect(over.status).toBe(400);
+  const deleted = await compensateMutation('delete-settlement', {
+    collection: 'settlements', id: settlement.id, baseVersion: 1, value: null,
+  });
+  expect(deleted.status).toBe(400);
+  expect(await alice.repos.settlements.getByHousehold(hid)).toHaveLength(1);
+
   // A member added after the group exists, then renamed, keeps one stable id.
   const chloe = await addGroupMember(alice.repos, hid, 'Chloé');
   await pushAndPull(alice, bob, hid);

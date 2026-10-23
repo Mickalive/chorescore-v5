@@ -26,7 +26,8 @@ export function GroupCard({ group, memberCount, onOpen, onOptions }: {
         <Text variant="caption">{memberCount === undefined ? '…' : memberCount === 1
           ? t('groups.memberOne') : t('groups.memberMany', { count: memberCount })}</Text>
         <TouchableOpacity onPress={onOptions} style={styles.options} accessibilityRole="button"
-          accessibilityLabel={t('a11y.groupOptions', { name: group.name })}>
+          accessibilityLabel={t('a11y.groupOptions', { name: group.name })}
+          testID={`groups.options.${group.id}`}>
           <Text variant="bodyBold" color={colors.primary}>{t('groups.options')}</Text>
         </TouchableOpacity>
       </View>

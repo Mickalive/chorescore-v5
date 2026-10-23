@@ -50,34 +50,52 @@ def candidates(root, label=None, resource=None, partial=False):
 
 APP_PACKAGE = 'app.chorescore.v5'
 
+# Only these system processes may be recovered from automatically. The dialog
+# must both come from the Android system window and name one of these explicit
+# processes. Anything else (notably a ChoreScore ANR) stays visible and fails
+# the journey with the real diagnostic.
+SYSTEM_ANR_PROCESSES = (
+    'pixel launcher', 'com.google.android.apps.nexuslauncher',
+    'launcher3', 'com.android.launcher3', 'quickstep',
+    'system ui', 'systemui', 'com.android.systemui',
+    'google quick search box', 'com.google.android.googlequicksearchbox',
+)
+
+def system_anr_title(root):
+    """Return the ANR dialog title only when it belongs to a known system process."""
+    dialog_packages={node.attrib.get('package','') for node in root.iter('node')}
+    if not dialog_packages & {'android', 'com.android.systemui'}:
+        return None
+    titles=[]
+    for node in root.iter('node'):
+        resource=node.attrib.get('resource-id','')
+        if resource.endswith('/alertTitle') or resource == 'android:id/alertTitle':
+            text=node.attrib.get('text','').strip()
+            if text:
+                titles.append(text)
+    if not titles:
+        titles=[
+            (node.attrib.get('text','')+' '+node.attrib.get('content-desc','')).strip()
+            for node in root.iter('node')
+            if (node.attrib.get('text','')+' '+node.attrib.get('content-desc','')).strip()
+        ]
+    titled=' '.join(titles).lower()
+    if APP_PACKAGE in titled or 'chorescore' in titled:
+        return None  # Real ChoreScore ANR: keep it visible.
+    if not any(marker in titled for marker in SYSTEM_ANR_PROCESSES):
+        return None
+    if ('isn\'t responding' not in titled and 'ne répond pas' not in titled and
+            'application ne répond pas' not in titled):
+        return None
+    return titled
+
 def dismiss_system_dialog(root):
     """Dismiss only an ANR overlay raised by an explicitly named system process.
 
     A ChoreScore ANR is a product failure and must stay visible in diagnostics.
-    Only dialogs rendered by the Android system that name a system package such
-    as the launcher or SystemUI may be dismissed. The journey assertions are not
-    relaxed: the app still has to be reachable afterwards.
+    The journey assertions are not relaxed: the app still has to be reachable.
     """
-    dialog_packages={node.attrib.get('package','') for node in root.iter('node')}
-    if not dialog_packages & {'android','com.android.systemui'}:
-        return False
-    messages=[]
-    for node in root.iter('node'):
-        text=(node.attrib.get('text','')+' '+node.attrib.get('content-desc','')).strip()
-        if not text: continue
-        lowered=text.lower()
-        if ('isn\'t responding' in lowered or 'ne répond pas' in lowered or
-                'application ne répond pas' in lowered):
-            messages.append(text)
-    if not messages:
-        return False
-    joined=' '.join(messages).lower()
-    if APP_PACKAGE in joined or 'chorescore' in joined:
-        # Real ChoreScore ANR: keep the dialog and let the assertion fail.
-        return False
-    system_markers=('launcher','system ui','systemui','com.google.android.apps.nexuslauncher',
-                    'com.android.systemui','com.google.android.googlequicksearchbox')
-    if not any(marker in joined for marker in system_markers):
+    if system_anr_title(root) is None:
         return False
     for wait_label in ('Wait','Attendre'):
         taps=candidates(root,label=wait_label)
@@ -142,12 +160,24 @@ def swipe(up=True):
     adb('shell','input','swipe','206','740' if up else '260','206','260' if up else '740','350')
 
 def scroll_top():
-    for _ in range(12):swipe(False)
+    for _ in range(12):
+        root=hierarchy()
+        if dismiss_system_dialog(root) or dismiss_permission(root):
+            continue
+        swipe(False)
 
 def scroll_find(label=None,resource=None,partial=False):
+    # System dialogs (e.g. the emulator's Pixel Launcher ANR) can steal the
+    # window hierarchy while the app is still running. Dismiss only the known
+    # system processes, never a ChoreScore ANR, and keep the product assertion.
+    dismissed=0
     for _ in range(12):
-        nodes=candidates(hierarchy(),label,resource,partial)
+        root=hierarchy()
+        nodes=candidates(root,label,resource,partial)
         if nodes:return nodes[0]
+        if dismissed<8 and (dismiss_system_dialog(root) or dismiss_permission(root)):
+            dismissed+=1
+            continue
         swipe()
     raise AssertionError(f'Control absent after scrolling: {resource or label}')
 
@@ -239,6 +269,10 @@ def screenshot(name):
     (EVIDENCE/(name+'.xml')).write_text(adb('shell','cat','/data/local/tmp/chorescore-window.xml'))
 
 def dismiss_permission(root):
+    packages={node.attrib.get('package','') for node in root.iter('node')}
+    if not packages & {'com.android.permissioncontroller',
+                       'com.google.android.permissioncontroller'}:
+        return False
     for label in ('Allow','Autoriser','While using the app','Pendant l’utilisation'):
         taps=candidates(root,label=label)
         if taps:
@@ -254,6 +288,38 @@ def wait_for_permission(timeout=20):
             return True
         time.sleep(.5)
     return False
+
+def device_time_plus(minutes=2):
+    """Future local date/time on the emulator, not on the CI host."""
+    import datetime
+    raw=adb('shell','date','+%Y-%m-%d %H:%M:%S').strip()
+    future=datetime.datetime.strptime(raw,'%Y-%m-%d %H:%M:%S')+datetime.timedelta(minutes=minutes)
+    return future.strftime('%Y-%m-%d'), future.strftime('%H:%M')
+
+def wait_for_reminder(title, timeout=240):
+    """Prove the native Android scheduler actually posts the reminder.
+
+    The notification shade is the observable result, not the mere presence of a
+    scheduling call. The open todo is intentionally left uncompleted so
+    completing it would not cancel the reminder under test.
+    """
+    deadline=time.monotonic()+timeout
+    try:
+        while time.monotonic()<deadline:
+            adb('shell','cmd','statusbar','expand-notifications')
+            time.sleep(1)
+            root=hierarchy()
+            if candidates(root,label=title,partial=True):
+                screenshot('reminder-delivered-android')
+                return
+            adb('shell','cmd','statusbar','collapse')
+            time.sleep(5)
+        root=hierarchy()
+        screenshot('reminder-not-delivered-android')
+        raise AssertionError(f'Native reminder not delivered: {title}')
+    finally:
+        try: adb('shell','cmd','statusbar','collapse')
+        except Exception: pass
 
 def dismiss_alert():
     for label in ('OK','D’accord',"D'accord",'Fermer','Close'):
@@ -341,6 +407,8 @@ def open_group():
 try:
     adb('wait-for-device')
     assert adb('shell','getprop','sys.boot_completed').strip()=='1','Android not booted'
+    # Keep the emulator awake across the real reminder wait (up to four minutes).
+    adb('shell','svc','power','stayon','true')
     adb('shell','wm','size','412x915')
     adb('shell','wm','density','160')
     adb('install','-r',str(APK),timeout=120)
@@ -443,6 +511,22 @@ try:
     locate(resource='todos.newItem')
     screenshot('todos-completed-android')
 
+    # A third, deliberately uncompleted todo proves the native Android
+    # scheduler really posts a reminder (permission alone is not proof).
+    tap(resource='todos.newItem')
+    fill('todos.createTitle','Rappel natif CI')
+    fill('todos.createNotes','Notification CI')
+    scroll_to(resource='todos.reminderDateTime')
+    reminder_date,reminder_time=device_time_plus(2)
+    fill('todos.reminderDateTime.date',reminder_date)
+    fill('todos.reminderDateTime.time',reminder_time)
+    tap(resource='todos.reminderDateTime.confirm')
+    scroll_to(resource='todos.createSubmit')
+    tap(resource='todos.createSubmit')
+    scroll_top()
+    locate(resource='todos.newItem')
+    wait_for_reminder('Rappel natif CI')
+
     tap('Balances')
     scroll_find('Courses CI',partial=True)
     scroll_find('Cuisine CI',partial=True)
@@ -493,7 +577,8 @@ try:
         'verified':['normal release startup','points group with two named members',
                     'user category with 1:3 ratio','task with exact custom split and persisted picked photo',
                     'expense with cent-exact custom shares','task and expense todos completed by double tap',
-                    'reminder permission requested through the real scheduler','both ledger entries after force-stop and relaunch',
+                    'reminder permission requested through the real scheduler',
+                    'real local reminder notification observed in the Android shade','both ledger entries after force-stop and relaunch',
                     'native edit and delete from Balances','actual Android share chooser'],
         'partially_verified':['reminder scheduled through the native API; delivery timing is controlled by Android'],
         'not_verified':['real Firebase sign-in','two-phone collaboration','custom compensation on device'],
