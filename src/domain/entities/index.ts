@@ -131,6 +131,12 @@ export interface Attachment {
   id: string;
   kind: AttachmentKind;
   ref: string;
+  /**
+   * Optional private-cloud media id. The authority stores `ref` as
+   * `media:<remoteRef>`; the originating device keeps its local file URI so it
+   * does not need to re-download its own photo.
+   */
+  remoteRef?: string;
   mimeType?: string;
   byteSize?: number;
   width?: number;

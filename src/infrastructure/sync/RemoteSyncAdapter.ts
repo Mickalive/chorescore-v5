@@ -12,6 +12,7 @@
  */
 
 import {
+  Attachment,
   ContributionEntry,
   ExpenseEntry,
   Household,
@@ -31,6 +32,7 @@ import {
 } from '../../domain/entities';
 import type { AllRepositories } from '../repositories/RepositoryFactory';
 import type {
+  MediaGateway,
   RemoteInvitation,
   RemoteInvitationAcceptance,
   SyncGateway,
@@ -60,6 +62,8 @@ export interface RemoteSyncConfig {
   onRemoteChange?: (signal: SyncChangeSignal) => void;
   fetchImpl?: typeof fetch;
   pollIntervalMs?: number;
+  /** Private cloud media transport; required to sync entries with photos. */
+  media?: MediaGateway;
 }
 
 interface ServerChange {
@@ -778,6 +782,30 @@ export class RemoteSyncAdapter implements SyncGateway {
     }
   }
 
+  /**
+   * Uploads any private photo that has not reached the authority yet. The
+   * originating device keeps its local URI; other devices receive the same
+   * record with `remoteRef` and resolve it through the media cache.
+   */
+  private async uploadAttachments(
+    householdId: string,
+    value: Record<string, unknown>,
+    media: MediaGateway,
+  ): Promise<Record<string, unknown>> {
+    const attachments = value.attachments as Attachment[];
+    const uploaded: Attachment[] = [];
+    for (const attachment of attachments) {
+      if (attachment.kind !== 'photo') throw new Error('Unsupported attachment kind');
+      if (attachment.remoteRef) {
+        uploaded.push(attachment);
+        continue;
+      }
+      const result = await media.upload(householdId, attachment);
+      uploaded.push({ ...attachment, remoteRef: result.remoteRef, byteSize: result.byteSize });
+    }
+    return { ...value, attachments: uploaded };
+  }
+
   private async buildPending(
     householdId: string,
   ): Promise<{ mutation: PendingSyncMutation } | null> {
@@ -803,29 +831,36 @@ export class RemoteSyncAdapter implements SyncGateway {
       );
       for (const record of records) {
         if (changes.length >= BATCH_LIMIT) break;
-        const value = record.deletedAt
+        let value = record.deletedAt
           ? null
           : (JSON.parse(record.payload ?? 'null') as Record<string, unknown> | null);
         if (value && Array.isArray(value.attachments) && value.attachments.length > 0) {
-          conflicts.push({
-            id: this.conflictId(householdId, {
+          const media = this.config.media;
+          if (!media?.isAvailable()) {
+            // Honest limitation: a build without private media storage keeps
+            // the local photo and surfaces a explicit unresolved conflict
+            // instead of pretending the photo reached the other device.
+            conflicts.push({
+              id: this.conflictId(householdId, {
+                collection,
+                id: record.id,
+                value,
+                version: 0,
+              }),
+              householdId,
               collection,
-              id: record.id,
-              value,
-              version: 0,
-            }),
-            householdId,
-            collection,
-            entityId: record.id,
-            localRevision: record.revision,
-            remoteVersion: 0,
-            detectedAt: new Date().toISOString(),
-            localPayload: record.payload,
-            remotePayload: null,
-            resolvedAt: null,
-          });
-          sent.push({ collection, id: record.id, revision: record.revision });
-          continue;
+              entityId: record.id,
+              localRevision: record.revision,
+              remoteVersion: 0,
+              detectedAt: new Date().toISOString(),
+              localPayload: record.payload,
+              remotePayload: null,
+              resolvedAt: null,
+            });
+            sent.push({ collection, id: record.id, revision: record.revision });
+            continue;
+          }
+          value = await this.uploadAttachments(householdId, value, media);
         }
         const baseVersion = await repos.syncState.getRemoteVersion(
           householdId,

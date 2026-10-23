@@ -1,5 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { HttpError } from './auth';
 import { calculateContributionBalances } from '../src/domain/calculations/contributionLedger';
 import { allocateExpense } from '../src/domain/calculations/expenseLedger';
@@ -19,9 +21,14 @@ function digest(value: string) { return createHash('sha256').update(value).diges
 
 /** Single authoritative writer on a persistent SQLite volume. Accounting uses
  * the same pure domain rules as the app; no balances are accepted from clients. */
+export const MAX_MEDIA_BYTES = 20 * 1024 * 1024;
+const MEDIA_GRACE_MS = 24 * 60 * 60 * 1000;
+
 export class CollaborationStore {
   readonly database: DatabaseSync;
-  constructor(path: string) {
+  readonly mediaDirectory: string;
+  constructor(path: string, mediaDirectory = join(dirname(path), 'media')) {
+    this.mediaDirectory = mediaDirectory;
     this.database = new DatabaseSync(path);
     this.database.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS groups(id TEXT PRIMARY KEY, owner TEXT NOT NULL, revision INTEGER NOT NULL, value TEXT NOT NULL);
@@ -31,6 +38,10 @@ export class CollaborationStore {
       CREATE TABLE IF NOT EXISTS events(groupId TEXT NOT NULL, revision INTEGER NOT NULL, changes TEXT NOT NULL, PRIMARY KEY(groupId,revision));
       CREATE TABLE IF NOT EXISTS mutations(groupId TEXT NOT NULL, uid TEXT NOT NULL, id TEXT NOT NULL, hash TEXT NOT NULL, response TEXT NOT NULL, PRIMARY KEY(groupId,uid,id));
       CREATE TABLE IF NOT EXISTS invites(hash TEXT PRIMARY KEY, groupId TEXT NOT NULL, memberId TEXT NOT NULL, expires INTEGER NOT NULL, acceptedBy TEXT, revoked INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS media(groupId TEXT NOT NULL, id TEXT NOT NULL, mimeType TEXT NOT NULL, byteSize INTEGER NOT NULL, sha256 TEXT NOT NULL, createdAt INTEGER NOT NULL, uploadedBy TEXT NOT NULL, PRIMARY KEY(groupId,id));
+      CREATE INDEX IF NOT EXISTS media_group ON media(groupId,createdAt);
+      CREATE TABLE IF NOT EXISTS media_refs(groupId TEXT NOT NULL, mediaId TEXT NOT NULL, collection TEXT NOT NULL, entityId TEXT NOT NULL, PRIMARY KEY(groupId,mediaId,collection,entityId));
+      CREATE INDEX IF NOT EXISTS media_refs_media ON media_refs(groupId,mediaId);
     `);
   }
   close() { this.database.close(); }
@@ -61,10 +72,98 @@ export class CollaborationStore {
       this.database.prepare(`INSERT INTO records(groupId,collection,id,version,value) VALUES(?,?,?,?,?)
         ON CONFLICT(collection,id) DO UPDATE SET version=excluded.version,value=excluded.value`).run(
           groupId,change.collection,change.id,version,change.value ? JSON.stringify(change.value) : null);
+      this.trackMediaRefs(groupId,change.collection,change.id,change.value);
       return { ...change, version };
     });
     this.database.prepare('INSERT INTO events VALUES(?,?,?)').run(groupId,revision,JSON.stringify(applied));
     return { revision, changes: applied };
+  }
+  /**
+   * Maintain a bounded reference index for private media. A scan of the whole
+   * ledger would be a full-history cost; only the changed entry is re-indexed.
+   */
+  private trackMediaRefs(groupId: string, collection: string, entityId: string, value: Row | null) {
+    if (collection !== 'contribution_entries' && collection !== 'expense_entries') return;
+    this.database.prepare('DELETE FROM media_refs WHERE groupId=? AND collection=? AND entityId=?')
+      .run(groupId,collection,entityId);
+    const attachments = value && Array.isArray(value.attachments) ? value.attachments : [];
+    for (const attachment of attachments) {
+      const mediaId = attachment && typeof attachment.remoteRef === 'string' ? attachment.remoteRef : null;
+      if (!mediaId) continue;
+      this.database.prepare('INSERT OR IGNORE INTO media_refs VALUES(?,?,?,?)')
+        .run(groupId,mediaId,collection,entityId);
+    }
+  }
+  private mediaPath(groupId: string, mediaId: string): string {
+    id(groupId); id(mediaId);
+    return join(this.mediaDirectory,groupId,mediaId);
+  }
+  putMedia(uid: string, groupId: string, mediaId: string, mimeType: string, bytes: Buffer) {
+    id(groupId); id(mediaId);
+    this.access(groupId,uid);
+    requireValue(typeof mimeType === 'string' && /^image\/(jpeg|png|webp|heic|heif|gif)$/.test(mimeType),'Unsupported media type');
+    requireValue(bytes.length > 0 && bytes.length <= MAX_MEDIA_BYTES,'Invalid media size');
+    // Reject a renamed executable/text file that merely claims an image type.
+    const signature = bytes.subarray(0,12);
+    const isImage = (signature[0]===0xff && signature[1]===0xd8) ||
+      (signature.subarray(0,8).equals(Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a]))) ||
+      signature.subarray(0,4).toString('ascii') === 'RIFF' ||
+      signature.subarray(4,8).toString('ascii') === 'ftyp' ||
+      signature.subarray(0,4).toString('ascii') === 'GIF8';
+    requireValue(isImage,'Invalid image payload');
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    const existing = this.database.prepare('SELECT * FROM media WHERE groupId=? AND id=?').get(groupId,mediaId) as Row | undefined;
+    if (existing) {
+      if (existing.sha256 !== sha256) throw new HttpError(409,'Media identifier already used with different content');
+      return { id:mediaId,mimeType:existing.mimeType,byteSize:existing.byteSize,sha256,createdAt:new Date(existing.createdAt).toISOString() };
+    }
+    const directory = join(this.mediaDirectory,groupId);
+    mkdirSync(directory,{recursive:true});
+    const destination = this.mediaPath(groupId,mediaId);
+    const temporary = `${destination}.${randomUUID()}.tmp`;
+    writeFileSync(temporary,bytes,{mode:0o600});
+    renameSync(temporary,destination);
+    try {
+      const createdAt = Date.now();
+      this.database.prepare('INSERT INTO media VALUES(?,?,?,?,?,?,?)')
+        .run(groupId,mediaId,mimeType,bytes.length,sha256,createdAt,uid);
+      return { id:mediaId,mimeType,byteSize:bytes.length,sha256,createdAt:new Date(createdAt).toISOString() };
+    } catch (error) {
+      rmSync(destination,{force:true});
+      throw error;
+    }
+  }
+  getMedia(uid: string, groupId: string, mediaId: string) {
+    id(groupId); id(mediaId);
+    this.access(groupId,uid);
+    const row = this.database.prepare('SELECT * FROM media WHERE groupId=? AND id=?').get(groupId,mediaId) as Row | undefined;
+    const path = this.mediaPath(groupId,mediaId);
+    if (!row || !existsSync(path)) throw new HttpError(404,'Media not found');
+    const bytes = readFileSync(path);
+    if (bytes.length !== row.byteSize || createHash('sha256').update(bytes).digest('hex') !== row.sha256) {
+      throw new HttpError(500,'Media integrity check failed');
+    }
+    return { mimeType:row.mimeType as string, bytes };
+  }
+  deleteMedia(uid: string, groupId: string, mediaId: string) {
+    id(groupId); id(mediaId);
+    this.access(groupId,uid);
+    const references = this.database.prepare('SELECT COUNT(*) AS count FROM media_refs WHERE groupId=? AND mediaId=?').get(groupId,mediaId) as Row;
+    if (references.count > 0) throw new HttpError(409,'Media is still referenced by an entry');
+    this.database.prepare('DELETE FROM media WHERE groupId=? AND id=?').run(groupId,mediaId);
+    rmSync(this.mediaPath(groupId,mediaId),{force:true});
+    return { deleted:true };
+  }
+  /** Remove private media that no current entry references after a grace period. */
+  collectMediaGarbage(graceMs = MEDIA_GRACE_MS) {
+    const cutoff = Date.now() - Math.max(0,graceMs);
+    const rows = this.database.prepare(`SELECT groupId,id FROM media m WHERE createdAt < ?
+      AND NOT EXISTS (SELECT 1 FROM media_refs r WHERE r.groupId=m.groupId AND r.mediaId=m.id) LIMIT 100`).all(cutoff) as Row[];
+    for (const row of rows) {
+      this.database.prepare('DELETE FROM media WHERE groupId=? AND id=?').run(row.groupId,row.id);
+      rmSync(this.mediaPath(row.groupId,row.id),{force:true});
+    }
+    return { removed:rows.length };
   }
   createGroup(uid: string, input: Row) {
     id(input.id); id(input.ownerMemberId); text(input.name);
@@ -128,8 +227,33 @@ export class CollaborationStore {
     };
     if (value.categoryId) requireValue(this.value(groupId,'categories',value.categoryId),'Unknown category');
     if (value.note !== undefined) requireValue(typeof value.note === 'string' && value.note.length <= 10000,'Invalid note');
-    if (value.attachments !== undefined) requireValue(Array.isArray(value.attachments),'Invalid attachments');
-    if (value.attachments?.length) throw new HttpError(400,'Private cloud media must be uploaded before attachment sync');
+    if (value.attachments !== undefined) {
+      requireValue(Array.isArray(value.attachments) && value.attachments.length <= 10,'Invalid attachments');
+      value.attachments = value.attachments.map((attachment: Row) => {
+        requireValue(attachment && typeof attachment === 'object' && !Array.isArray(attachment),'Invalid attachment');
+        requireValue(attachment.kind === 'photo','Unsupported attachment kind');
+        id(attachment.id); id(attachment.remoteRef);
+        const stored = this.database.prepare('SELECT * FROM media WHERE groupId=? AND id=?')
+          .get(groupId,attachment.remoteRef) as Row | undefined;
+        // Media must be uploaded first, under this exact group, so a client can
+        // never reference another tenant's private file.
+        requireValue(stored,'Private media must be uploaded before attachment sync');
+        if (attachment.mimeType !== undefined) requireValue(attachment.mimeType === stored.mimeType,'Media type mismatch');
+        if (attachment.byteSize !== undefined) requireValue(attachment.byteSize === stored.byteSize,'Media size mismatch');
+        const sanitized: Row = {
+          id:attachment.id,
+          kind:'photo',
+          ref:`media:${stored.id}`,
+          remoteRef:stored.id,
+          mimeType:stored.mimeType,
+          byteSize:stored.byteSize,
+          createdAt:typeof attachment.createdAt === 'string' ? attachment.createdAt : new Date(stored.createdAt).toISOString(),
+        };
+        if (Number.isInteger(attachment.width) && attachment.width >= 0) sanitized.width = attachment.width;
+        if (Number.isInteger(attachment.height) && attachment.height >= 0) sanitized.height = attachment.height;
+        return sanitized;
+      });
+    }
     if (change.collection === 'households') {
       // Group-wide settings are owner-only. Identity, tenancy and creation
       // provenance are authority-owned and can never be rewritten by a client.
@@ -214,7 +338,7 @@ export class CollaborationStore {
   }
   mutate(uid: string, groupId: string, operationId: string, changes: Change[]) {
     id(operationId); requireValue(Array.isArray(changes) && changes.length > 0 && changes.length <= 100,'Invalid change batch');
-    return this.transaction(() => {
+    const committed = this.transaction(() => {
       const membership = this.access(groupId,uid);
       const hash = digest(JSON.stringify(changes));
       changes = structuredClone(changes);
@@ -226,6 +350,8 @@ export class CollaborationStore {
       this.database.prepare('INSERT INTO mutations VALUES(?,?,?,?,?)').run(groupId,uid,operationId,hash,JSON.stringify(result));
       return result;
     });
+    try { this.collectMediaGarbage(); } catch { /* maintenance must not fail a committed write */ }
+    return committed;
   }
   createInvite(uid: string, groupId: string, memberId: string) {
     id(memberId);

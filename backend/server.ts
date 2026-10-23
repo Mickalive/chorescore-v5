@@ -1,16 +1,20 @@
 import { createServer, IncomingMessage, ServerResponse } from 'node:http';
 import { FirebaseTokenVerifier, HttpError } from './auth';
-import { CollaborationStore } from './store';
+import { CollaborationStore, MAX_MEDIA_BYTES } from './store';
 
-async function body(request: IncomingMessage): Promise<Record<string, any>> {
+async function raw(request: IncomingMessage, limit: number): Promise<Buffer> {
   const buffers: Buffer[] = []; let size = 0;
   for await (const chunk of request) {
     size += chunk.length;
-    if (size > 1024*1024) throw new HttpError(413,'Request too large');
+    if (size > limit) throw new HttpError(413,'Request too large');
     buffers.push(chunk);
   }
+  return Buffer.concat(buffers);
+}
+async function body(request: IncomingMessage): Promise<Record<string, any>> {
+  const data = await raw(request,1024*1024);
   try {
-    const result = JSON.parse(Buffer.concat(buffers).toString());
+    const result = JSON.parse(data.toString());
     if (!result || typeof result !== 'object' || Array.isArray(result)) throw new Error();
     return result;
   } catch { throw new HttpError(400,'Invalid JSON object'); }
@@ -27,6 +31,33 @@ export function createCollaborationServer(store: CollaborationStore, verifier: F
       const parts = url.pathname.split('/').filter(Boolean);
       const input = request.method === 'POST' ? await body(request) : {};
       let result: unknown;
+      // Private media is addressed per group and requires membership on every
+      // request. Binary uploads bypass the JSON parser and are size-bounded.
+      if (parts[0] === 'groups' && parts.length === 4 && parts[2] === 'media') {
+        if (request.method === 'GET') {
+          const media = store.getMedia(uid,parts[1],parts[3]);
+          response.statusCode = 200;
+          response.setHeader('Content-Type',media.mimeType);
+          response.setHeader('Content-Length',String(media.bytes.length));
+          response.setHeader('Cache-Control','private, max-age=3600');
+          response.end(media.bytes);
+          return;
+        }
+        if (request.method === 'PUT') {
+          const mimeType = String(request.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
+          const bytes = await raw(request,MAX_MEDIA_BYTES);
+          result = store.putMedia(uid,parts[1],parts[3],mimeType,bytes);
+          response.statusCode = 200;
+          response.end(JSON.stringify(result));
+          return;
+        }
+        if (request.method === 'DELETE') {
+          result = store.deleteMedia(uid,parts[1],parts[3]);
+          response.end(JSON.stringify(result));
+          return;
+        }
+        throw new HttpError(405,'Method not allowed');
+      }
       if (parts.length === 1 && parts[0] === 'groups' && request.method === 'GET') result = store.listGroups(uid);
       else if (parts.length === 1 && parts[0] === 'groups' && request.method === 'POST') result = store.createGroup(uid,input);
       else if (parts[0] === 'groups' && parts.length === 3 && parts[2] === 'deltas' && request.method === 'GET') result = store.deltas(uid,parts[1],Number(url.searchParams.get('since') ?? 0));

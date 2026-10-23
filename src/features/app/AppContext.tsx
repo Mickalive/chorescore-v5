@@ -23,6 +23,7 @@ import { LocalNotificationAdapter } from '../../infrastructure/local/LocalNotifi
 import { LocalCalendarAdapter } from '../../infrastructure/local/LocalCalendarAdapter';
 import { LocalSecureStorageAdapter } from '../../infrastructure/local/LocalSecureStorageAdapter';
 import { LocalSyncAdapter } from '../../infrastructure/local/LocalSyncAdapter';
+import { HttpMediaGateway, UnavailableMediaGateway } from '../../infrastructure/sync/HttpMediaGateway';
 import { RemoteSyncAdapter } from '../../infrastructure/sync/RemoteSyncAdapter';
 import { LocalResearchAnalyticsAdapter } from '../../infrastructure/local/LocalResearchAnalyticsAdapter';
 import { LocalAttachmentAdapter } from '../../infrastructure/local/LocalAttachmentAdapter';
@@ -34,7 +35,7 @@ import {
   AllRepositories,
 } from '../../infrastructure/repositories/RepositoryFactory';
 import { createScopedRepositories } from '../../infrastructure/repositories/ScopedRepositoryFacade';
-import { AuthUser, AttachmentGateway, SystemShareGateway, SyncGateway } from '../../application/ports';
+import { AuthUser, AttachmentGateway, MediaGateway, SystemShareGateway, SyncGateway } from '../../application/ports';
 import { ContributionUnit, Household, Member } from '../../domain/entities';
 import {
   addGroupMember,
@@ -99,6 +100,8 @@ interface AppState {
     calendar: LocalCalendarAdapter;
     /** V4-01: photo attachments behind an honest port (no provider faked). */
     attachments: AttachmentGateway;
+    /** Private cloud media; unavailable in local-only builds. */
+    media: MediaGateway;
     sync: SyncGateway;
   };
 }
@@ -163,12 +166,20 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       ? new FirebaseAuthAdapter(firebaseAuthConfig()!, new LocalSecureStorageAdapter())
       : new LocalAuthAdapter({ secureStorage: new LocalSecureStorageAdapter() });
     const collaborationUrl = (process.env.EXPO_PUBLIC_COLLAB_URL ?? '').trim();
+    const remote = auth instanceof FirebaseAuthAdapter && collaborationUrl.length > 0;
+    const media = remote
+      ? new HttpMediaGateway({
+          baseUrl: collaborationUrl,
+          getAccessToken: () => auth.getIdToken(),
+        })
+      : new UnavailableMediaGateway();
     const sync: SyncGateway =
-      auth instanceof FirebaseAuthAdapter && collaborationUrl
+      remote
         ? new RemoteSyncAdapter({
             baseUrl: collaborationUrl,
             getAccessToken: () => auth.getIdToken(),
             getRepos: () => rawReposRef.current,
+            media,
           })
         : new LocalSyncAdapter();
     return {
@@ -181,6 +192,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     calendar: new LocalCalendarAdapter(),
     secureStorage: new LocalSecureStorageAdapter(),
     sync,
+    media,
     analytics: new LocalResearchAnalyticsAdapter(),
     // V4-01/V4-04: honest adapter in a normal build — reports unavailable
     // until a real photo provider is configured; the UI then hides the photo
@@ -448,6 +460,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       notifications: servicesRef.current.notifications,
       calendar: servicesRef.current.calendar,
       attachments: servicesRef.current.attachments,
+      media: servicesRef.current.media,
       sync: servicesRef.current.sync,
     },
   };

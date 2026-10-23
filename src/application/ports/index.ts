@@ -255,6 +255,27 @@ export interface AttachmentHandle {
   height?: number;
 }
 
+/**
+ * Private cloud media transport. Files live under a group ACL on the
+ * authority; clients upload before referencing them in a synced entry and
+ * download lazily into a local cache. No public URL is ever produced.
+ */
+export interface MediaGateway {
+  isAvailable(): boolean;
+  upload(
+    householdId: string,
+    attachment: {
+      id: string;
+      ref: string;
+      mimeType?: string;
+      byteSize?: number;
+    },
+  ): Promise<{ remoteRef: string; sha256: string; byteSize: number }>;
+  /** Resolve a remote reference to a locally readable file URI. */
+  download(householdId: string, remoteRef: string): Promise<string>;
+  remove(householdId: string, remoteRef: string): Promise<void>;
+}
+
 // ── Permissions ────────────────────────────────────────────────
 
 export type MemberPermissionLevel = 'OWNER' | 'ADMIN' | 'MEMBER';
