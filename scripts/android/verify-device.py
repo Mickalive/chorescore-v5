@@ -48,20 +48,36 @@ def candidates(root, label=None, resource=None, partial=False):
                 result.append(node)
     return sorted(result,key=lambda n:n.attrib.get('clickable')!='true')
 
-def dismiss_system_dialog(root):
-    """Dismiss an emulator/system ANR overlay that would hide the app.
+APP_PACKAGE = 'app.chorescore.v5'
 
-    The CI emulator occasionally starts with a slow launcher/SystemUI ANR
-    dialog on top of a perfectly healthy app. Tapping \"Wait\" keeps both the
-    system and the product running; the journey assertions stay unchanged.
+def dismiss_system_dialog(root):
+    """Dismiss only an ANR overlay raised by an explicitly named system process.
+
+    A ChoreScore ANR is a product failure and must stay visible in diagnostics.
+    Only dialogs rendered by the Android system that name a system package such
+    as the launcher or SystemUI may be dismissed. The journey assertions are not
+    relaxed: the app still has to be reachable afterwards.
     """
-    labels=[]
+    dialog_packages={node.attrib.get('package','') for node in root.iter('node')}
+    if not dialog_packages & {'android','com.android.systemui'}:
+        return False
+    messages=[]
     for node in root.iter('node'):
-        value=(node.attrib.get('text','')+' '+node.attrib.get('content-desc','')).lower()
-        labels.append(value)
-    blocked=any('isn\'t responding' in value or 'ne répond pas' in value or
-                'application ne répond pas' in value for value in labels)
-    if not blocked:
+        text=(node.attrib.get('text','')+' '+node.attrib.get('content-desc','')).strip()
+        if not text: continue
+        lowered=text.lower()
+        if ('isn\'t responding' in lowered or 'ne répond pas' in lowered or
+                'application ne répond pas' in lowered):
+            messages.append(text)
+    if not messages:
+        return False
+    joined=' '.join(messages).lower()
+    if APP_PACKAGE in joined or 'chorescore' in joined:
+        # Real ChoreScore ANR: keep the dialog and let the assertion fail.
+        return False
+    system_markers=('launcher','system ui','systemui','com.google.android.apps.nexuslauncher',
+                    'com.android.systemui','com.google.android.googlequicksearchbox')
+    if not any(marker in joined for marker in system_markers):
         return False
     for wait_label in ('Wait','Attendre'):
         taps=candidates(root,label=wait_label)
@@ -70,6 +86,37 @@ def dismiss_system_dialog(root):
             time.sleep(1)
             return True
     return False
+
+def keyboard_shown():
+    dump=adb('shell','dumpsys','input_method')
+    return bool(re.search(r'mInputShown=true|mIsInputViewShown=true',dump))
+
+def hide_keyboard():
+    """Dismiss the IME only when it is actually shown.
+
+    Sending KEYCODE_BACK unconditionally on the inline group form exits the app
+    to the launcher once Enter has already closed the keyboard. That was the
+    real cause of the previous groups.memberInput failure.
+    """
+    if keyboard_shown():
+        adb('shell','input','keyevent','KEYCODE_BACK')
+        time.sleep(.5)
+
+def foreground_packages(root):
+    return {node.attrib.get('package','') for node in root.iter('node')} - {''}
+
+def guarded_hierarchy(context):
+    for _ in range(5):
+        root=hierarchy()
+        packages=foreground_packages(root)
+        if APP_PACKAGE in packages:
+            return root
+        if dismiss_system_dialog(root) or dismiss_permission(root):
+            time.sleep(.5)
+            continue
+        raise AssertionError(
+            f'App left foreground during {context}: {", ".join(sorted(packages)) or "unknown"}')
+    raise AssertionError(f'App stayed behind a system dialog during {context}')
 
 def locate(label=None, resource=None, partial=False, timeout=35):
     deadline=time.monotonic()+timeout
@@ -114,7 +161,7 @@ def fill_node(node,value,clear=False):
         for _ in range(12):adb('shell','input','keyevent','KEYCODE_DEL')
     # Test input is ASCII; unicode labels are matched through UIAutomator XML.
     adb('shell','input','text',value.replace(' ','%s'))
-    adb('shell','input','keyevent','KEYCODE_BACK')  # dismiss this input's keyboard
+    hide_keyboard()
 
 def fill(resource,value,clear=False):
     fill_node(scroll_find(resource=resource),value,clear)
@@ -145,7 +192,7 @@ def add_member_at_creation(name):
     # Return to a predictable scroll position so the member input stays findable.
     scroll_top()
     for _ in range(16):
-        nodes=candidates(hierarchy(),resource='groups.memberInput')
+        nodes=candidates(guarded_hierarchy('member input '+name),resource='groups.memberInput')
         if nodes:
             node=nodes[0]
             break
@@ -157,8 +204,20 @@ def add_member_at_creation(name):
     for _ in range(80):adb('shell','input','keyevent','KEYCODE_DEL')
     adb('shell','input','text',name.replace(' ','%s'))
     adb('shell','input','keyevent','KEYCODE_ENTER')
-    time.sleep(1.0)
-    adb('shell','input','keyevent','KEYCODE_BACK')
+    # Enter submits the inline member field. Wait for the chip, then close the
+    # IME only if it is still visible; a blind BACK exits the app to Launcher.
+    deadline=time.monotonic()+8
+    while time.monotonic()<deadline:
+        root=guarded_hierarchy('member chip '+name)
+        if candidates(root,label=name) and candidates(root,resource='groups.memberInput'):
+            break
+        time.sleep(.3)
+    else:
+        raise AssertionError(f'Member not added at creation: {name}')
+    hide_keyboard()
+    root=guarded_hierarchy('group form after '+name)
+    if not candidates(root,resource='groups.memberInput'):
+        raise AssertionError(f'Group form closed after adding member: {name}')
 
 def double_tap(node):
     x1,y1,x2,y2=map(int,re.findall(r'\d+',node.attrib['bounds']))

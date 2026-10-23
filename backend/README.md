@@ -1,10 +1,10 @@
 # Serveur de collaboration — tranche en cours
 
-Ce serveur HTTP est implémenté et testé, mais **n’est ni déployé ni raccordé à l’application mobile**. `LocalSyncAdapter` reste indisponible. Il ne prouve donc pas encore la collaboration entre téléphones.
+Ce serveur HTTP est implémenté et testé, avec stockage privé des médias, sauvegarde/restauration vérifiées et artefacts de déploiement TLS dans `deploy/`. Il **n’est ni déployé** (aucun compte/projet cloud fourni) et n’a pas été exercé entre deux téléphones réels.
 
 ## Exécution
 
-Node 24, `npm ci`, puis `npm run build:backend`. Définir `FIREBASE_PROJECT_ID` (identifiant public du vrai projet) et `COLLAB_DATABASE` (chemin absolu d’une base sur volume persistant), puis `npm run start:backend`. L’écoute par défaut est `127.0.0.1:8787`. Un hébergement doit fournir HTTPS, volume persistant, sauvegardes et un unique processus écrivain ; ce composant n’est pas adapté à plusieurs instances avec disques éphémères. Aucun hébergement payant n’a été créé.
+Node 24, `npm ci`, puis `npm run build:backend`. Définir `FIREBASE_PROJECT_ID` (identifiant public du vrai projet) et `COLLAB_DATABASE` (chemin absolu d’une base sur volume persistant), puis `npm run start:backend`. L’écoute par défaut est `127.0.0.1:8787`. Un hébergement doit fournir HTTPS, volume persistant, sauvegardes et un unique processus écrivain ; ce composant n’est pas adapté à plusieurs instances avec disques éphémères. Aucun hébergement payant n’a été créé. Voir [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md) pour Docker Compose, Caddy et la sauvegarde.
 
 L’authentification exige un ID token Firebase signé RS256, avec audience, émetteur et expiration vérifiés contre les certificats publics de Google. Aucun compte de service ni clé privée n’est nécessaire à cette vérification. La production ne prend pas en charge les tokens non signés des émulateurs. La source de certificat injectable est uniquement utilisée par les tests : le point d’entrée `main.ts` utilise la source Google fixe.
 
@@ -31,6 +31,12 @@ Les membres autorisés peuvent écrire les tâches, dépenses, todos, modèles, 
 
 **Ce test ne constitue pas une connexion réelle à Firebase ou un essai sur deux téléphones.** Le projet Firebase n’existe pas encore et aucun service distant n’est déployé.
 
+## Exploitation
+
+- Sauvegarde cohérente en ligne : `node scripts/backend/backup.mjs <base.sqlite> <destination> [médias]`, puis `node scripts/backend/restore.mjs ... --force` après arrêt du serveur. Le test `backend-tests/backup.test.cjs` crée un groupe et un média privé, sauvegarde, continue d’écrire, restaure et vérifie groupe, intégrité et absence de la photo postérieure.
+- Déploiement : `deploy/docker-compose.yml` (serveur non publié, Caddy TLS automatique, volume persistant) et `deploy/Caddyfile`. Aucun secret n’est requis pour vérifier les ID tokens Firebase ; seul `FIREBASE_PROJECT_ID` est nécessaire.
+- Médias privés : upload sous ACL de groupe avant référence, vérification de signature, SHA-256, index de références borné, refus des références inter-groupes et collecte des fichiers orphelins après 24 h.
+
 ## Travail restant avant activation
 
-Déployer ce serveur avec HTTPS et volume persistant, puis fournir une interface de synchronisation (dernier échange, outbox, conflits) sans bannière « synchronisé » fictive. Ajouter le stockage privé des photos (les pièces jointes non vides sont actuellement refusées), les compensations et les protections d’exploitation (limites de débit, sauvegarde/restauration, révocation des sessions). Vérifier le flux complet sur deux appareils authentifiés auprès du vrai projet.
+Déployer ce serveur avec un vrai domaine et un vrai projet Firebase, puis vérifier le flux complet sur deux appareils authentifiés. L’interface de synchronisation existe mais son rendu Android n’a pas encore été observé. Ajouter la limitation de débit et la révocation de session côté hébergement/identité. Aucune compensation n’est exposée par l’API serveur ; elle devra être ajoutée comme opération atomique auditée avant d’être annoncée collaborativement.

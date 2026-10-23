@@ -1,0 +1,64 @@
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    environment:
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:?set FIREBASE_PROJECT_ID in deploy/.env}
+      COLLAB_DATABASE: /data/collab.sqlite
+      MEDIA_DIRECTORY: /data/media
+      PORT: '8787'
+      BIND_ADDRESS: 0.0.0.0
+    volumes:
+      - ${COLLAB_DATA_DIR:-./data}:/data
+    expose:
+      - '8787'
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:8787/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  caddy:
+    image: caddy:2.9-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      COLLAB_DOMAIN: ${COLLAB_DOMAIN:?set COLLAB_DOMAIN in deploy/.env}
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+  # Run on demand: docker compose --profile ops run --rm backup
+  backup:
+    profiles: ['ops']
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    user: '1000:1000'
+    entrypoint:
+      - node
+      - scripts/backend/backup.mjs
+      - /data/collab.sqlite
+      - /backups
+      - /data/media
+    volumes:
+      - ${COLLAB_DATA_DIR:-./data}:/data:ro
+      - ${COLLAB_BACKUP_DIR:-./backups}:/backups
+
+volumes:
+  caddy_data:
+  caddy_config:

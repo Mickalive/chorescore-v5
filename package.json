@@ -12,7 +12,9 @@
     "test:web": "expo export --platform web --output-dir dist-web && node scripts/verify-web.cjs",
     "build:backend": "tsc -p backend/tsconfig.json",
     "test:backend": "npm run build:backend && node --test backend-tests/*.test.cjs",
-    "start:backend": "node dist-backend/backend/main.js"
+    "start:backend": "node dist-backend/backend/main.js",
+    "backup:collab": "node scripts/backend/backup.mjs",
+    "restore:collab": "node scripts/backend/restore.mjs"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.1.1",
