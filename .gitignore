@@ -30,3 +30,7 @@ expo-env.d.ts
 dist-backend/
 
 .opencode-ci/
+
+# Python verification output is generated, never product source.
+__pycache__/
+*.py[cod]

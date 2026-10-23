@@ -14,6 +14,14 @@ La demande initiale porte sur TOUT le produit promis : groupes et membres nommé
 
 Les instructions accessibles du propriétaire exigent un produit complet, réalisé sur GitHub par OpenCode gratuit, une seule PR intégrée, des étapes successives sans relance manuelle pour chaque petite tranche et des vérifications réelles. Lire également les corps et commentaires de l'issue #1 et de la PR #2 s'ils sont disponibles dans .opencode-ci/. Les autres conversations du projet ChatGPT ne sont pas accessibles à ce runner : ne jamais prétendre les avoir consultées.
 
+## Reprise après la série du 23 octobre — priorité à l'échec prouvé
+
+Les huit passages de 39972259726 sont terminés. Deux clients SQLite persistants, résolution UI des conflits et médias privés HTTP ont maintenant du code et des tests. Ne pas refaire ces composants sans défaut prouvé. Le dernier run Android 39998336273, HEAD 76e36f86, échoue à `Verify installed release APK on Android` après compilation. Télécharger/consulter ses vrais logs et preuves dans .opencode-ci/, identifier l'assertion exacte et corriger le produit ou le pilote suivant la preuve. Ne pas répéter aveuglément la précédente correction groups.memberInput : relever la panne de CE run.
+
+Le dernier commit 76e36f86 ne contenait qu'un __pycache__ généré : ce n'est aucune avancée produit. Aucun .pyc/cache généré ne doit être livré. Ne pas masquer une ANR ChoreScore : le helper dismiss_system_dialog actuel traite trop largement tout « isn't responding ». Restreindre toute récupération aux processus système explicitement identifiés ; conserver une ANR de l'app comme échec et diagnostic. Ne retirer aucune étape du scénario étendu.
+
+Une fois le rouge corrigé, reprendre les fonctions encore ouvertes de la consolidation inter-dépôts : preuves natives photo/rappel/compensation, authentification Apple/Facebook au lieu de retours null, configuration Android Google (package/empreinte de signature/OAuth), déploiement reproductible HTTPS+stockage+backup, coûts/pagination et finition visuelle. Le manque d'un compte Google administrable empêche de créer le projet Firebase depuis ce runner, mais pas d'implémenter ces parties indépendantes. Ne pas utiliser ce manque pour arrêter le reste du travail, ni exposer un backend public non authentifié.
+
 ## Ordre de livraison obligatoire
 
 Chaque passage reprend VERIFICATION.md et le code livré par le précédent. Ne pas choisir une petite amélioration périphérique quand le parcours prioritaire reste absent. Ne pas refaire un audit général.
