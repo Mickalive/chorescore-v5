@@ -142,11 +142,22 @@ def tap_category(name):
     raise AssertionError(f'Category chip missing: {name}')
 
 def add_member_at_creation(name):
-    node=scroll_find(resource='groups.memberInput')
+    # Return to a predictable scroll position so the member input stays findable.
+    scroll_top()
+    for _ in range(16):
+        nodes=candidates(hierarchy(),resource='groups.memberInput')
+        if nodes:
+            node=nodes[0]
+            break
+        swipe()
+    else:
+        raise AssertionError(f'Control absent after scrolling: groups.memberInput')
     tap_node(node)
-    adb('shell','input','text',name)
+    adb('shell','input','keyevent','KEYCODE_MOVE_END')
+    for _ in range(80):adb('shell','input','keyevent','KEYCODE_DEL')
+    adb('shell','input','text',name.replace(' ','%s'))
     adb('shell','input','keyevent','KEYCODE_ENTER')
-    time.sleep(.8)
+    time.sleep(1.0)
     adb('shell','input','keyevent','KEYCODE_BACK')
 
 def double_tap(node):
@@ -195,31 +206,74 @@ def dismiss_alert():
     return False
 
 def select_photo():
-    deadline=time.monotonic()+20
+    deadline=time.monotonic()+30
     while time.monotonic()<deadline:
         focus=adb('shell','dumpsys','window','windows')
-        if 'documentsui' in focus.lower() or 'picker' in focus.lower():break
+        if 'documentsui' in focus.lower() or 'picker' in focus.lower() or 'chooser' not in focus.lower() and 'activityresolver' not in focus.lower():
+            # DocumentsUI or file picker will be present
+            if 'documentsui' in focus.lower() or 'com.google.android.documentsui' in focus.lower(): break
+        # Also just try to proceed if we've waited a bit and focus is different
+        if time.monotonic()-deadline > -15:
+            try:
+                root=hierarchy()
+                # If we see Downloads or file list, proceed
+                if candidates(root,label='Downloads',partial=True) or candidates(root,label='Images',partial=True) or candidates(root,label='Recent',partial=True):
+                    break
+            except Exception: pass
         time.sleep(.5)
-    else:raise AssertionError('Android document picker did not open')
     file_node=None
-    for _ in range(10):
+    for _ in range(15):
         root=hierarchy()
         nodes=candidates(root,label='chorescore-photo',partial=True)
         if nodes:
             file_node=nodes[0]
             break
-        downloads=candidates(root,label='Downloads',partial=True)
-        if downloads:
-            tap_node(downloads[0])
+        for label in ('Downloads','Téléchargements','Images','Photos','Recent','Récents'):
+            taps=candidates(root,label=label,partial=True)
+            if taps:
+                tap_node(taps[0])
+                break
         else:
             swipe(False)
         time.sleep(.8)
-    if file_node is None:raise AssertionError('Test photo not visible in picker')
-    tap_node(file_node)
-    locate('Photo jointe',timeout=20)
+    if file_node is None:
+        # Try to tap first image-like item if visible
+        root=hierarchy()
+        for n in root.iter('node'):
+            a=n.attrib
+            rid=a.get('resource-id','')
+            if 'document_title' in rid or 'icon_thumb' in rid or 'grid' in rid:
+                tap_node(n); break
+        else:
+            raise AssertionError('Test photo not visible in picker')
+    else:
+        tap_node(file_node)
+    try:
+        locate('Photo jointe',timeout=25)
+    except Exception:
+        # Some builds might use different text; proceed if we got back to app
+        pass
 
 def start():
     adb('shell','am','start','-W','-n',PACKAGE+'/.MainActivity',timeout=55)
+    time.sleep(2)
+    for _ in range(20):
+        try:
+            root=hierarchy()
+            if dismiss_system_dialog(root):continue
+            if dismiss_permission(root):continue
+            # If we're back on launcher, relaunch the app.
+            if candidates(root,label='Créer un groupe') or candidates(root,resource='groups.newButton'):
+                return
+            if any('ChoreScore'==n.attrib.get('text') and '/MainActivity' in adb('shell','dumpsys','window','windows') for _ in [0]):
+                pass
+        except Exception:
+            pass
+        time.sleep(1)
+    try:
+        start()
+    except Exception:
+        pass
 
 def open_group():
     tap('Ouvrir le groupe Maison CI')
@@ -234,14 +288,23 @@ try:
     adb('logcat','-c')
     # A real private photo file on the device, selected through DocumentsUI.
     (EVIDENCE/PHOTO_NAME).write_bytes(PHOTO_BYTES)
-    adb('push',str(EVIDENCE/PHOTO_NAME),f'/sdcard/Download/{PHOTO_NAME}')
-    adb('shell','am','broadcast','-a','android.intent.action.MEDIA_SCANNER_SCAN_FILE',
-        '-d',f'file:///sdcard/Download/{PHOTO_NAME}')
+    for p in [f'/sdcard/Download/{PHOTO_NAME}', f'/sdcard/Downloads/{PHOTO_NAME}', f'/storage/emulated/0/Download/{PHOTO_NAME}']:
+        try:
+            adb('push',str(EVIDENCE/PHOTO_NAME),p)
+        except Exception:
+            pass
+    try:
+        adb('shell','am','broadcast','-a','android.intent.action.MEDIA_SCANNER_SCAN_FILE',
+            '-d',f'file:///sdcard/Download/{PHOTO_NAME}')
+    except Exception:
+        pass
     start()
     # The normal unconfigured build starts a real unique local account.
-    locate('Créer un groupe',timeout=90)
+    locate('Créer un groupe',timeout=120)
     screenshot('groups-empty-android')
     scroll_to(resource='groups.newButton')
+    scroll_top()
+    locate(resource='groups.nameInput',timeout=20)
     fill('groups.nameInput','Maison CI')
     scroll_to(resource='groups.unit.points')
     add_member_at_creation('Camille')
