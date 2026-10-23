@@ -282,6 +282,7 @@ export default function GroupOptionsScreen() {
                       value={editingMemberName}
                       onChangeText={setEditingMemberName}
                       onSubmitEditing={handleRenameMember}
+                      submitBehavior="blurAndSubmit"
                       returnKeyType="done"
                       autoFocus
                       testID="groupOptions.memberRenameInput"
@@ -346,6 +347,7 @@ export default function GroupOptionsScreen() {
               placeholder={t('groupOptions.addMemberPlaceholder')}
               placeholderTextColor={colors.textMuted}
               onSubmitEditing={handleAddMember}
+              submitBehavior="blurAndSubmit"
               returnKeyType="done"
             />
             <Button

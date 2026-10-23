@@ -228,6 +228,7 @@ export default function HomeScreen() {
                 placeholder={t('groups.memberNamePlaceholder')}
                 placeholderTextColor={colors.textMuted}
                 onSubmitEditing={handleAddMemberName}
+                submitBehavior="blurAndSubmit"
                 returnKeyType="done"
                 maxLength={60}
               />

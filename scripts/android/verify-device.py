@@ -106,15 +106,26 @@ def dismiss_system_dialog(root):
     return False
 
 def keyboard_shown():
-    dump=adb('shell','dumpsys','input_method')
-    return bool(re.search(r'mInputShown=true|mIsInputViewShown=true',dump))
+    """Report whether the IME currently owns the focused window.
+
+    `dumpsys input_method` keeps stale mInputShown flags while a React Native
+    text field re-attaches, which previously made the journey press BACK after
+    Enter had already hidden the keyboard. BACK then closed MainActivity and
+    left the Pixel Launcher on screen. The focused-window line is the same
+    signal Android uses to route BACK, so it is the only safe indicator here.
+    """
+    dump=adb('shell','dumpsys','window','windows')
+    focus=[line for line in dump.splitlines() if 'mCurrentFocus=' in line]
+    if focus:
+        return any('InputMethod' in line for line in focus)
+    fallback=adb('shell','dumpsys','input_method')
+    return bool(re.search(r'mInputShown=true|mIsInputViewShown=true',fallback))
 
 def hide_keyboard():
-    """Dismiss the IME only when it is actually shown.
+    """Dismiss the IME only while it really has input focus.
 
-    Sending KEYCODE_BACK unconditionally on the inline group form exits the app
-    to the launcher once Enter has already closed the keyboard. That was the
-    real cause of the previous groups.memberInput failure.
+    A BACK press sent when the IME is already gone reaches MainActivity and
+    exits the app. Re-check the focused window immediately before pressing.
     """
     if keyboard_shown():
         adb('shell','input','keyevent','KEYCODE_BACK')
