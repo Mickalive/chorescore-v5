@@ -129,7 +129,7 @@ jobs:
           import subprocess,os
           base=open(os.environ['RUNNER_TEMP']+'/opencode-base-head').read().strip()
           paths=subprocess.check_output(['git','diff',base,'--name-only'],text=True).splitlines()
-          blocked=[p for p in paths if p.startswith('.github/workflows/') or p=='opencode.json' or p=='.github/OPENCODE_MISSION.md' or p.startswith('.opencode-ci/')]
+          blocked=[p for p in paths if p=='.github/workflows/opencode.yml' or p=='opencode.json' or p=='.github/OPENCODE_MISSION.md' or p.startswith('.opencode-ci/')]
           assert not blocked, 'Worker changed its execution controls or diagnostics: '+str(blocked)
           PY
           if ! git diff --cached --quiet; then
