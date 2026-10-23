@@ -12,7 +12,7 @@
 
 ## Mission sur GitHub
 
-Suivre [l’issue nº 1](https://github.com/Mickalive/chorescore-v5/issues/1) et poursuivre la [PR unique nº 2](https://github.com/Mickalive/chorescore-v5/pull/2). [GITHUB_DELIVERY.md](GITHUB_DELIVERY.md) précise le rôle de Codex, les contrôles GitHub Actions, les preuves attendues et l’ordre de reprise. Une consigne publiée ne constitue pas à elle seule une exécution autonome.
+Suivre [l’issue nº 1](https://github.com/Mickalive/chorescore-v5/issues/1) et poursuivre la [PR unique nº 2](https://github.com/Mickalive/chorescore-v5/pull/2). [GITHUB_DELIVERY.md](GITHUB_DELIVERY.md) décrit le worker **OpenCode gratuit**, son lancement dans GitHub, les contrôles et les limites de gratuité. Aucun environnement Codex à publier. Une consigne publiée ne constitue pas à elle seule une exécution autonome.
 
 ## Lire avant de coder
 
