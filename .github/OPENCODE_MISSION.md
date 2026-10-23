@@ -4,7 +4,7 @@ Tu es l’agent OpenCode chargé de réaliser la mission produit de l’issue #1
 
 ## Une mission, une branche, des tranches vérifiées
 
-Continuer `feat/product-reconstruction`, PR #2. Ne pas créer une autre PR, fermer l’issue, fusionner, publier une release, déclencher des workers ou modifier les workflows/le dispositif OpenCode. Pas de boucle planifiée. Le runner conserve et pousse les changements ; tu n’as pas besoin de jeton GitHub. Ne cherche pas de secrets.
+Continuer `feat/product-reconstruction`, PR #2. Ne pas créer une autre PR, fermer l’issue, fusionner, publier une release, déclencher des workers ou modifier le workflow/dispositif OpenCode. Le workflow Android existant peut être corrigé si nécessaire, sans retirer les contrôles ni en ajouter un deuxième. Pas de boucle planifiée. Le runner conserve et pousse les changements ; tu n’as pas besoin de jeton GitHub. Ne cherche pas de secrets.
 
 Lire AGENTS.md, CODEX_MISSION.md (nom historique du cahier de mission), PRODUCT.md, DELIVERY.md, VERIFICATION.md, docs/V4_CONSTITUTION.md et docs/V3_BACKEND_FRUGAL.md. L’interface de Mickalive/Chorescore V1 sert de référence, sans reprendre premium, classement ou chrono. Préserver les données et invariants comptables.
 
@@ -18,4 +18,4 @@ La demande initiale porte sur TOUT le produit promis : groupes et membres nommé
 
 Le backend HTTP/SQLite existe et est testé séparément, mais n’est pas encore déployé ou raccordé au client. LocalSyncAdapter est encore indisponible. Il n’existe pas de projet Firebase configuré. Terminer le code indépendant sans fausse synchro, identités fictives présentées comme OAuth ni nouveau service payant ; décrire précisément une véritable dépendance à un compte personnel si nécessaire.
 
-Ne pas modifier `.github/workflows/`, `opencode.json` ou ce mandat pour contourner les contrôles. Ne pas créer de données personnelles, clés ou jetons dans le dépôt. N’exécuter aucun déploiement payant.
+Ne pas modifier `.github/workflows/opencode.yml`, `opencode.json` ou ce mandat pour contourner les contrôles. Ne pas créer de données personnelles, clés ou jetons dans le dépôt. N’exécuter aucun déploiement payant.
