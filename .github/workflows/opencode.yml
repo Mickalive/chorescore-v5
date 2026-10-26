@@ -336,10 +336,11 @@ jobs:
 
           timeout 1500 opencode run --agent build --model opencode/big-pickle --format json "PRIORITY: read
           .opencode-ci/repair-context.md and restored-candidate.json first. The strongest tested source is already restored; do
-          not restart from baseline or apply an older regression. Fix the failing real Firebase journey first. Check resource
-          names in commit JSON versus encoded HTTP URLs and use real Node HTTP under jest-expo. Do not change Git
-          metadata/history; the runner owns commits. Do not write another audit. Preserve security checks and zero billing. Then
-          follow the mission and newest issue instructions.
+          not restart from baseline or apply an older regression. Fix the first still-failing acceptance gate shown in
+          repair-context. When Firebase is not yet validated, check raw resource names in commit JSON versus encoded HTTP URLs and
+          real Node HTTP under jest-expo. Once Firebase passes, fix the latest native failure and then the remaining product
+          criteria. Do not change Git metadata/history; the runner owns commits. Do not write another audit. Preserve security
+          checks and zero billing. Then follow the mission and newest issue instructions.
 
           $(cat .github/OPENCODE_MISSION.md)" | tee "$RUNNER_TEMP/opencode-work.jsonl"
 
@@ -691,8 +692,8 @@ jobs:
           fi
 
           if [ "$(git rev-parse HEAD)" = "$(cat "$RUNNER_TEMP/opencode-base-head")" ]; then
-            echo 'No source change: no commit or claim of delivery.' >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+            echo '::error::No implemented repair: no commit, no delivery claim. Preserve diagnostics for the next passage.'
+            exit 1
           fi
 
           gh auth setup-git
@@ -786,7 +787,7 @@ jobs:
           retention-days: 7
   firestore_audit:
     name: Audit réel des règles Firestore — aucun déploiement
-    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'audit'
+    if: github.event.repository.private == false && (github.event_name == 'workflow_dispatch' && inputs.mode == 'audit')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -1022,7 +1023,7 @@ jobs:
           if-no-files-found: error
   diagnostic:
     name: Diagnostic des blocages et candidats conservés
-    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'diagnostic'
+    if: github.event.repository.private == false && (github.event_name == 'workflow_dispatch' && inputs.mode == 'diagnostic')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
