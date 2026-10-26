@@ -21,7 +21,7 @@ name: OpenCode gratuit — mission ChoreScore
       audit_ref:
         description: Commit audité sans modifier la branche produit
         type: string
-        default: e1d088f9
+        default: e1d088f9f03ff2b5f4550fcdea340401088e0677
   issue_comment:
     types:
       - created
@@ -480,9 +480,11 @@ jobs:
         env:
           FIREBASE_EMULATORS_PATH: '${{ runner.temp }}/firestore-emulators'
           CI: 'true'
-        run: >-
+        run: >
+          set -o pipefail
+
           npm exec --yes --package=firebase-tools@14.22.0 -- firebase emulators:exec --project demo-chorescore-audit --config
-          firebase.json --only firestore 'python3 audit.py'
+          firebase.json --only firestore 'python3 -u audit.py' 2>&1 | tee /tmp/chorescore-audit-firestore/execution.log
       - name: Require hostile writes to be rejected
         run: |-
           python3 - <<'PY'
@@ -497,6 +499,16 @@ jobs:
            else:
             print('::notice::'+json.dumps(row))
           raise SystemExit(1 if bad else 0)
+          PY
+      - name: Expose precise audit failure diagnostics
+        if: failure()
+        run: |-
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('/tmp/chorescore-audit-firestore/execution.log')
+          if p.exists():
+           for line in p.read_text(errors='replace').splitlines()[-24:]:
+            print('::error::'+line.replace('%','%25').replace('\r','%0D'))
           PY
       - name: Preserve real audit evidence
         if: always()
