@@ -2,12 +2,10 @@ rules_version = '2';
 
 // ChoreScore V5 — Firestore Spark authority.
 //
-// Rules enforce tenant isolation, owner-only settings and invitation proof.
-// The collaboration transport also validates ledger invariants before writing,
-// but Firestore cannot run the application's domain code: a malicious client
-// with a valid member token could still forge arbitrary record payloads. That
-// limitation is documented in VERIFICATION.md and is why the SQLite authority
-// remains the reference implementation.
+// Every client write below is still subject to the application's domain
+// validation in FirebaseSyncTransport. These rules additionally make the
+// authority itself reject forged tenants, revisions, invitation identities,
+// completed-todo rewrites, event payloads and media deletion by other accounts.
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() {
@@ -18,15 +16,23 @@ service cloud.firestore {
       return /databases/$(database)/documents/groups/$(groupId);
     }
 
-    function isMember(groupId) {
+    function recordPath(groupId, recordId) {
+      return /databases/$(database)/documents/groups/$(groupId)/records/$(recordId);
+    }
+
+    function currentMember(groupId) {
       return signedIn()
         && exists(groupPath(groupId))
         && request.auth.uid in get(groupPath(groupId)).data.memberUids;
     }
 
+    function isMember(groupId) {
+      return currentMember(groupId)
+        && get(groupPath(groupId)).data.get('deleted', false) == false;
+    }
+
     function isOwner(groupId) {
-      return signedIn()
-        && exists(groupPath(groupId))
+      return isMember(groupId)
         && get(groupPath(groupId)).data.ownerId == request.auth.uid;
     }
 
@@ -53,6 +59,8 @@ service cloud.firestore {
 
     function joinAllowed(groupId) {
       return signedIn()
+        && exists(groupPath(groupId))
+        && get(groupPath(groupId)).data.get('deleted', false) == false
         && exists(joinRequestPath(groupId, request.auth.uid))
         && get(joinRequestPath(groupId, request.auth.uid)).data.groupId == groupId
         && inviteAllows(
@@ -73,15 +81,21 @@ service cloud.firestore {
     }
 
     function selfOnboarding(groupId) {
+      // The member record update in the same commit proves the accepted
+      // identity: memberIdentity() only lets the invited member claim an
+      // unlinked record, and the invite id below must equal that member.
       return signedIn()
         && request.auth.uid in request.resource.data.access
         && request.resource.data.access[request.auth.uid].role == 'MEMBER'
         && 'inviteHash' in request.resource.data.access[request.auth.uid]
-        && inviteAllows(
+        && request.resource.data.get('deleted', false) == false
+        && joinAllowed(groupId)
+        && request.resource.data.access[request.auth.uid].inviteHash
+          == get(joinRequestPath(groupId, request.auth.uid)).data.inviteHash
+        && get(invitePath(
           groupId,
-          request.resource.data.access[request.auth.uid].inviteHash,
-          request.auth.uid
-        )
+          request.resource.data.access[request.auth.uid].inviteHash
+        )).data.memberId == request.resource.data.access[request.auth.uid].memberId
         && request.resource.data.access.diff(resource.data.access).addedKeys().hasOnly([request.auth.uid])
         && request.resource.data.access.diff(resource.data.access).addedKeys().size() == 1
         && request.resource.data.access.diff(resource.data.access).removedKeys().size() == 0
@@ -90,30 +104,162 @@ service cloud.firestore {
         && request.resource.data.household == resource.data.household;
     }
 
-    function onlyRevisionChanged(groupId) {
+    function onlyRevisionChanged() {
       return request.resource.data.access == resource.data.access
         && request.resource.data.memberUids == resource.data.memberUids
-        && request.resource.data.household == resource.data.household;
+        && request.resource.data.household == resource.data.household
+        && request.resource.data.get('deleted', false) == resource.data.get('deleted', false);
     }
 
-    function validRecord(groupId) {
-      return request.resource.data.collection in [
-          'contribution_entries', 'expense_entries', 'todo_items', 'persistent_tasks',
-          'categories', 'members', 'households', 'memberships', 'settlements'
-        ]
+    function ownerUpdate(groupId) {
+      return request.resource.data.access == resource.data.access
+        && request.resource.data.memberUids == resource.data.memberUids
+        && request.resource.data.get('deleted', false) == false
+        && getAfter(recordPath(groupId, 'households:' + groupId)) != null
+        && getAfter(recordPath(groupId, 'households:' + groupId)).data.value
+          == request.resource.data.household;
+    }
+
+    function ownerDeletion(groupId) {
+      return request.resource.data.get('deleted', false) == true
+        && resource.data.get('deleted', false) == false
+        && request.resource.data.access == resource.data.access
+        && request.resource.data.memberUids == resource.data.memberUids
+        && getAfter(recordPath(groupId, 'households:' + groupId)) != null
+        && getAfter(recordPath(groupId, 'households:' + groupId)).data.value == null;
+    }
+
+    function writableCollection(collection) {
+      return collection in [
+        'contribution_entries', 'expense_entries', 'todo_items', 'persistent_tasks',
+        'categories', 'members', 'households', 'memberships', 'settlements'
+      ];
+    }
+
+    function canAppend(groupId) {
+      return signedIn()
+        && isMemberOrJoining(groupId)
+        && getAfter(groupPath(groupId)) != null
+        && getAfter(groupPath(groupId)).data.revision == get(groupPath(groupId)).data.revision + 1;
+    }
+
+    function validRecord(groupId, recordId) {
+      return request.resource.data.keys().hasOnly([
+          'id', 'collection', 'version', 'value', 'updatedAt', 'revision'
+        ])
+        && request.resource.data.id is string
+        && request.resource.data.id.matches('^[A-Za-z0-9_-]{1,128}$')
+        && writableCollection(request.resource.data.collection)
+        && recordId == request.resource.data.collection + ':' + request.resource.data.id
+        && request.resource.data.version is int
+        && request.resource.data.version >= 1
+        && request.resource.data.updatedAt is string
+        && request.resource.data.revision is int
+        && request.resource.data.revision == getAfter(groupPath(groupId)).data.revision
         && (
           request.resource.data.value == null
           || (
+            request.resource.data.value.id == request.resource.data.id
+            && (
+              request.resource.data.collection == 'households'
+                ? request.resource.data.value.id == groupId
+                  && request.resource.data.value.ownerId == get(groupPath(groupId)).data.ownerId
+                : request.resource.data.value.householdId == groupId
+            )
+          )
+        )
+        && (
+          request.resource.data.collection != 'households'
+          || isOwner(groupId)
+        )
+        && (
+          request.resource.data.value != null
+          || request.resource.data.collection in [
+            'contribution_entries', 'expense_entries', 'todo_items',
+            'persistent_tasks', 'categories'
+          ]
+          || (
             request.resource.data.collection == 'households'
-              ? request.resource.data.value.id == groupId
-              : request.resource.data.value.householdId == groupId
+            && getAfter(groupPath(groupId)).data.get('deleted', false) == true
           )
         );
     }
 
+    function memberIdentity(groupId, recordId) {
+      return request.resource.data.collection != 'members'
+        || (
+          request.resource.data.value != null
+          && (
+            request.resource.data.value.userId == null
+            || (
+              request.resource.data.value.userId == request.auth.uid
+              && 'members:' + getAfter(groupPath(groupId)).data.access[request.auth.uid].memberId == recordId
+            )
+          )
+          && (
+            !exists(recordPath(groupId, recordId))
+            || resource.data.value.userId == request.resource.data.value.userId
+            || (
+              resource.data.value.userId == null
+              && request.resource.data.value.userId == request.auth.uid
+              && 'members:' + getAfter(groupPath(groupId)).data.access[request.auth.uid].memberId == recordId
+            )
+          )
+        );
+    }
+
+    function todoNotReopened(groupId, recordId) {
+      return request.resource.data.collection != 'todo_items'
+        || !exists(recordPath(groupId, recordId))
+        || resource.data.value == null
+        || resource.data.value.status != 'completed'
+        || (
+          request.resource.data.value != null
+          && request.resource.data.value.status == 'completed'
+        );
+    }
+
+    function validEventChange(groupId, revision, index) {
+      return revision.matches('^[0-9]+$')
+        && index.matches('^[0-9]+$')
+        && request.resource.data.keys().hasOnly([
+          'revision', 'index', 'collection', 'id', 'version', 'value'
+        ])
+        && request.resource.data.revision is int
+        && request.resource.data.revision == getAfter(groupPath(groupId)).data.revision
+        && string(request.resource.data.revision) == revision
+        && request.resource.data.index is int
+        && request.resource.data.index >= 0
+        && string(request.resource.data.index) == index
+        && writableCollection(request.resource.data.collection)
+        && request.resource.data.id is string
+        && request.resource.data.id.matches('^[A-Za-z0-9_-]{1,128}$')
+        && request.resource.data.version is int
+        && getAfter(recordPath(
+          groupId,
+          request.resource.data.collection + ':' + request.resource.data.id
+        )) != null
+        && getAfter(recordPath(
+          groupId,
+          request.resource.data.collection + ':' + request.resource.data.id
+        )).data.version == request.resource.data.version
+        && getAfter(recordPath(
+          groupId,
+          request.resource.data.collection + ':' + request.resource.data.id
+        )).data.collection == request.resource.data.collection
+        && getAfter(recordPath(
+          groupId,
+          request.resource.data.collection + ':' + request.resource.data.id
+        )).data.id == request.resource.data.id
+        && getAfter(recordPath(
+          groupId,
+          request.resource.data.collection + ':' + request.resource.data.id
+        )).data.value == request.resource.data.value;
+    }
+
     match /groups/{groupId} {
-      allow get: if signedIn() && (isMember(groupId) || joinAllowed(groupId));
-      allow list: if signedIn() && request.auth.uid in resource.data.memberUids;
+      allow get: if signedIn() && (currentMember(groupId) || joinAllowed(groupId));
+      allow list: if currentMember(groupId);
       allow create: if signedIn()
         && request.resource.data.ownerId == request.auth.uid
         && request.resource.data.household.ownerId == request.auth.uid
@@ -124,28 +270,59 @@ service cloud.firestore {
         && request.resource.data.access[request.auth.uid].role == 'OWNER'
         && request.resource.data.access[request.auth.uid].memberId is string;
       allow update: if signedIn()
+        && resource.data.get('deleted', false) == false
         && request.resource.data.ownerId == resource.data.ownerId
         && request.resource.data.createdAt == resource.data.createdAt
         && request.resource.data.revision == resource.data.revision + 1
         && (
-          resource.data.ownerId == request.auth.uid
-          || (isMember(groupId) && onlyRevisionChanged(groupId))
+          (isOwner(groupId) && ownerUpdate(groupId))
+          || (isOwner(groupId) && ownerDeletion(groupId))
+          || (isMember(groupId) && onlyRevisionChanged())
           || selfOnboarding(groupId)
         );
       allow delete: if false;
 
       match /records/{recordId} {
+        // A joining account must read the named member record inside the same
+        // transaction that links it; it becomes a member in that commit.
         allow read: if isMemberOrJoining(groupId);
-        allow create, update: if isMemberOrJoining(groupId) && validRecord(groupId);
-        allow delete: if isMember(groupId);
+        allow create: if canAppend(groupId)
+          && !exists(recordPath(groupId, recordId))
+          && validRecord(groupId, recordId)
+          && request.resource.data.version == 1
+          && memberIdentity(groupId, recordId);
+        allow update: if canAppend(groupId)
+          && exists(recordPath(groupId, recordId))
+          && validRecord(groupId, recordId)
+          && request.resource.data.version == resource.data.version + 1
+          && memberIdentity(groupId, recordId)
+          && todoNotReopened(groupId, recordId);
+        allow delete: if false;
       }
 
       match /events/{revision} {
-        allow read: if isMemberOrJoining(groupId);
+        allow read: if currentMember(groupId);
         allow create: if isMemberOrJoining(groupId)
+          && revision.matches('^[0-9]+$')
+          && request.resource.data.keys().hasOnly([
+            'revision', 'groupId', 'createdAt', 'count'
+          ])
           && request.resource.data.revision is int
-          && request.resource.data.changes is list;
+          && string(request.resource.data.revision) == revision
+          && request.resource.data.revision == getAfter(groupPath(groupId)).data.revision
+          && getAfter(groupPath(groupId)).data.revision == get(groupPath(groupId)).data.revision + 1
+          && request.resource.data.groupId == groupId
+          && request.resource.data.createdAt is string
+          && request.resource.data.count is int
+          && request.resource.data.count >= 1
+          && request.resource.data.count <= 100;
         allow update, delete: if false;
+
+        match /changes/{index} {
+          allow read: if currentMember(groupId);
+          allow create: if isMemberOrJoining(groupId) && validEventChange(groupId, revision, index);
+          allow update, delete: if false;
+        }
       }
 
       match /mutations/{operationId} {
@@ -159,11 +336,18 @@ service cloud.firestore {
         allow get: if signedIn();
         allow list: if isOwner(groupId);
         allow create: if isOwner(groupId)
+          && request.resource.data.keys().hasOnly([
+            'groupId', 'memberId', 'expiresAt', 'acceptedBy', 'revoked', 'createdAt'
+          ])
           && request.resource.data.groupId == groupId
-          && request.resource.data.revoked == false;
+          && request.resource.data.memberId is string
+          && request.resource.data.revoked == false
+          && get(recordPath(groupId, 'members:' + request.resource.data.memberId)) != null
+          && get(recordPath(groupId, 'members:' + request.resource.data.memberId)).data.value.userId == null;
         allow update: if isOwner(groupId)
           || (
             signedIn()
+            && !get(groupPath(groupId)).data.get('deleted', false)
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['acceptedBy'])
             && request.resource.data.acceptedBy == request.auth.uid
             && resource.data.acceptedBy == null
@@ -178,10 +362,9 @@ service cloud.firestore {
         allow create: if isMember(groupId)
           && request.resource.data.uploadedBy == request.auth.uid
           && request.resource.data.data is string;
-        allow update: if isMember(groupId)
-          && resource.data.uploadedBy == request.auth.uid
-          && request.resource.data.sha256 == resource.data.sha256;
-        allow delete: if isMember(groupId);
+        allow update: if false;
+        allow delete: if isMember(groupId)
+          && resource.data.uploadedBy == request.auth.uid;
       }
     }
 
@@ -200,6 +383,7 @@ service cloud.firestore {
         && request.resource.data.uid == request.auth.uid
         && joinRequestId == request.resource.data.groupId + '_' + request.auth.uid
         && request.resource.data.keys().hasOnly(['uid', 'groupId', 'inviteHash', 'createdAt'])
+        && !get(groupPath(request.resource.data.groupId)).data.get('deleted', false)
         && inviteAllows(
           request.resource.data.groupId,
           request.resource.data.inviteHash,

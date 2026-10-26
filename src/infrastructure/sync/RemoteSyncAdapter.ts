@@ -239,6 +239,12 @@ export class RemoteSyncAdapter implements SyncGateway {
     this.timers.delete(householdId);
   }
 
+  async deleteGroup(householdId: string): Promise<void> {
+    if (!this.isAvailable()) throw new Error('Synchronisation indisponible');
+    await this.request('POST', `/groups/${encodeURIComponent(householdId)}/delete`, {});
+    await this.pullChanges(householdId);
+  }
+
   async discoverGroups(userId: string): Promise<void> {
     if (!this.isAvailable()) return;
     const groups = await this.request<GroupRow[]>('GET', '/groups');
@@ -547,9 +553,9 @@ export class RemoteSyncAdapter implements SyncGateway {
         if (!response.events.length) break;
         let conflictDetected = false;
         for (const event of response.events) {
-          conflictDetected = (await this.applyEvent(householdId, event)) || conflictDetected;
+          conflictDetected = (await this.applyEvent(householdId, event, cursor)) || conflictDetected;
+          cursor = event.revision;
         }
-        cursor = response.events[response.events.length - 1].revision;
         state = {
           ...state,
           lastRevision: cursor,
@@ -578,7 +584,65 @@ export class RemoteSyncAdapter implements SyncGateway {
     }
   }
 
-  private async applyEvent(householdId: string, event: DeltaEvent): Promise<boolean> {
+  private validateDelta(householdId: string, event: DeltaEvent, cursor: number): void {
+    if (!event || typeof event !== 'object') throw new Error('Delta distant invalide');
+    const revision = Number(event.revision);
+    if (!Number.isSafeInteger(revision) || revision <= cursor) {
+      throw new Error('Révision de delta incohérente');
+    }
+    if (!Array.isArray(event.changes) || event.changes.length === 0 || event.changes.length > BATCH_LIMIT) {
+      throw new Error('Lot de delta invalide');
+    }
+    const allowed = new Set<string>([
+      ...WRITABLE,
+      'memberships',
+      'invitations',
+    ]);
+    const seen = new Set<string>();
+    for (const raw of event.changes as unknown[]) {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+        throw new Error('Changement distant invalide');
+      }
+      const change = raw as Partial<ServerChange>;
+      if (typeof change.collection !== 'string' || !allowed.has(change.collection)) {
+        throw new Error('Collection distante refusée');
+      }
+      if (typeof change.id !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(change.id)) {
+        throw new Error('Identifiant distant invalide');
+      }
+      if (!Number.isSafeInteger(change.version) || Number(change.version) < 1) {
+        throw new Error('Version distante invalide');
+      }
+      const key = `${change.collection}:${change.id}`;
+      if (seen.has(key)) throw new Error('Changement distant dupliqué');
+      seen.add(key);
+      const value = change.value;
+      if (value === null) {
+        if (change.collection === 'households' && change.id !== householdId) {
+          throw new Error('Suppression de foyer hors tenant refusée');
+        }
+        continue;
+      }
+      if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        throw new Error('Valeur distante invalide');
+      }
+      const payload = value as Record<string, unknown>;
+      if (payload.id !== change.id) throw new Error('Identifiant de charge utile incohérent');
+      if (change.collection === 'households') {
+        if (change.id !== householdId || payload.id !== householdId) {
+          throw new Error('Foyer distant hors tenant refusé');
+        }
+        if (typeof payload.ownerId !== 'string' || payload.ownerId.length === 0) {
+          throw new Error('Propriétaire de foyer distant invalide');
+        }
+      } else if (payload.householdId !== householdId) {
+        throw new Error('Charge utile distante hors tenant refusée');
+      }
+    }
+  }
+
+  private async applyEvent(householdId: string, event: DeltaEvent, cursor: number): Promise<boolean> {
+    this.validateDelta(householdId, event, cursor);
     const repos = this.repos();
     const touched = new Set<SyncCollection>();
     let conflictDetected = false;

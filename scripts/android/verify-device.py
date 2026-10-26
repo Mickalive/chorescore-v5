@@ -50,6 +50,13 @@ def candidates(root, label=None, resource=None, partial=False):
 
 APP_PACKAGE = 'app.chorescore.v5'
 
+# On the 412x915 test profile an open IME can cover the bottom ~400 px. A drag
+# that starts or ends inside the IME is delivered to the keyboard instead of
+# the form ScrollView, so every journey gesture stays in this safe band.
+SWIPE_X = '206'
+SWIPE_LOW = '180'
+SWIPE_HIGH = '470'
+
 # Only these system processes may be recovered from automatically. The dialog
 # must both come from the Android system window and name one of these explicit
 # processes. Anything else (notably a ChoreScore ANR) stays visible and fails
@@ -151,10 +158,10 @@ def hide_keyboard():
     # a 300 px swipe moved the next field above the viewport in run 40328753105
     # (add.taskValue after add.taskLabel). If the short drag did not dismiss
     # the IME, the longer fallback is still followed by scroll_find's rewind.
-    adb('shell','input','swipe','206','520','206','430','220')
+    adb('shell','input','swipe',SWIPE_X,SWIPE_HIGH,SWIPE_X,'350','220')
     time.sleep(.5)
     if keyboard_shown():
-        adb('shell','input','swipe','206','500','206','200','300')
+        adb('shell','input','swipe',SWIPE_X,SWIPE_HIGH,SWIPE_X,SWIPE_LOW,'300')
         time.sleep(.5)
 
 def foreground_packages(root):
@@ -194,11 +201,16 @@ def tap(label=None,resource=None,partial=False):
     tap_node(locate(label,resource,partial))
 
 def swipe(up=True):
-    # Stay above the keyboard area (about 280 px tall on the 412x915 test
-    # profile) so scrolling works even while an IME is still animating away.
-    adb('shell','input','swipe','206','610' if up else '190','206','190' if up else '610','350')
+    # Stay above the IME band so scrolling works even while the keyboard is
+    # still visible or animating away. Dragging on the IME does nothing to the
+    # form, which is how add.taskValue was missed in run 40328753105.
+    adb('shell','input','swipe',SWIPE_X,SWIPE_HIGH if up else SWIPE_LOW,
+        SWIPE_X,SWIPE_LOW if up else SWIPE_HIGH,'350')
 
 def scroll_top():
+    # Recovery must not depend on scroll drags reaching the app while the IME
+    # is still up; dismiss it first, then rewind with gestures in the safe band.
+    hide_keyboard()
     for _ in range(12):
         root=hierarchy()
         if dismiss_system_dialog(root) or dismiss_permission(root):

@@ -23,7 +23,11 @@ export function DeleteGroupCard({household}: {household: Household}) {
     let removed = false;
     try {
       const todos = await repos.todos.getByHousehold(household.id);
-      await repos.withTransaction(() => repos.households.delete(household.id));
+      if (services.sync.isAvailable() && services.sync.deleteGroup) {
+        await services.sync.deleteGroup(household.id);
+      } else {
+        await repos.withTransaction(() => repos.households.delete(household.id));
+      }
       removed = true;
       let remindersFailed = false;
       for (const todo of todos) {

@@ -14,6 +14,7 @@ import { createGroupWithMembers } from '../src/application/use-cases/groupMember
 import { calculateContributionBalances } from '../src/domain/calculations/contributionLedger';
 import { calculateFinancialBalances } from '../src/domain/calculations/expenseLedger';
 import { InMemoryFirestore } from './helpers/InMemoryFirestore';
+import type { FirestoreValue } from '../src/infrastructure/firebase/FirestorePort';
 
 const firestore = new InMemoryFirestore();
 let clock = Date.parse('2026-10-26T10:00:00.000Z');
@@ -25,10 +26,10 @@ interface Client {
   sync: RemoteSyncAdapter;
 }
 
-function client(uid: string): Client {
+function client(uid: string, store: InMemoryFirestore = firestore): Client {
   const repos = createInMemoryRepositories();
   const transport = new FirebaseSyncTransport({
-    client: firestore,
+    client: store,
     getAccessToken: async () => `token-${uid}`,
     getUid: () => uid,
     now: () => clock,
@@ -97,7 +98,7 @@ test('Firebase authority shares exact ledgers, links invited members and isolate
   });
   const events = firestore
     .dump()
-    .filter(([path]) => path.startsWith(`groups/${hid}/events/`));
+    .filter(([path]) => path.startsWith(`groups/${hid}/events/`) && !path.includes('/changes/'));
   expect(events).toHaveLength(2);
   expect(Number(firestore.read(`groups/${hid}`)?.fields.revision)).toBe(events.length);
 
@@ -241,7 +242,7 @@ test('a revision-0 group left by a crash is repaired without duplicating members
     'memberships:membership-repair',
   ].sort());
   expect(Number(firestore.read(`groups/${groupId}`)?.fields.revision)).toBe(1);
-  expect(firestore.dump().filter(([path]) => path.startsWith(`groups/${groupId}/events/`))).toHaveLength(1);
+  expect(firestore.dump().filter(([path]) => path.startsWith(`groups/${groupId}/events/`) && !path.includes('/changes/'))).toHaveLength(1);
 
   const again = await transport.request('POST', '/groups', {
     id: groupId,
@@ -252,5 +253,69 @@ test('a revision-0 group left by a crash is repaired without duplicating members
     members: [{ id: 'member-half', name: 'Bob' }],
   });
   expect(again).toEqual({ id: groupId });
-  expect(firestore.dump().filter(([path]) => path.startsWith(`groups/${groupId}/events/`))).toHaveLength(1);
+  expect(firestore.dump().filter(([path]) => path.startsWith(`groups/${groupId}/events/`) && !path.includes('/changes/'))).toHaveLength(1);
+});
+
+
+test('a cross-tenant household delta is rejected before it can overwrite a private group', async () => {
+  const store = new InMemoryFirestore();
+  const alice = client('alice', store);
+
+  const shared = await createGroupWithMembers(alice.repos, {
+    name: 'Partagé',
+    owner: { userId: 'alice', displayName: 'Alice' },
+    memberNames: [],
+    contributionUnit: 'points',
+  });
+  const privateGroup = await createGroupWithMembers(alice.repos, {
+    name: 'Privé',
+    owner: { userId: 'alice', displayName: 'Alice' },
+    memberNames: [],
+    contributionUnit: 'minutes',
+  });
+  await alice.sync.ensureRemoteGroup(shared.household.id, 'alice');
+  const revision = Number(store.read(`groups/${shared.household.id}`)?.fields.revision);
+  store.seed(`groups/${shared.household.id}/events/${revision + 1}`, {
+    revision: revision + 1,
+    groupId: shared.household.id,
+    count: 1,
+    createdAt: new Date(clock).toISOString(),
+  });
+  store.seed(`groups/${shared.household.id}/events/${revision + 1}/changes/0`, {
+    revision: revision + 1,
+    index: 0,
+    collection: 'households',
+    id: privateGroup.household.id,
+    version: 1,
+    value: { ...privateGroup.household, name: 'Écrasé' } as unknown as FirestoreValue,
+  });
+
+  await expect(alice.sync.pullChanges(shared.household.id)).rejects.toThrow(/hors tenant/);
+  expect((await alice.repos.households.getById(privateGroup.household.id))?.name).toBe('Privé');
+  expect((await alice.repos.syncState.getGroupState(shared.household.id))?.lastRevision).toBe(revision);
+});
+
+test('owner deletion reaches both persistent clients instead of remaining local', async () => {
+  const store = new InMemoryFirestore();
+  const alice = client('alice', store);
+  const bob = client('bob', store);
+  const { household, namedMembers } = await createGroupWithMembers(alice.repos, {
+    name: 'À supprimer',
+    owner: { userId: 'alice', displayName: 'Alice' },
+    memberNames: ['Bob'],
+    contributionUnit: 'points',
+  });
+  const hid = household.id;
+  await alice.sync.ensureRemoteGroup(hid, 'alice');
+  const invitation = await alice.sync.createInvitation(hid, namedMembers[0].id);
+  await bob.sync.acceptInvitation(invitation.token);
+  expect(await bob.repos.households.getById(hid)).not.toBeNull();
+
+  await alice.sync.deleteGroup(hid);
+
+  expect(await alice.repos.households.getById(hid)).toBeNull();
+  expect(await bob.repos.households.getById(hid)).not.toBeNull();
+  await bob.sync.pullChanges(hid);
+  expect(await bob.repos.households.getById(hid)).toBeNull();
+  expect(store.read(`groups/${hid}`)?.fields.deleted).toBe(true);
 });

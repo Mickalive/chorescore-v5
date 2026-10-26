@@ -119,6 +119,8 @@ export interface SyncGateway {
   revokeInvitation?(householdId: string, token: string): Promise<void>;
   /** Remote collaboration: accept a server invitation and pull its group. */
   acceptInvitation?(token: string): Promise<RemoteInvitationAcceptance>;
+  /** Owner-only authoritative group deletion, propagated to other clients. */
+  deleteGroup?(householdId: string): Promise<void>;
   /**
    * Remote collaboration: complete a todo through the authority's single
    * atomic endpoint. The server derives the ledger entry and audit identity,

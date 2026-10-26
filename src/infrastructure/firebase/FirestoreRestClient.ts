@@ -114,7 +114,7 @@ class RestTransaction implements FirestoreTransaction {
   constructor(private readonly client: FirestoreRestClient, readonly id: string) {}
 
   get(path: string): Promise<FirestoreDocument | null> {
-    return this.client.readDocument(path, this.id);
+    return this.client.batchGetDocument(path, this.id);
   }
 
   query(
@@ -149,12 +149,21 @@ export class FirestoreRestClient implements FirestorePort {
     return this.projectId.length > 0;
   }
 
+  /**
+   * Canonical Firestore resource name. JSON bodies (commit names, batchGet,
+   * runQuery parent) must carry the literal document id, including the colon
+   * used by record documents such as `records/members:abc`. Percent-encoding
+   * here would make the rules see `members%3Aabc` and reject every write.
+   */
   private documentName(path: string): string {
-    return `projects/${this.projectId}/databases/(default)/documents/${path
-      .split('/')
-      .filter(Boolean)
-      .map((segment) => encodeURIComponent(segment))
-      .join('/')}`;
+    const segments = path.split('/').filter(Boolean);
+    return `projects/${this.projectId}/databases/(default)/documents/${segments.join('/')}`;
+  }
+
+  /** HTTP path for a document; only the URL segments are percent-encoded. */
+  private documentUrl(path: string): string {
+    const segments = this.documentName(path).split('/');
+    return `${API_ROOT}/${segments.map((segment) => encodeURIComponent(segment)).join('/')}`;
   }
 
   private async request<T>(url: string, init: RequestInit = {}): Promise<T> {
@@ -206,19 +215,45 @@ export class FirestoreRestClient implements FirestorePort {
     return this.readDocument(path);
   }
 
-  async readDocument(path: string, transaction?: string): Promise<FirestoreDocument | null> {
-    const suffix = transaction ? `?transaction=${encodeURIComponent(transaction)}` : '';
+  async readDocument(path: string): Promise<FirestoreDocument | null> {
     try {
       const document = await this.request<{
         name?: string;
         fields?: Record<string, Record<string, unknown>>;
         updateTime?: string;
-      }>(`${API_ROOT}/${this.documentName(path)}${suffix}`);
+      }>(this.documentUrl(path));
       return decodeDocument(document);
     } catch (error) {
       if (error instanceof FirestoreHttpError && error.status === 404) return null;
       throw error;
     }
+  }
+
+  /**
+   * Reads a document inside a transaction through `documents:batchGet`.
+   *
+   * The Firestore emulator hangs on `GET documents/{name}?transaction=...`
+   * (its JSON transcoder cannot map the BYTE_STRING query parameter). The
+   * batchGet body carries the same transaction id and works against both the
+   * emulator and production Firestore, so transactions stay real and atomic.
+   */
+  async batchGetDocument(path: string, transaction: string): Promise<FirestoreDocument | null> {
+    const rows = await this.request<Array<{
+      found?: {
+        name?: string;
+        fields?: Record<string, Record<string, unknown>>;
+        updateTime?: string;
+      };
+      missing?: string;
+    }>>(
+      `${API_ROOT}/projects/${encodeURIComponent(this.projectId)}/databases/(default)/documents:batchGet`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ documents: [this.documentName(path)], transaction }),
+      },
+    );
+    const found = rows.find((row) => row.found)?.found;
+    return found ? decodeDocument(found) : null;
   }
 
   async query(
@@ -238,9 +273,11 @@ export class FirestoreRestClient implements FirestorePort {
     const segments = collectionPath.split('/').filter(Boolean);
     const collectionId = segments.pop();
     if (!collectionId) throw new Error('A collection path is required');
-    const parent = ['projects', this.projectId, 'databases', '(default)', 'documents', ...segments]
+    const parent = this.documentName(segments.join('/'));
+    const parentUrl = `${API_ROOT}/${parent
+      .split('/')
       .map((segment) => encodeURIComponent(segment))
-      .join('/');
+      .join('/')}:runQuery`;
     const structuredQuery: Record<string, unknown> = {
       from: [{ collectionId }],
     };
@@ -255,7 +292,7 @@ export class FirestoreRestClient implements FirestorePort {
     }
     if (options.limit) structuredQuery.limit = options.limit;
     const result = await this.request<Array<{ document?: Parameters<typeof decodeDocument>[0] }>>(
-      `${API_ROOT}/projects/${this.projectId}/databases/(default)/documents:runQuery`,
+      parentUrl,
       {
         method: 'POST',
         body: JSON.stringify({ parent, structuredQuery, ...(transaction ? { transaction } : {}) }),
@@ -285,6 +322,13 @@ export class FirestoreRestClient implements FirestorePort {
     };
   }
 
+  private async rollbackTransaction(transaction: string): Promise<void> {
+    await this.request(
+      `${API_ROOT}/projects/${encodeURIComponent(this.projectId)}/databases/(default)/documents:rollback`,
+      { method: 'POST', body: JSON.stringify({ transaction }) },
+    );
+  }
+
   async runTransaction<T>(operation: (transaction: FirestoreTransaction) => Promise<T>): Promise<T> {
     let lastError: unknown = null;
     for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -309,6 +353,11 @@ export class FirestoreRestClient implements FirestorePort {
         return result;
       } catch (error) {
         lastError = error;
+        // An abandoned read-write transaction keeps its document locks until
+        // the emulator/production times it out, blocking every later write to
+        // the same group. Roll it back explicitly before retrying or rethrowing
+        // so a rule denial or a domain error cannot stall the next transaction.
+        await this.rollbackTransaction(started.transaction).catch(() => undefined);
         if (!(error instanceof FirestoreConflictError)) throw error;
       }
     }

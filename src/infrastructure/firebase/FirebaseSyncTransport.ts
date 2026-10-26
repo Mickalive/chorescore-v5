@@ -39,6 +39,7 @@ import {
 } from '../../domain/services/todoCompletionService';
 import { todoCompletionEntryId } from '../../domain/services/todoCompletionId';
 import {
+  FirestoreConflictError,
   FirestoreDocument,
   FirestoreFilter,
   FirestorePort,
@@ -83,6 +84,7 @@ interface GroupDoc {
   memberUids: string[];
   access: Record<string, AccessEntry>;
   createdAt: string;
+  deleted?: boolean;
 }
 
 interface RecordDoc {
@@ -311,6 +313,9 @@ export class FirebaseSyncTransport {
     if (method === 'POST' && parts.length === 3 && parts[0] === 'groups' && parts[2] === 'mutations') {
       return this.mutate(uid, decodeURIComponent(parts[1]), (body ?? {}) as Record<string, unknown>);
     }
+    if (method === 'POST' && parts.length === 3 && parts[0] === 'groups' && parts[2] === 'delete') {
+      return this.deleteGroup(uid, decodeURIComponent(parts[1]));
+    }
     if (method === 'POST' && parts.length === 3 && parts[0] === 'groups' && parts[2] === 'invites') {
       return this.createInvite(uid, decodeURIComponent(parts[1]), String((body as { memberId?: unknown })?.memberId ?? ''));
     }
@@ -354,12 +359,16 @@ export class FirebaseSyncTransport {
       memberUids: memberUids.map(String),
       access: access as unknown as Record<string, AccessEntry>,
       createdAt: String(fields.createdAt ?? ''),
+      ...(fields.deleted === true ? { deleted: true } : {}),
     };
   }
 
-  private requireAccess(group: GroupDoc | null, uid: string): GroupDoc {
+  private requireAccess(group: GroupDoc | null, uid: string, allowDeleted = false): GroupDoc {
     if (!group) throw new FirebaseTransportError(404, 'Groupe introuvable');
     if (!group.access[uid]) throw new FirebaseTransportError(403, 'Group access denied');
+    if (group.deleted === true && !allowDeleted) {
+      throw new FirebaseTransportError(410, 'Ce groupe a été supprimé');
+    }
     return group;
   }
 
@@ -402,6 +411,7 @@ export class FirebaseSyncTransport {
   private async writeRecord(
     transaction: FirestoreTransaction,
     groupId: string,
+    revision: number,
     change: AppliedChange,
     now: string,
   ): Promise<void> {
@@ -411,6 +421,7 @@ export class FirebaseSyncTransport {
       version: change.version,
       value: sanitize(change.value),
       updatedAt: now,
+      revision,
     });
   }
 
@@ -430,6 +441,7 @@ export class FirebaseSyncTransport {
       await this.writeRecord(
         transaction,
         group.id,
+        revision,
         { collection: change.collection, id: change.id, value, version },
         new Date(now).toISOString(),
       );
@@ -447,8 +459,19 @@ export class FirebaseSyncTransport {
     } as unknown as Record<string, FirestoreValue>);
     transaction.set(`groups/${group.id}/events/${revision}`, {
       revision,
-      changes: sanitize(applied) as FirestoreValue,
+      groupId: group.id,
+      count: applied.length,
       createdAt: new Date(now).toISOString(),
+    });
+    applied.forEach((change, index) => {
+      transaction.set(`groups/${group.id}/events/${revision}/changes/${index}`, {
+        revision,
+        index,
+        collection: change.collection,
+        id: change.id,
+        version: change.version,
+        value: sanitize(change.value),
+      });
     });
     return { revision, changes: applied };
   }
@@ -465,6 +488,7 @@ export class FirebaseSyncTransport {
         revision: Number(document.fields.revision ?? 0),
         memberId: access[uid]?.memberId ?? '',
         role: access[uid]?.role ?? 'MEMBER',
+        ...(document.fields.deleted === true ? { deleted: true } : {}),
       };
     });
   }
@@ -535,20 +559,33 @@ export class FirebaseSyncTransport {
     // now that membership exists. A crash between them leaves revision 0, which
     // the next ensureRemoteGroup call repairs instead of declaring the group
     // synced with missing members.
-    const created = await this.client.runTransaction(async (transaction) => {
-      const existing = await this.group(transaction, groupId);
-      if (existing) {
+    // Reading a missing group before it exists is denied by the group read
+    // rule, so creation cannot start with a get(). Write with an explicit
+    // exists:false precondition instead; a conflict means the group already
+    // exists and can then be read under normal membership rules.
+    const created = await this.client
+      .runTransaction(async (transaction) => {
+        transaction.set(
+          groupPath(groupId),
+          {
+            ...group,
+            household: sanitize(household),
+            memberUids: sanitize(group.memberUids),
+            access: sanitize(group.access),
+          } as unknown as Record<string, FirestoreValue>,
+          { exists: false },
+        );
+        return true;
+      })
+      .catch(async (error: unknown) => {
+        if (!(error instanceof FirestoreConflictError)) throw error;
+        const existing = await this.client.runTransaction((transaction) =>
+          this.group(transaction, groupId),
+        );
+        if (!existing) throw new FirebaseTransportError(409, 'Group creation conflicted');
         if (existing.ownerId !== uid) throw new FirebaseTransportError(403, 'Group access denied');
         return existing.revision === 0;
-      }
-      transaction.set(groupPath(groupId), {
-        ...group,
-        household: sanitize(household),
-        memberUids: sanitize(group.memberUids),
-        access: sanitize(group.access),
-      } as unknown as Record<string, FirestoreValue>);
-      return true;
-    });
+      });
     if (!created) return { id: groupId };
 
     return this.client.runTransaction(async (transaction) => {
@@ -581,18 +618,35 @@ export class FirebaseSyncTransport {
     requireId(groupId);
     requireCondition(Number.isSafeInteger(since) && since >= 0, 'Invalid cursor');
     return this.client.runTransaction(async (transaction) => {
-      const group = this.requireAccess(await this.group(transaction, groupId), uid);
-      void group;
-      const documents = await transaction.query(
+      this.requireAccess(await this.group(transaction, groupId), uid, true);
+      const headers = await transaction.query(
         `groups/${groupId}/events`,
         [{ field: 'revision', op: '>', value: since }],
         { orderBy: 'revision', limit: 101 },
       );
-      const events = documents.slice(0, 100).map((document) => ({
-        revision: Number(document.fields.revision ?? 0),
-        changes: document.fields.changes ?? [],
-      }));
-      return { events, hasMore: documents.length > 100 };
+      const events = [];
+      for (const header of headers.slice(0, 100)) {
+        const revision = Number(header.fields.revision ?? 0);
+        requireCondition(Number.isSafeInteger(revision) && revision > since, 'Invalid event revision');
+        const count = Number(header.fields.count ?? 0);
+        requireCondition(Number.isInteger(count) && count > 0 && count <= 100, 'Invalid event count');
+        const changes = await transaction.query(
+          `groups/${groupId}/events/${revision}/changes`,
+          [],
+          { orderBy: 'index', limit: 100 },
+        );
+        requireCondition(changes.length === count, 'Incomplete event');
+        events.push({
+          revision,
+          changes: changes.map((document) => ({
+            collection: String(document.fields.collection ?? ''),
+            id: String(document.fields.id ?? ''),
+            version: Number(document.fields.version ?? 0),
+            value: document.fields.value ?? null,
+          })),
+        });
+      }
+      return { events, hasMore: headers.length > 100 };
     });
   }
 
@@ -999,6 +1053,24 @@ export class FirebaseSyncTransport {
       }).catch(() => undefined);
       throw error;
     }
+  }
+
+  private async deleteGroup(uid: string, groupId: string): Promise<unknown> {
+    requireId(groupId);
+    return this.client.runTransaction(async (transaction) => {
+      const group = await this.group(transaction, groupId);
+      if (!group) throw new FirebaseTransportError(404, 'Groupe introuvable');
+      if (group.ownerId !== uid) throw new FirebaseTransportError(403, 'Group access denied');
+      if (group.deleted === true) return { id: groupId, deleted: true };
+      group.deleted = true;
+      const result = await this.append(
+        transaction,
+        group,
+        [{ collection: 'households', id: groupId, baseVersion: 0, value: null }],
+        this.now(),
+      );
+      return { id: groupId, deleted: true, ...result };
+    });
   }
 
   private async completeTodo(uid: string, groupId: string, todoId: string, input: Record<string, unknown>): Promise<unknown> {
