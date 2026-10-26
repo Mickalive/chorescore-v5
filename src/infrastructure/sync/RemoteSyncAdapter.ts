@@ -58,8 +58,13 @@ const BASELINE: SyncCollection[] = ['households', 'memberships', 'members'];
 const PAGE_GUARD = 200;
 const BATCH_LIMIT = 100;
 
+export type RemoteRequest = (method: 'GET' | 'POST', path: string, body?: unknown) => Promise<unknown>;
+
 export interface RemoteSyncConfig {
-  baseUrl: string;
+  /** Empty when a custom `request` authority (e.g. Firestore) is supplied. */
+  baseUrl?: string;
+  /** Optional non-HTTP authority implementing the same bounded contract. */
+  request?: RemoteRequest;
   /** Must return a real provider ID token; local identities are not accepted. */
   getAccessToken: () => Promise<string | null>;
   getRepos: () => AllRepositories;
@@ -105,12 +110,12 @@ export class RemoteSyncAdapter implements SyncGateway {
   private readonly runtimeErrors = new Map<string, string | null>();
 
   constructor(private readonly config: RemoteSyncConfig) {
-    this.baseUrl = config.baseUrl.replace(/\/+$/, '');
+    this.baseUrl = (config.baseUrl ?? '').replace(/\/+$/, '');
     this.fetchImpl = config.fetchImpl ?? fetch;
   }
 
   isAvailable(): boolean {
-    return this.baseUrl.length > 0;
+    return Boolean(this.config.request) || this.baseUrl.length > 0;
   }
 
   setOnRemoteChange(callback: (signal: SyncChangeSignal) => void): void {
@@ -137,6 +142,9 @@ export class RemoteSyncAdapter implements SyncGateway {
     path: string,
     body?: unknown,
   ): Promise<T> {
+    if (this.config.request) {
+      return (await this.config.request(method, path, body)) as T;
+    }
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 20_000);
     try {
@@ -785,7 +793,7 @@ export class RemoteSyncAdapter implements SyncGateway {
       });
       this.runtimeErrors.delete(householdId);
     } catch (error) {
-      if (error instanceof RemoteHttpError && error.status === 409) {
+      if ((error as { status?: number }).status === 409) {
         await this.recordPushConflicts(householdId);
       }
       await this.setError(householdId, this.message(error));

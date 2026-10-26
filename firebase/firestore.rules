@@ -1,0 +1,209 @@
+rules_version = '2';
+
+// ChoreScore V5 — Firestore Spark authority.
+//
+// Rules enforce tenant isolation, owner-only settings and invitation proof.
+// The collaboration transport also validates ledger invariants before writing,
+// but Firestore cannot run the application's domain code: a malicious client
+// with a valid member token could still forge arbitrary record payloads. That
+// limitation is documented in VERIFICATION.md and is why the SQLite authority
+// remains the reference implementation.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function groupPath(groupId) {
+      return /databases/$(database)/documents/groups/$(groupId);
+    }
+
+    function isMember(groupId) {
+      return signedIn()
+        && exists(groupPath(groupId))
+        && request.auth.uid in get(groupPath(groupId)).data.memberUids;
+    }
+
+    function isOwner(groupId) {
+      return signedIn()
+        && exists(groupPath(groupId))
+        && get(groupPath(groupId)).data.ownerId == request.auth.uid;
+    }
+
+    function invitePath(groupId, hash) {
+      return /databases/$(database)/documents/groups/$(groupId)/invites/$(hash);
+    }
+
+    function inviteAllows(groupId, hash, uid) {
+      return hash is string
+        && hash.matches('^[0-9a-f]{64}$')
+        && exists(invitePath(groupId, hash))
+        && get(invitePath(groupId, hash)).data.groupId == groupId
+        && get(invitePath(groupId, hash)).data.revoked == false
+        && get(invitePath(groupId, hash)).data.expiresAt > request.time.toMillis()
+        && (
+          get(invitePath(groupId, hash)).data.acceptedBy == null
+          || get(invitePath(groupId, hash)).data.acceptedBy == uid
+        );
+    }
+
+    function joinRequestPath(groupId, uid) {
+      return /databases/$(database)/documents/joinRequests/$(groupId + '_' + uid);
+    }
+
+    function joinAllowed(groupId) {
+      return signedIn()
+        && exists(joinRequestPath(groupId, request.auth.uid))
+        && get(joinRequestPath(groupId, request.auth.uid)).data.groupId == groupId
+        && inviteAllows(
+          groupId,
+          get(joinRequestPath(groupId, request.auth.uid)).data.inviteHash,
+          request.auth.uid
+        );
+    }
+
+    function isMemberOrJoining(groupId) {
+      return isMember(groupId) || joinAllowed(groupId);
+    }
+
+    function addsOnlySelf(newValues, oldValues) {
+      return oldValues.toSet().difference(newValues.toSet()).size() == 0
+        && newValues.toSet().difference(oldValues.toSet()).size() == 1
+        && newValues.toSet().difference(oldValues.toSet()).hasOnly([request.auth.uid]);
+    }
+
+    function selfOnboarding(groupId) {
+      return signedIn()
+        && request.auth.uid in request.resource.data.access
+        && request.resource.data.access[request.auth.uid].role == 'MEMBER'
+        && 'inviteHash' in request.resource.data.access[request.auth.uid]
+        && inviteAllows(
+          groupId,
+          request.resource.data.access[request.auth.uid].inviteHash,
+          request.auth.uid
+        )
+        && request.resource.data.access.diff(resource.data.access).addedKeys().hasOnly([request.auth.uid])
+        && request.resource.data.access.diff(resource.data.access).addedKeys().size() == 1
+        && request.resource.data.access.diff(resource.data.access).removedKeys().size() == 0
+        && request.resource.data.access.diff(resource.data.access).changedKeys().size() == 0
+        && addsOnlySelf(request.resource.data.memberUids, resource.data.memberUids)
+        && request.resource.data.household == resource.data.household;
+    }
+
+    function onlyRevisionChanged(groupId) {
+      return request.resource.data.access == resource.data.access
+        && request.resource.data.memberUids == resource.data.memberUids
+        && request.resource.data.household == resource.data.household;
+    }
+
+    function validRecord(groupId) {
+      return request.resource.data.collection in [
+          'contribution_entries', 'expense_entries', 'todo_items', 'persistent_tasks',
+          'categories', 'members', 'households', 'memberships', 'settlements'
+        ]
+        && (
+          request.resource.data.value == null
+          || (
+            request.resource.data.collection == 'households'
+              ? request.resource.data.value.id == groupId
+              : request.resource.data.value.householdId == groupId
+          )
+        );
+    }
+
+    match /groups/{groupId} {
+      allow get: if signedIn() && (isMember(groupId) || joinAllowed(groupId));
+      allow list: if signedIn() && request.auth.uid in resource.data.memberUids;
+      allow create: if signedIn()
+        && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.household.ownerId == request.auth.uid
+        && request.auth.uid in request.resource.data.memberUids
+        && request.auth.uid in request.resource.data.access
+        && request.resource.data.access[request.auth.uid].role == 'OWNER'
+        && request.resource.data.access[request.auth.uid].memberId is string;
+      allow update: if signedIn()
+        && request.resource.data.ownerId == resource.data.ownerId
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.revision == resource.data.revision + 1
+        && (
+          resource.data.ownerId == request.auth.uid
+          || (isMember(groupId) && onlyRevisionChanged(groupId))
+          || selfOnboarding(groupId)
+        );
+      allow delete: if false;
+
+      match /records/{recordId} {
+        allow read: if isMemberOrJoining(groupId);
+        allow create, update: if isMemberOrJoining(groupId) && validRecord(groupId);
+        allow delete: if isMember(groupId);
+      }
+
+      match /events/{revision} {
+        allow read: if isMemberOrJoining(groupId);
+        allow create: if isMemberOrJoining(groupId)
+          && request.resource.data.revision is int
+          && request.resource.data.changes is list;
+        allow update, delete: if false;
+      }
+
+      match /mutations/{operationId} {
+        allow read: if isMember(groupId);
+        allow create: if isMember(groupId)
+          && request.resource.data.uid == request.auth.uid;
+        allow update, delete: if false;
+      }
+
+      match /invites/{hash} {
+        allow get: if signedIn();
+        allow list: if isOwner(groupId);
+        allow create: if isOwner(groupId)
+          && request.resource.data.groupId == groupId
+          && request.resource.data.revoked == false;
+        allow update: if isOwner(groupId)
+          || (
+            signedIn()
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['acceptedBy'])
+            && request.resource.data.acceptedBy == request.auth.uid
+            && resource.data.acceptedBy == null
+            && resource.data.revoked == false
+            && resource.data.expiresAt > request.time.toMillis()
+          );
+        allow delete: if isOwner(groupId);
+      }
+
+      match /media/{mediaId} {
+        allow read: if isMember(groupId);
+        allow create: if isMember(groupId)
+          && request.resource.data.uploadedBy == request.auth.uid
+          && request.resource.data.data is string;
+        allow update: if isMember(groupId)
+          && resource.data.uploadedBy == request.auth.uid
+          && request.resource.data.sha256 == resource.data.sha256;
+        allow delete: if isMember(groupId);
+      }
+    }
+
+    match /inviteLinks/{hash} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn()
+        && isOwner(request.resource.data.groupId)
+        && request.resource.data.groupId is string;
+      allow update, delete: if false;
+    }
+
+    match /joinRequests/{joinRequestId} {
+      allow get: if signedIn() && resource.data.uid == request.auth.uid;
+      allow create, update: if signedIn()
+        && request.resource.data.uid == request.auth.uid
+        && joinRequestId == request.resource.data.groupId + '_' + request.auth.uid
+        && request.resource.data.keys().hasOnly(['uid', 'groupId', 'inviteHash', 'createdAt'])
+        && inviteAllows(
+          request.resource.data.groupId,
+          request.resource.data.inviteHash,
+          request.auth.uid
+        );
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+  }
+}

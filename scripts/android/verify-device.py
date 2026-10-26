@@ -479,10 +479,13 @@ try:
     # User-created category with an explicit 1:3 default ratio.
     scroll_to(resource='add.categoryManagerToggle')
     fill('add.categoryName','Menage CI')
-    tap('add.categoryDraftRatioToggle')
+    # The ratio toggle and create button are below the name field once the
+    # manager expands; scroll them into view instead of assuming they stayed
+    # on the 412x915 viewport after the keyboard closed.
+    scroll_to(resource='add.categoryDraftRatioToggle')
     fill('add.categoryWeight.0','1')
     fill('add.categoryWeight.1','3')
-    tap('add.categoryCreateButton')
+    scroll_to(resource='add.categoryCreateButton')
     dismiss_alert()
     scroll_top()
     scroll_find('Menage CI',partial=True)

@@ -28,6 +28,16 @@ describe('Android journey driver', () => {
     expect(shown).not.toMatch(/mInputShown/);
   });
 
+  it('scrolls every expanded category control into view instead of tapping blindly', () => {
+    for (const resource of [
+      'add.categoryDraftRatioToggle',
+      'add.categoryCreateButton',
+    ]) {
+      expect(source).toContain(`scroll_to(resource='${resource}')`);
+      expect(source).not.toContain(`tap('${resource}')`);
+    }
+  });
+
   it('keeps the full native journey assertions', () => {
     for (const marker of [
       'add_member_at_creation',
