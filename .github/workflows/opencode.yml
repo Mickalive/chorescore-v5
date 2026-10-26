@@ -1,41 +1,52 @@
 name: OpenCode gratuit — mission ChoreScore
-
-on:
+'on':
   workflow_dispatch:
     inputs:
       mode:
-        description: 'check = tester le modèle gratuit ; work = poursuivre la mission dans la PR 2'
+        description: check = tester le modèle gratuit ; work = poursuivre la mission dans la PR 2
         type: choice
-        options: [check, work]
+        options:
+          - check
+          - work
+          - audit
         default: check
       rounds:
-        description: 'Nombre de passages successifs pour poursuivre le produit (un seul agent à la fois)'
+        description: Nombre de passages successifs pour poursuivre le produit (un seul agent à la fois)
         type: choice
-        options: ['1', '4', '8']
+        options:
+          - '1'
+          - '4'
+          - '8'
         default: '8'
+      audit_ref:
+        description: Commit audité sans modifier la branche produit
+        type: string
+        default: e1d088f9
   issue_comment:
-    types: [created]
-
+    types:
+      - created
 permissions: {}
-
 concurrency:
-  group: chorescore-opencode-writer
+  group: >-
+    ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'audit' && format('chorescore-audit-{0}', github.run_id) ||
+    'chorescore-opencode-writer' }}
   cancel-in-progress: false
-
 jobs:
   opencode:
     if: >-
-      github.event.repository.private == false &&
-      (github.event_name == 'workflow_dispatch' ||
-      (contains(fromJSON('[1,2]'), github.event.issue.number) &&
+      (github.event_name != 'workflow_dispatch' || inputs.mode != 'audit') && (github.event.repository.private == false &&
+      (github.event_name == 'workflow_dispatch' || (contains(fromJSON('[1,2]'), github.event.issue.number) &&
        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
-       startsWith(github.event.comment.body, '/opencode')))
+       startsWith(github.event.comment.body, '/opencode'))))
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       max-parallel: 1
       matrix:
-        passage: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.mode == 'check' && '[1]' || github.event_name == 'workflow_dispatch' && inputs.rounds == '1' && '[1]' || github.event_name == 'workflow_dispatch' && inputs.rounds == '4' && '[1,2,3,4]' || '[1,2,3,4,5,6,7,8]') }}
+        passage: >-
+          ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.mode == 'check' && '[1]' || github.event_name ==
+          'workflow_dispatch' && inputs.rounds == '1' && '[1]' || github.event_name == 'workflow_dispatch' && inputs.rounds == '4'
+          && '[1,2,3,4]' || '[1,2,3,4,5,6,7,8]') }}
     timeout-minutes: 65
     permissions:
       contents: write
@@ -43,7 +54,7 @@ jobs:
       issues: write
       pull-requests: read
     env:
-      MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'work' }}
+      MODE: '${{ github.event_name == ''workflow_dispatch'' && inputs.mode || ''work'' }}'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -57,52 +68,89 @@ jobs:
           node-version: '24'
           cache: npm
       - name: Install pinned OpenCode CLI
-        run: |
+        run: >
           set -euo pipefail
+
           mkdir -p "$RUNNER_TEMP/opencode-cli"
-          curl --fail --location --retry 2 https://github.com/anomalyco/opencode/releases/download/v1.19.4/opencode-linux-x64.tar.gz -o "$RUNNER_TEMP/opencode.tar.gz"
-          printf '%s  %s\n' 849bd6b3d959a1d2ef200ed1634a51c79a45ca236aa26665d75debd694805cce "$RUNNER_TEMP/opencode.tar.gz" | sha256sum -c -
+
+          curl --fail --location --retry 2
+          https://github.com/anomalyco/opencode/releases/download/v1.19.4/opencode-linux-x64.tar.gz -o
+          "$RUNNER_TEMP/opencode.tar.gz"
+
+          printf '%s  %s\n' 849bd6b3d959a1d2ef200ed1634a51c79a45ca236aa26665d75debd694805cce "$RUNNER_TEMP/opencode.tar.gz" |
+          sha256sum -c -
+
           tar -xzf "$RUNNER_TEMP/opencode.tar.gz" -C "$RUNNER_TEMP/opencode-cli"
+
           echo "$RUNNER_TEMP/opencode-cli" >> "$GITHUB_PATH"
       - name: Require currently zero-priced model
-        run: |
-          curl --fail --location https://raw.githubusercontent.com/anomalyco/models.dev/dev/providers/opencode/models/big-pickle.toml -o "$RUNNER_TEMP/model.toml"
+        run: >
+          curl --fail --location
+          https://raw.githubusercontent.com/anomalyco/models.dev/dev/providers/opencode/models/big-pickle.toml -o
+          "$RUNNER_TEMP/model.toml"
+
           python3 - <<'PY'
+
           import os, tomllib
+
           with open(os.environ['RUNNER_TEMP']+'/model.toml','rb') as file: model=tomllib.load(file)
+
           assert model['cost']['text']['input']['price']==0, 'Model input is no longer free; stopping'
+
           assert model['cost']['text']['output']['price']==0, 'Model output is no longer free; stopping'
+
           print('Big Pickle: input/output price both zero. No paid API credential is supplied.')
+
           PY
       - name: Verify actual free inference
         timeout-minutes: 5
-        run: |
+        run: >
           set -euo pipefail
+
           opencode --version
-          timeout 240 opencode run --model opencode/big-pickle --format json 'Reply exactly OPENCODE_FREE_OK. Do not read or modify files. Do not use tools.' | tee "$RUNNER_TEMP/opencode-health.jsonl"
+
+          timeout 240 opencode run --model opencode/big-pickle --format json 'Reply exactly OPENCODE_FREE_OK. Do not read or
+          modify files. Do not use tools.' | tee "$RUNNER_TEMP/opencode-health.jsonl"
+
           python3 - <<'PY'
+
           import json,os
+
           events=[]
+
           for line in open(os.environ['RUNNER_TEMP']+'/opencode-health.jsonl'):
             try: events.append(json.loads(line))
             except ValueError: pass
           assert not any(e.get('type')=='error' for e in events), 'OpenCode reported an inference error'
+
           text=''.join(e.get('part',{}).get('text','') for e in events if e.get('type')=='text')
+
           assert 'OPENCODE_FREE_OK' in text, 'No actual model response; worker cannot start'
+
           print('Confirmed: free OpenCode model answered from this GitHub runner.')
+
           PY
       - name: Prepare dependencies and latest native failure context
         if: env.MODE == 'work'
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
+          GH_TOKEN: '${{ github.token }}'
+        run: >
           set -euo pipefail
+
           npm ci --no-audit --no-fund
+
           mkdir -p .opencode-ci
+
           gh issue view 1 --json title,body,comments > .opencode-ci/issue-1.json
+
           gh pr view 2 --json title,body,comments > .opencode-ci/pr-2.json
-          gh run list --workflow android-apk.yml --branch feat/product-reconstruction --limit 5 --json databaseId,status,conclusion,url > .opencode-ci/runs.json
-          failed=$(node -e 'const a=require("./.opencode-ci/runs.json");process.stdout.write(String(a.find(r=>r.conclusion==="failure")?.databaseId??""))')
+
+          gh run list --workflow android-apk.yml --branch feat/product-reconstruction --limit 5 --json
+          databaseId,status,conclusion,url > .opencode-ci/runs.json
+
+          failed=$(node -e 'const
+          a=require("./.opencode-ci/runs.json");process.stdout.write(String(a.find(r=>r.conclusion==="failure")?.databaseId??""))')
+
           if [ -n "$failed" ]; then
             gh run view "$failed" --log-failed > .opencode-ci/failed.log 2>&1 || true
             gh run download "$failed" --name ChoreScore-Android-evidence --dir .opencode-ci/evidence 2> .opencode-ci/download-error.txt || true
@@ -110,11 +158,15 @@ jobs:
       - name: Recover diagnostics and unpublished work from the previous failed mission
         if: env.MODE == 'work'
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
+          GH_TOKEN: '${{ github.token }}'
+        run: >
           set -euo pipefail
+
           mkdir -p .opencode-ci/previous-worker
-          previous=$(gh run list --workflow opencode.yml --limit 12 --json databaseId,conclusion --jq '[.[] | select(.conclusion == "failure")][0].databaseId // empty')
+
+          previous=$(gh run list --workflow opencode.yml --limit 12 --json databaseId,conclusion --jq '[.[] | select(.conclusion
+          == "failure")][0].databaseId // empty')
+
           if [ -n "$previous" ]; then
             gh run view "$previous" --log-failed > .opencode-ci/previous-worker/failed.log 2>&1 || true
             gh api "repos/$GITHUB_REPOSITORY/actions/runs/$previous/artifacts" --jq '.artifacts[] | select(.expired == false) | .id' > .opencode-ci/previous-worker/artifact-ids.txt
@@ -128,24 +180,36 @@ jobs:
       - name: OpenCode implements the next verified product slice
         if: env.MODE == 'work'
         timeout-minutes: 26
-        run: |
+        run: >
           set -euo pipefail
-          timeout 1500 opencode run --agent build --model opencode/big-pickle --format json "$(cat .github/OPENCODE_MISSION.md)" | tee "$RUNNER_TEMP/opencode-work.jsonl"
+
+          timeout 1500 opencode run --agent build --model opencode/big-pickle --format json "$(cat .github/OPENCODE_MISSION.md)" |
+          tee "$RUNNER_TEMP/opencode-work.jsonl"
+
           python3 - <<'PYWORK'
+
           import json,os
+
           events=[]
+
           for line in open(os.environ['RUNNER_TEMP']+'/opencode-work.jsonl'):
             try: events.append(json.loads(line))
             except ValueError: pass
           assert not any(e.get('type')=='error' for e in events), 'OpenCode worker reported a session error'
+
           assert any(e.get('type')=='text' for e in events), 'No worker response received'
+
           PYWORK
       - name: Preserve execution controls while retaining product work
         if: env.MODE == 'work'
-        run: |
+        run: >
           set -euo pipefail
+
           base=$(cat "$RUNNER_TEMP/opencode-base-head")
-          git diff --binary "$base" -- .github/workflows/opencode.yml opencode.json .github/OPENCODE_MISSION.md > "$RUNNER_TEMP/opencode-rejected-controls.patch"
+
+          git diff --binary "$base" -- .github/workflows/opencode.yml opencode.json .github/OPENCODE_MISSION.md >
+          "$RUNNER_TEMP/opencode-rejected-controls.patch"
+
           if [ -s "$RUNNER_TEMP/opencode-rejected-controls.patch" ]; then
             echo '::warning::Worker edits to its execution controls were rejected and preserved as evidence; restoring the authorized baseline before testing product changes.'
             git restore --source="$base" --staged --worktree -- .github/workflows/opencode.yml opencode.json .github/OPENCODE_MISSION.md
@@ -161,40 +225,62 @@ jobs:
       - name: Publish verified changes to the existing PR and run Android acceptance
         if: env.MODE == 'work'
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
+          GH_TOKEN: '${{ github.token }}'
+        run: >
           set -euo pipefail
+
           git add -A
+
           python3 - <<'PY'
+
           import subprocess,os
+
           base=open(os.environ['RUNNER_TEMP']+'/opencode-base-head').read().strip()
+
           paths=subprocess.check_output(['git','diff',base,'--name-only'],text=True).splitlines()
-          blocked=[p for p in paths if p=='.github/workflows/opencode.yml' or p=='opencode.json' or p=='.github/OPENCODE_MISSION.md' or p.startswith('.opencode-ci/')]
+
+          blocked=[p for p in paths if p=='.github/workflows/opencode.yml' or p=='opencode.json' or
+          p=='.github/OPENCODE_MISSION.md' or p.startswith('.opencode-ci/')]
+
           assert not blocked, 'Worker changed its execution controls or diagnostics: '+str(blocked)
+
           PY
+
           if ! git diff --cached --quiet; then
             git config user.name 'github-actions[bot]'
             git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
             git commit -m 'OpenCode: implement and verify the next ChoreScore product slice'
           fi
+
           if [ "$(git rev-parse HEAD)" = "$(cat "$RUNNER_TEMP/opencode-base-head")" ]; then
             echo 'No source change: no commit or claim of delivery.' >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
+
           gh auth setup-git
+
           git push origin HEAD:feat/product-reconstruction
+
           head=$(git rev-parse HEAD)
+
           gh workflow run android-apk.yml --ref feat/product-reconstruction
+
           # Identify the actual run for this source revision, then require its native gate.
+
           android_run=''
+
           for attempt in $(seq 1 12); do
             android_run=$(gh run list --workflow android-apk.yml --branch feat/product-reconstruction --event workflow_dispatch --limit 10 --json databaseId,headSha --jq '.[] | select(.headSha == "'"$head"'") | .databaseId' | head -n 1)
             if [ -n "$android_run" ]; then break; fi
             sleep 5
           done
+
           test -n "$android_run"
+
           timeout 1500 gh run watch "$android_run" --exit-status --interval 20
-          printf 'Changes pushed to PR #2. Android acceptance passed; full product completion still requires all acceptance criteria.\n' >> "$GITHUB_STEP_SUMMARY"
+
+          printf 'Changes pushed to PR #2. Android acceptance passed; full product completion still requires all acceptance
+          criteria.\n' >> "$GITHUB_STEP_SUMMARY"
       - name: Preserve worker response and proposed patch
         if: always()
         run: |
@@ -216,3 +302,207 @@ jobs:
             ${{ runner.temp }}/opencode-rejected-controls.patch
           if-no-files-found: warn
           retention-days: 14
+  firestore_audit:
+    name: Audit réel des règles Firestore — aucun déploiement
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'audit'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: '${{ inputs.audit_ref }}'
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Prepare isolated demo project and hostile requests
+        run: >
+          mkdir -p /tmp/chorescore-audit-firestore
+
+          cp firebase/firestore.rules /tmp/chorescore-audit-firestore/firestore.rules
+
+          cat > /tmp/chorescore-audit-firestore/firebase.json <<'JSON'
+
+          {"firestore":{"rules":"firestore.rules"},"emulators":{"firestore":{"host":"127.0.0.1","port":8181},"ui":{"enabled":false},"singleProjectMode":true}}
+
+          JSON
+
+          cat > /tmp/chorescore-audit-firestore/audit.py <<'PY'
+
+          import base64, copy, json, time, urllib.request, urllib.error
+
+          from pathlib import Path
+
+
+          PROJECT = 'demo-chorescore-audit'
+
+          BASE = f'http://127.0.0.1:8181/v1/projects/{PROJECT}/databases/(default)/documents'
+
+          results = []
+
+
+          def encode(x):
+              if x is None: return {'nullValue': None}
+              if isinstance(x, bool): return {'booleanValue': x}
+              if isinstance(x, int): return {'integerValue': str(x)}
+              if isinstance(x, str): return {'stringValue': x}
+              if isinstance(x, list): return {'arrayValue': {'values': [encode(v) for v in x]}}
+              return {'mapValue': {'fields': {k: encode(v) for k, v in x.items()}}}
+
+          def token(uid):
+              def b(x): return base64.urlsafe_b64encode(json.dumps(x).encode()).decode().rstrip('=')
+              now = int(time.time())
+              return b({'alg':'none','typ':'JWT'}) + '.' + b({'sub':uid,'user_id':uid,'aud':PROJECT,'iss':'https://securetoken.google.com/'+PROJECT,'iat':now,'auth_time':now,'exp':now+3600,'firebase':{'sign_in_provider':'custom','identities':{}}}) + '.'
+
+          def call(method, path, body=None, uid='owner'):
+              req = urllib.request.Request(BASE+path, data=None if body is None else json.dumps(body).encode(), method=method,
+                  headers={'Authorization':'Bearer '+('owner' if uid == 'owner' else token(uid)), 'Content-Type':'application/json'})
+              try:
+                  with urllib.request.urlopen(req,timeout=20) as r: return r.status, json.load(r) if method != 'DELETE' else None
+              except urllib.error.HTTPError as e:
+                  return e.code, json.loads(e.read())
+
+          def put(path, obj, uid='owner'):
+              return call('PATCH', path, {'fields': {k:encode(v) for k,v in obj.items()}},uid)
+
+          group = {'id':'home','ownerId':'alice','createdAt':'2026-10-26T00:00:00Z','revision':1,
+              'memberUids':['alice','bob'], 'access':{'alice':{'role':'OWNER','memberId':'owner-member'},'bob':{'role':'MEMBER','memberId':'bob-member'}},
+              'household':{'id':'home','ownerId':'alice','name':'Audit','contributionUnit':'points'}}
+          assert put('/groups/home',group)[0] == 200
+
+
+          status, _ = call('GET','/groups/home',uid='stranger')
+
+          results.append({'case':'unrelated_account_read','expected':403,'actual':status})
+
+
+          # A normal member bypasses owner-only client settings and all version checks.
+
+          status, _ = put('/groups/home/records/households_home', {
+              'collection':'households','id':'home','version':999,
+              'value':{'id':'home','ownerId':'bob','name':'Forged','crossLedgerCompensationEnabled':True}}, 'bob')
+          results.append({'case':'non_owner_forges_household_record','expected':403,'actual':status})
+
+
+          # Events are not linked to a group revision or validated record changes.
+
+          status, _ = put('/groups/home/events/999', {'revision':999,'changes':[{
+              'collection':'expense_entries','id':'other-tenant-entry','version':1,
+              'value':{'id':'other-tenant-entry','householdId':'unrelated-group','amountMinor':999999}}]}, 'bob')
+          results.append({'case':'member_injects_cross_tenant_event_payload','expected':403,'actual':status})
+
+
+          # The raw write can reopen a completed todo and doesn't require a ledger pair.
+
+          assert
+          put('/groups/home/records/todo_items_done',{'collection':'todo_items','id':'done','version':1,'value':{'id':'done','householdId':'home','status':'completed'}})[0]
+          == 200
+
+          status, _ =
+          put('/groups/home/records/todo_items_done',{'collection':'todo_items','id':'done','version':1,'value':{'id':'done','householdId':'home','status':'todo'}},'bob')
+
+          results.append({'case':'member_reopens_completed_todo_raw','expected':403,'actual':status})
+
+
+          # A member can delete a photo even while an entry still references it.
+
+          assert put('/groups/home/media/photo',{'uploadedBy':'alice','data':'AA==','sha256':'sample'})[0] == 200
+
+          assert
+          put('/groups/home/records/expense_entries_ref',{'collection':'expense_entries','value':{'householdId':'home','attachments':[{'remoteRef':'photo'}]}})[0]
+          == 200
+
+          status, _ = call('DELETE','/groups/home/media/photo',uid='bob')
+
+          results.append({'case':'member_deletes_referenced_private_photo','expected':403,'actual':status})
+
+
+          # A targeted invitation for bob is used to claim alice's ledger identity.
+
+          invite_hash = 'a'*64
+
+          assert
+          put('/groups/home/invites/'+invite_hash,{'groupId':'home','memberId':'bob-member','revoked':False,'expiresAt':int(time.time()*1000)+3600000,'acceptedBy':None})[0]
+          == 200
+
+          status, _ =
+          put('/joinRequests/home_eve',{'uid':'eve','groupId':'home','inviteHash':invite_hash,'createdAt':'2026-10-26T00:00:00Z'},'eve')
+
+          assert status == 200, status
+
+          joined = copy.deepcopy(group)
+
+          joined['revision'] += 1
+
+          joined['memberUids'].append('eve')
+
+          joined['access']['eve'] = {'role':'MEMBER','memberId':'owner-member','inviteHash':invite_hash}
+
+          status, _ = put('/groups/home',joined,'eve')
+
+          results.append({'case':'targeted_invite_claims_wrong_member_id','expected':403,'actual':status})
+
+
+          # Reproduce the current REST adapter's exact query URL/body shape.
+
+          query = {'structuredQuery':{'from':[{'collectionId':'records'}]}}
+
+          wrong = {**query,'parent':f'projects/{PROJECT}/databases/(default)/documents/groups/home'}
+
+          status, body = call('POST',':runQuery',wrong)
+
+          results.append({'case':'current_rest_nested_query_shape','status':status,'documents':sum('document' in row for row in
+          body) if isinstance(body,list) else None,'error':body.get('error',{}).get('message') if isinstance(body,dict) else
+          None})
+
+          status, body = call('POST','/groups/home:runQuery',query)
+
+          results.append({'case':'correct_rest_nested_query_shape','status':status,'documents':sum('document' in row for row in
+          body) if isinstance(body,list) else None})
+
+
+          Path('/tmp/chorescore-audit-firestore/results.json').write_text(json.dumps(results,indent=2)+'\n')
+
+          print(json.dumps(results,indent=2))
+
+          assert all(r.get('actual') in (200,403) for r in results if 'actual' in r)
+
+
+          PY
+      - name: Execute actual Firestore emulator and security rules
+        working-directory: /tmp/chorescore-audit-firestore
+        env:
+          FIREBASE_EMULATORS_PATH: '${{ runner.temp }}/firestore-emulators'
+          CI: 'true'
+        run: >-
+          npm exec --yes --package=firebase-tools@14.22.0 -- firebase emulators:exec --project demo-chorescore-audit --config
+          firebase.json --only firestore 'python3 audit.py'
+      - name: Require hostile writes to be rejected
+        run: |-
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          rows=json.loads(Path('/tmp/chorescore-audit-firestore/results.json').read_text())
+          bad=[]
+          for row in rows:
+           if 'expected' in row and row['actual'] != row['expected']:
+            print('::error::'+row['case']+': expected '+str(row['expected'])+', received '+str(row['actual']))
+            bad.append(row)
+           else:
+            print('::notice::'+json.dumps(row))
+          raise SystemExit(1 if bad else 0)
+          PY
+      - name: Preserve real audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Firestore-security-audit
+          path: /tmp/chorescore-audit-firestore/
+          retention-days: 14
+          if-no-files-found: error
