@@ -9,6 +9,7 @@ name: OpenCode gratuit — mission ChoreScore
           - check
           - work
           - audit
+          - diagnostic
         default: check
       rounds:
         description: Nombre de passages successifs pour poursuivre le produit (un seul agent à la fois)
@@ -22,20 +23,25 @@ name: OpenCode gratuit — mission ChoreScore
         description: Commit audité sans modifier la branche produit
         type: string
         default: e1d088f9f03ff2b5f4550fcdea340401088e0677
+      diagnostic_run:
+        description: Mission à diagnostiquer sans modifier le produit
+        type: string
+        default: '40371273449'
   issue_comment:
     types:
       - created
 permissions: {}
 concurrency:
   group: >-
-    ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'audit' && format('chorescore-audit-{0}', github.run_id) ||
-    'chorescore-opencode-writer' }}
+    ${{ github.event_name == 'workflow_dispatch' && contains(fromJSON('["audit","diagnostic"]'), inputs.mode) &&
+    format('chorescore-readonly-{0}', github.run_id) || 'chorescore-opencode-writer' }}
   cancel-in-progress: false
 jobs:
   opencode:
     if: >-
-      (github.event_name != 'workflow_dispatch' || inputs.mode != 'audit') && (github.event.repository.private == false &&
-      (github.event_name == 'workflow_dispatch' || (contains(fromJSON('[1,2]'), github.event.issue.number) &&
+      (github.event_name != 'workflow_dispatch' || !contains(fromJSON('["audit","diagnostic"]'), inputs.mode)) &&
+      (github.event.repository.private == false && (github.event_name == 'workflow_dispatch' || (contains(fromJSON('[1,2]'),
+      github.event.issue.number) &&
        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
        startsWith(github.event.comment.body, '/opencode'))))
     runs-on: ubuntu-latest
@@ -788,3 +794,47 @@ jobs:
           path: /tmp/chorescore-audit-firestore/
           retention-days: 14
           if-no-files-found: error
+  diagnostic:
+    name: Diagnostic des blocages et candidats conservés
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'diagnostic'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Read actual failed journey logs
+        env:
+          GH_TOKEN: '${{ github.token }}'
+          SOURCE_RUN: '${{ inputs.diagnostic_run }}'
+        run: |-
+          set -euo pipefail
+          [[ "$SOURCE_RUN" =~ ^[0-9]+$ ]]
+          mkdir -p "$RUNNER_TEMP/diagnostic"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN/jobs" > "$RUNNER_TEMP/diagnostic/jobs.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN/artifacts" > "$RUNNER_TEMP/diagnostic/artifacts.json"
+          python3 - <<'PY'
+          import json,os,subprocess,zipfile,io
+          from pathlib import Path
+          root=Path(os.environ['RUNNER_TEMP'])/'diagnostic'
+          artifacts=json.loads((root/'artifacts.json').read_text())['artifacts']
+          for artifact in artifacts:
+           if artifact['expired']:continue
+           data=subprocess.check_output(['gh','api',f"repos/{os.environ['GITHUB_REPOSITORY']}/actions/artifacts/{artifact['id']}/zip"])
+           with zipfile.ZipFile(io.BytesIO(data)) as z:
+            for name in z.namelist():
+             if name.endswith(('client-journey.log','results.json','opencode-proposed.patch')):
+              dest=root/str(artifact['id'])/Path(name).name;dest.parent.mkdir(exist_ok=True);dest.write_bytes(z.read(name))
+              if name.endswith('client-journey.log'):
+               message=z.read(name).decode(errors='replace')[-9000:]
+               print('::notice::'+('ARTIFACT '+str(artifact['id'])+' '+artifact['name']+'\n'+message).replace('%','%25').replace('\r','%0D').replace('\n','%0A'))
+              if name.endswith('opencode-proposed.patch'):
+               print('::notice::candidate '+str(artifact['id'])+' '+str(len(z.read(name)))+' bytes '+artifact['created_at'])
+          PY
+      - name: Preserve diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Delivery-diagnostic
+          path: '${{ runner.temp }}/diagnostic/'
+          retention-days: 3
