@@ -364,7 +364,7 @@ jobs:
               req = urllib.request.Request(BASE+path, data=None if body is None else json.dumps(body).encode(), method=method,
                   headers={'Authorization':'Bearer '+('owner' if uid == 'owner' else token(uid)), 'Content-Type':'application/json'})
               try:
-                  with urllib.request.urlopen(req,timeout=20) as r: return r.status, json.load(r) if method != 'DELETE' else None
+                  with urllib.request.urlopen(req,timeout=120) as r: return r.status, json.load(r) if method != 'DELETE' else None
               except urllib.error.HTTPError as e:
                   return e.code, json.loads(e.read())
 
@@ -507,8 +507,8 @@ jobs:
           from pathlib import Path
           p=Path('/tmp/chorescore-audit-firestore/execution.log')
           if p.exists():
-           for line in p.read_text(errors='replace').splitlines()[-24:]:
-            print('::error::'+line.replace('%','%25').replace('\r','%0D'))
+           s=p.read_text(errors='replace')[-6000:]
+           print('::error::'+s.replace('%','%25').replace('\r','%0D').replace('\n','%0A'))
           PY
       - name: Preserve real audit evidence
         if: always()
