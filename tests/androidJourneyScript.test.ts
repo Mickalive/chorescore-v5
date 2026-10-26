@@ -28,6 +28,16 @@ describe('Android journey driver', () => {
     expect(shown).not.toMatch(/mInputShown/);
   });
 
+  it('searches back towards the top when a control was scrolled past', () => {
+    const find = functionBody('scroll_find');
+    expect(find).toContain('scroll_top()');
+  });
+
+  it('keeps the keyboard-dismiss drag short enough not to skip the next field', () => {
+    const hide = functionBody('hide_keyboard');
+    expect(hide).toContain("'206','520','206','430','220'");
+  });
+
   it('scrolls every expanded category control into view instead of tapping blindly', () => {
     for (const resource of [
       'add.categoryDraftRatioToggle',

@@ -147,10 +147,15 @@ def hide_keyboard():
             return
     # Every journey form is a ScreenContainer ScrollView with
     # keyboardDismissMode="on-drag". Drag above the IME, never on it, so the
-    # keyboard hides without touching the navigation key. Callers re-locate
-    # their next control after this possible scroll.
-    adb('shell','input','swipe','206','500','206','200','300')
+    # keyboard hides without touching the navigation key. Keep the drag short:
+    # a 300 px swipe moved the next field above the viewport in run 40328753105
+    # (add.taskValue after add.taskLabel). If the short drag did not dismiss
+    # the IME, the longer fallback is still followed by scroll_find's rewind.
+    adb('shell','input','swipe','206','520','206','430','220')
     time.sleep(.5)
+    if keyboard_shown():
+        adb('shell','input','swipe','206','500','206','200','300')
+        time.sleep(.5)
 
 def foreground_packages(root):
     return {node.attrib.get('package','') for node in root.iter('node')} - {''}
@@ -213,6 +218,20 @@ def scroll_find(label=None,resource=None,partial=False):
             dismissed+=1
             continue
         swipe()
+    # A keyboard-dismiss drag or an earlier form action can leave the target
+    # just above the viewport. Swiping only downwards would then never find it
+    # (run 40328753105: add.taskValue was missed after add.taskLabel). Rewind
+    # to the start of the form and search in the other direction before failing.
+    scroll_top()
+    dismissed=0
+    for _ in range(16):
+        root=hierarchy()
+        nodes=candidates(root,label,resource,partial)
+        if nodes:return nodes[0]
+        if dismissed<8 and (dismiss_system_dialog(root) or dismiss_permission(root)):
+            dismissed+=1
+            continue
+        swipe()
     raise AssertionError(f'Control absent after scrolling: {resource or label}')
 
 def scroll_to(label=None,resource=None,partial=False):
@@ -237,18 +256,38 @@ def fill_nth(resource,index,value,clear=False):
             swipe()
             nodes=candidates(hierarchy(),resource=resource)
             if len(nodes)>index:break
+    if len(nodes)<=index:
+        scroll_top()
+        for _ in range(16):
+            nodes=candidates(hierarchy(),resource=resource)
+            if len(nodes)>index:break
+            swipe()
     if len(nodes)<=index:raise AssertionError(f'Missing {resource}[{index}]')
     fill_node(nodes[index],value,clear)
 
+def category_chip(name):
+    for node in hierarchy().iter('node'):
+        attrs=node.attrib
+        if ('/add.category.' in attrs.get('resource-id','')
+                and attrs.get('resource-id','').split('/')[-1] != 'add.category.none'
+                and name in attrs.get('text','')):
+            return node
+    return None
+
 def tap_category(name):
     for _ in range(10):
-        for node in hierarchy().iter('node'):
-            attrs=node.attrib
-            if ('/add.category.' in attrs.get('resource-id','')
-                    and attrs.get('resource-id','').split('/')[-1] != 'add.category.none'
-                    and name in attrs.get('text','')):
-                tap_node(node)
-                return
+        node=category_chip(name)
+        if node:
+            tap_node(node)
+            return
+        swipe()
+    # The chip can be above the viewport after an earlier field interaction.
+    scroll_top()
+    for _ in range(16):
+        node=category_chip(name)
+        if node:
+            tap_node(node)
+            return
         swipe()
     raise AssertionError(f'Category chip missing: {name}')
 

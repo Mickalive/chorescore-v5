@@ -15,14 +15,18 @@ export function PhotoField({ attachments, available, onAdd, onRemove, testID }: 
   const { t } = useI18n();
   const { services, currentHouseholdId } = useApp();
   const [preview, setPreview] = useState<Attachment | null>(null);
-  const [failedRefs, setFailedRefs] = useState<Set<string>>(new Set());
+  const [failedIds, setFailedIds] = useState<Set<string>>(new Set());
   const [resolvedRefs, setResolvedRefs] = useState<Record<string, string>>({});
-  const sourceOf = (photo: Attachment) => resolvedRefs[photo.id] ?? photo.ref;
+  // A received photo only has a `media:` reference until the private file is
+  // downloaded. Never hand that opaque reference to Image: on Android it fails
+  // immediately and would strand the photo as "missing" even after download.
+  const sourceOf = (photo: Attachment): string | null =>
+    resolvedRefs[photo.id] ?? (photo.remoteRef ? null : photo.ref);
 
   useEffect(() => {
     let cancelled = false;
     const remote = attachments.filter(
-      (photo) => photo.remoteRef && photo.ref.startsWith('media:') && !resolvedRefs[photo.id],
+      (photo) => photo.remoteRef && !resolvedRefs[photo.id] && !failedIds.has(photo.id),
     );
     if (!remote.length || !currentHouseholdId || !services.media.isAvailable()) return;
     void (async () => {
@@ -31,35 +35,43 @@ export function PhotoField({ attachments, available, onAdd, onRemove, testID }: 
           const uri = await services.media.download(currentHouseholdId, photo.remoteRef!);
           if (!cancelled) setResolvedRefs((prev) => ({ ...prev, [photo.id]: uri }));
         } catch {
-          if (!cancelled) setFailedRefs((prev) => new Set([...prev, photo.ref]));
+          if (!cancelled) setFailedIds((prev) => new Set([...prev, photo.id]));
         }
       }
     })();
     return () => { cancelled = true; };
-  }, [attachments, currentHouseholdId, resolvedRefs, services.media]);
+  }, [attachments, currentHouseholdId, resolvedRefs, failedIds, services.media]);
 
   return (
     <View style={styles.field}>
       <Text variant="caption">{t('add.photoOptional')}</Text>
-      {attachments.map(photo => (
+      {attachments.map(photo => {
+        const uri = sourceOf(photo);
+        const remotePending = Boolean(photo.remoteRef) && !resolvedRefs[photo.id];
+        const failed = failedIds.has(photo.id) || (remotePending && !services.media.isAvailable());
+        return (
         <View key={photo.id} style={styles.row}>
           <TouchableOpacity onPress={() => setPreview(photo)} accessibilityRole="button"
             accessibilityLabel={t('photo.openPreview')} style={styles.thumbnailButton}
-            disabled={failedRefs.has(photo.ref)} accessibilityState={{ disabled: failedRefs.has(photo.ref) }}>
-            {!failedRefs.has(photo.ref) ? <Image source={{ uri: sourceOf(photo) }} style={styles.thumbnail}
-              resizeMode="cover" onError={() => setFailedRefs(prev => new Set([...prev, photo.ref]))} />
-              : <Text variant="caption">{t('add.photoMissing')}</Text>}
+            disabled={failed} accessibilityState={{ disabled: failed }}>
+            {failed ? <Text variant="caption">{t('add.photoMissing')}</Text>
+              : uri ? <Image source={{ uri }} style={styles.thumbnail}
+                resizeMode="cover" onError={() => setFailedIds(prev => new Set([...prev, photo.id]))} />
+              : <Text variant="caption" color={colors.textMuted}>{t('state.loading')}</Text>}
           </TouchableOpacity>
           <Text variant="caption" style={styles.label}>{t('add.photoAttached')}</Text>
           <Button title={t('add.photoRemove')} variant="ghost" size="small" onPress={() => onRemove(photo.id)} />
         </View>
-      ))}
+        );
+      })}
       {available ? <Button title={t('add.photoAdd')} variant="secondary" size="small" onPress={onAdd} testID={testID} />
         : <Text variant="caption" color={colors.textMuted}>{t('add.photoUnavailable')}</Text>}
       <Modal visible={!!preview} animationType="fade" onRequestClose={() => setPreview(null)}>
         <SafeAreaView style={styles.preview}>
           <View style={styles.close}><Button title={t('action.close')} variant="secondary" onPress={() => setPreview(null)} /></View>
-          {preview && <Image source={{ uri: sourceOf(preview) }} style={styles.fullImage} resizeMode="contain" accessibilityLabel={t('add.photoAttached')} />}
+          {preview && sourceOf(preview) && (
+            <Image source={{ uri: sourceOf(preview)! }} style={styles.fullImage} resizeMode="contain" accessibilityLabel={t('add.photoAttached')} />
+          )}
         </SafeAreaView>
       </Modal>
     </View>
