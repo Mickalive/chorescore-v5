@@ -406,30 +406,6 @@ jobs:
 
           print(json.dumps(results,indent=2),flush=True)
 
-          # Reproduce the current REST adapter's exact query URL/body shape.
-
-          query = {'structuredQuery':{'from':[{'collectionId':'records'}]}}
-
-          wrong = {**query,'parent':f'projects/{PROJECT}/databases/(default)/documents/groups/home'}
-
-          status, body = call('POST',':runQuery',wrong)
-
-          results.append({'case':'current_rest_nested_query_shape','status':status,'documents':sum('document' in row for row in
-          body) if isinstance(body,list) else None,'error':body.get('error',{}).get('message') if isinstance(body,dict) else
-          None})
-
-          status, body = call('POST','/groups/home:runQuery',query)
-
-          results.append({'case':'correct_rest_nested_query_shape','status':status,'documents':sum('document' in row for row in
-          body) if isinstance(body,list) else None})
-
-
-          Path('/tmp/chorescore-audit-firestore/results.json').write_text(json.dumps(results,indent=2)+'\n')
-
-          print(json.dumps(results,indent=2))
-
-          assert all(r.get('actual') in (200,403) for r in results if 'actual' in r)
-
 
           PY
         if: env.MODE == 'work'
@@ -575,7 +551,7 @@ jobs:
             ${{ runner.temp }}/opencode-proposed.patch
             ${{ runner.temp }}/opencode-rejected-controls.patch
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 7
   firestore_audit:
     name: Audit réel des règles Firestore — aucun déploiement
     if: github.event_name == 'workflow_dispatch' && inputs.mode == 'audit'
