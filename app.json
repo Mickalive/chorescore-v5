@@ -50,6 +50,7 @@
       "bundler": "metro"
     },
     "plugins": [
+      "./plugins/withPinnedAndroidNdk",
       "expo-router",
       "expo-font",
       "expo-sharing",
