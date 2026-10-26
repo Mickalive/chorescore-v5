@@ -12,9 +12,9 @@ secret de compte de service ne doit être ajouté au dépôt.
 
 | Niveau | État réel |
 | --- | --- |
-| Code du dépôt | `FirebaseAuthAdapter` (SDK natif Google + Firebase REST, SecureStore, rafraîchissement), `RemoteSyncAdapter` (jeton réel, outbox durable, push/pull paginé, conflits, tombstones), `HttpMediaGateway` (médias privés), compensation autoritaire et sauvegarde/restauration côté serveur. |
+| Code du dépôt | `FirebaseAuthAdapter` (SDK natif Google + Firebase REST, SecureStore, rafraîchissement), `RemoteSyncAdapter` (jeton réel, outbox durable, push/pull paginé, conflits, tombstones), `FirebaseSyncTransport` (autorité Firestore Spark sans serveur) et `FirebaseMediaGateway` (photos privées Firestore, ≤ 700 Kio), plus `HttpMediaGateway` et le serveur SQLite autoritaire. |
 | Configuration | Projet Firebase créé. Fournisseur Google, client OAuth Web/Android, empreinte SHA-1 et clé API publique **non fournis/non validés** dans cet environnement. |
-| Preuve réelle | Aucune connexion Google réelle, aucun déploiement HTTPS, aucun essai sur deux téléphones n'a été exécuté ici. Les tests HTTP locaux ne remplacent pas ces preuves. |
+| Preuve réelle | Aucune connexion Google réelle, aucune règle Firestore déployée, aucun déploiement HTTPS, aucun essai sur deux téléphones n'a été exécuté ici. Les tests avec un Firestore en mémoire ne remplacent pas ces preuves. |
 
 ## Paramètres publics transmis au build
 
@@ -26,7 +26,8 @@ permission GitHub `workflows`) :
   `chorescore-a75b1` par défaut, cette variable permet de surcharger ;
 - `EXPO_PUBLIC_FIREBASE_API_KEY` — clé API **publique** du projet Firebase ;
 - `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` — client OAuth de type **Web** ;
-- `EXPO_PUBLIC_COLLAB_URL` — URL HTTPS du serveur de ce dépôt une fois déployé.
+- `EXPO_PUBLIC_COLLAB_URL` — URL HTTPS facultative du serveur de ce dépôt.
+  Quand elle est vide, le client utilise Firestore Spark directement.
 
 Le défaut public `chorescore-a75b1` est aussi présent dans
 `deploy/.env.example` pour le serveur. Sans clé API et sans client OAuth Web,
@@ -36,7 +37,28 @@ n'invente ni identifiant ni session.
 Sans les deux valeurs OAuth manquantes, l'application reste en mode local
 honnête : elle ne fabrique ni compte Google ni session de collaboration. La clé
 API Firebase et le client Web sont publics mais ne sont pas des autorisations
-d'accès aux données ; le serveur vérifie cryptographiquement chaque ID token.
+d'accès aux données.
+
+## Deux autorités cloud, une seule priorité
+
+`createCollaborationServices` choisit explicitement :
+
+1. `EXPO_PUBLIC_COLLAB_URL` non vide → serveur HTTP/SQLite (`RemoteSyncAdapter`
+   + `HttpMediaGateway`) ; c'est l'autorité de référence, avec validation
+   serveur complète, sauvegarde/restauration et médias hors Firestore.
+2. Sinon, session Firebase réelle → Firestore Spark
+   (`FirebaseSyncTransport` + `FirebaseMediaGateway`) : pas de serveur, pas de
+   Cloud Functions, pas de Blaze, pas de Cloud Storage.
+3. Sinon → mode local honnête, sans fausse promesse de synchronisation.
+
+Une identité locale ne peut jamais sélectionner une autorité cloud. Le
+transport Firestore applique les invariants métier avant chaque écriture et
+les règles Firestore imposent l'isolation de groupe, les droits propriétaire et
+la forme des enregistrements. Firestore ne peut toutefois pas rejouer les
+calculs de soldes : un client modifié avec un jeton de membre valide pourrait
+forger des montants. Le serveur SQLite reste donc la seule autorité qui valide
+les ledgers côté serveur ; Firestore Spark est la collaboration cloud gratuite
+intermédiaire, pas une preuve d'auditabilité serveur.
 
 ## Activation exacte dans la console
 
@@ -56,21 +78,30 @@ d'accès aux données ; le serveur vérifie cryptographiquement chaque ID token.
 4. Dans le fournisseur Google, relever l'**ID client OAuth de type Web** créé
    pour Firebase. L'ID client Android, s'il est créé séparément, doit porter le
    package `app.chorescore.v5` et la même empreinte de signature.
-5. Renseigner les variables de dépôt (jamais dans un fichier suivi) :
+5. Dans **Firestore Database**, créer la base en mode production puis déployer
+   les règles et index du dépôt (ou les coller dans la console) :
+   ```sh
+   firebase deploy --only firestore:rules,firestore:indexes
+   ```
+   Cette commande exige une session Firebase CLI légitime ; elle n'est pas
+   exécutée par le workflow et ne doit jamais embarquer de compte de service.
+6. Renseigner les variables de dépôt (jamais dans un fichier suivi) :
    - `EXPO_PUBLIC_FIREBASE_API_KEY`
    - `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`
-   - `EXPO_PUBLIC_COLLAB_URL` (seulement après un déploiement HTTPS vérifié)
+   - facultatif : `EXPO_PUBLIC_COLLAB_URL` (seulement après un déploiement
+     HTTPS vérifié ; prioritaire sur Firestore)
    - facultatif : `EXPO_PUBLIC_FIREBASE_PROJECT_ID` pour surcharger le défaut
    - facultatif : `ANDROID_EXPECTED_SHA1` pour faire échouer le build si la clé
      de signature ne correspond pas à celle déclarée dans Firebase.
-6. Reconstruire l'APK. Expo incorpore ces valeurs publiques au bundle ; le
+7. Reconstruire l'APK. Expo incorpore ces valeurs publiques au bundle ; le
    module Google est autolinké et configuré avec le client Web explicite. Le
    téléphone doit disposer de Google Play Services.
 
-Le projet Firebase ne déploie pas automatiquement le serveur HTTP/SQLite de ce
-dépôt. Le serveur et son URL HTTPS sont décrits dans `DEPLOYMENT.md` ; tant
-qu'ils ne sont pas réellement en ligne, `EXPO_PUBLIC_COLLAB_URL` doit rester
-vide et la synchronisation entre appareils reste indisponible.
+Sans `EXPO_PUBLIC_COLLAB_URL`, Firestore Spark assure la synchronisation et les
+photos privées dès que la connexion Google et les règles sont réellement en
+place. Avec une URL serveur, le serveur redevient prioritaire. Le projet
+Firebase ne déploie pas automatiquement le serveur HTTP/SQLite décrit dans
+`DEPLOYMENT.md`.
 
 ## Ce que le code fait déjà
 
@@ -84,8 +115,13 @@ distante n'est jamais signée avec un token expiré.
 `RemoteSyncAdapter` exige un vrai ID token pour chaque requête, conserve un
 outbox durable, pousse des lots bornés avec versions de base, applique les
 deltas paginés/tombstones et laisse les conflits visibles pour décision.
-`HttpMediaGateway` téléverse et relit les photos sous ACL de groupe. Le serveur
-valide les compensations à taux snapshoté et fournit sauvegarde/restauration.
+`FirebaseSyncTransport` crée le document de groupe puis ses lignes de base en
+deux transactions (les règles Firestore évaluent `exists()` avant le commit),
+et exécute mutations, invitations, acceptation et complétion de À faire dans
+une transaction atomique avec journal d'idempotence ; `FirebaseMediaGateway`
+téléverse et relit les photos sous ACL de groupe, sans Cloud Storage.
+`HttpMediaGateway` fait de même via le serveur, qui valide en plus les
+compensations à taux snapshoté et fournit sauvegarde/restauration.
 
 Apple et Facebook ne sont pas activés : leurs adapters renvoient explicitement
 `null`, sans faux compte social. Aucune donnée d'une identité locale n'est
@@ -95,12 +131,15 @@ réattribuée automatiquement à un compte Google.
 
 - Connexion Google réelle, fermeture/réouverture, expiration/rafraîchissement,
   déconnexion, deuxième compte et refus d'accès.
-- `EXPO_PUBLIC_COLLAB_URL` réellement en HTTPS, invitation ciblée acceptée,
-  synchronisation et médias privés entre deux appareils authentifiés.
+- Règles Firestore réellement déployées puis invitation ciblée acceptée,
+  synchronisation et photos privées entre deux appareils authentifiés.
+- `EXPO_PUBLIC_COLLAB_URL` réellement en HTTPS (autorité serveur prioritaire),
+  si un serveur est finalement déployé.
 - Rendu Android observé de l'état de synchronisation et d'un conflit.
 - Apple/Facebook si ces fournisseurs doivent être livrés.
 
 Les tests unitaires simulent les réponses réseau : ils vérifient le cycle de
-session, pas le fournisseur. Les tests HTTP vérifient isolation, invitations,
-deltas, conflits, complétion atomique et collecte des médias sur un serveur
-local ; ils ne prouvent ni un déploiement ni deux téléphones.
+session, pas le fournisseur. Les tests Firestore utilisent un port en mémoire,
+pas les règles réelles ni le réseau Google. Les tests HTTP vérifient isolation,
+invitations, deltas, conflits, complétion atomique et collecte des médias sur un
+serveur local ; ils ne prouvent ni un déploiement ni deux téléphones.

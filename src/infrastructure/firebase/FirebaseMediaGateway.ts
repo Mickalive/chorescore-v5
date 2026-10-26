@@ -160,6 +160,7 @@ export interface FirebaseMediaConfig {
   client?: FirestorePort;
   getAccessToken: () => Promise<string | null>;
   getUid: () => string | null;
+  fetchImpl?: typeof fetch;
   readFile?: (uri: string) => Promise<Uint8Array>;
   readCached?: (householdId: string, remoteRef: string) => Promise<string | null>;
   writeCached?: (householdId: string, remoteRef: string, bytes: Uint8Array, mimeType: string) => Promise<string>;
@@ -186,6 +187,7 @@ export class FirebaseMediaGateway implements MediaGateway {
       new FirestoreRestClient({
         projectId: config.projectId ?? '',
         getAccessToken: config.getAccessToken,
+        fetchImpl: config.fetchImpl,
       });
     this.readFile = config.readFile ?? readLocalFile;
     this.readCached = config.readCached ?? cachedFile;

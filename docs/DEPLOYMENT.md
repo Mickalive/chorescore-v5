@@ -15,6 +15,12 @@ ce que `chorescore-a75b1` fasse tourner le processus HTTP/SQLite. Le serveur
 doit être hébergé séparément, puis son URL publique doit être injectée dans
 `EXPO_PUBLIC_COLLAB_URL` au build Android.
 
+Ce déploiement est désormais **optionnel** pour une collaboration gratuite :
+sans `EXPO_PUBLIC_COLLAB_URL`, l'application utilise Firestore Spark
+directement (`FirebaseSyncTransport`, règles du dossier `firebase/`). Le
+serveur reste l'autorité de référence et le seul chemin qui valide les ledgers
+côté serveur, sauvegarde la base et stocke les photos hors Firestore.
+
 ## Prérequis externes réels
 
 - Le projet Firebase gratuit `chorescore-a75b1` avec le fournisseur Google
@@ -50,8 +56,10 @@ certificats publics de Google. Le port du serveur n'est pas publié ; seul Caddy
 écoute sur 80/443 et termine TLS. `/health` est le seul endpoint non authentifié.
 
 Une fois `https://$COLLAB_DOMAIN/health` vérifié, transmettre cette URL de base
-au build Android via `EXPO_PUBLIC_COLLAB_URL` et reconstruire l'APK. Sans cette
-étape, l'application reste locale même si le serveur est en ligne.
+au build Android via `EXPO_PUBLIC_COLLAB_URL` et reconstruire l'APK. Cette URL
+est prioritaire sur Firestore. Sans elle mais avec une session Google et les
+règles Firestore déployées, l'application utilise Firestore Spark ; sans aucun
+des deux, elle reste locale.
 
 ## Sauvegarde et restauration
 

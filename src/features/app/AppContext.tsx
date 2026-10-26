@@ -22,8 +22,7 @@ import { E2EShareAdapter } from '../../infrastructure/local/E2EShareAdapter';
 import { LocalNotificationAdapter } from '../../infrastructure/local/LocalNotificationAdapter';
 import { LocalCalendarAdapter } from '../../infrastructure/local/LocalCalendarAdapter';
 import { LocalSecureStorageAdapter } from '../../infrastructure/local/LocalSecureStorageAdapter';
-import { LocalSyncAdapter } from '../../infrastructure/local/LocalSyncAdapter';
-import { HttpMediaGateway, UnavailableMediaGateway } from '../../infrastructure/sync/HttpMediaGateway';
+import { createCollaborationServices } from '../../infrastructure/collaboration/createCollaborationServices';
 import { RemoteSyncAdapter } from '../../infrastructure/sync/RemoteSyncAdapter';
 import { LocalResearchAnalyticsAdapter } from '../../infrastructure/local/LocalResearchAnalyticsAdapter';
 import { LocalAttachmentAdapter } from '../../infrastructure/local/LocalAttachmentAdapter';
@@ -162,26 +161,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [ensureReposReady]);
 
   const servicesRef = useRef((() => {
-    const auth = firebaseAuthConfig() && !isE2EAuthEnabled()
-      ? new FirebaseAuthAdapter(firebaseAuthConfig()!, new LocalSecureStorageAdapter())
+    const firebaseConfig = !isE2EAuthEnabled() ? firebaseAuthConfig() : null;
+    const auth = firebaseConfig
+      ? new FirebaseAuthAdapter(firebaseConfig, new LocalSecureStorageAdapter())
       : new LocalAuthAdapter({ secureStorage: new LocalSecureStorageAdapter() });
-    const collaborationUrl = (process.env.EXPO_PUBLIC_COLLAB_URL ?? '').trim();
-    const remote = auth instanceof FirebaseAuthAdapter && collaborationUrl.length > 0;
-    const media = remote
-      ? new HttpMediaGateway({
-          baseUrl: collaborationUrl,
-          getAccessToken: () => auth.getIdToken(),
-        })
-      : new UnavailableMediaGateway();
-    const sync: SyncGateway =
-      remote
-        ? new RemoteSyncAdapter({
-            baseUrl: collaborationUrl,
-            getAccessToken: () => auth.getIdToken(),
-            getRepos: () => rawReposRef.current,
-            media,
-          })
-        : new LocalSyncAdapter();
+    const cloudAuth = auth instanceof FirebaseAuthAdapter ? auth : null;
+    const collaboration = createCollaborationServices({
+      getRepos: () => rawReposRef.current,
+      getAccessToken: () => (cloudAuth ? cloudAuth.getIdToken() : Promise.resolve(null)),
+      hasCloudIdentity: cloudAuth !== null,
+      collaborationUrl: process.env.EXPO_PUBLIC_COLLAB_URL,
+      firebase: cloudAuth && firebaseConfig
+        ? {
+            projectId: firebaseConfig.projectId,
+            getUid: () => cloudAuth.getCurrentUserId(),
+          }
+        : undefined,
+    });
     return {
     auth,
     // V4-09: the normal build uses the real native share sheet. The explicit,
@@ -191,8 +187,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     notifications: new LocalNotificationAdapter(),
     calendar: new LocalCalendarAdapter(),
     secureStorage: new LocalSecureStorageAdapter(),
-    sync,
-    media,
+    sync: collaboration.sync,
+    media: collaboration.media,
     analytics: new LocalResearchAnalyticsAdapter(),
     // V4-01/V4-04: honest adapter in a normal build — reports unavailable
     // until a real photo provider is configured; the UI then hides the photo

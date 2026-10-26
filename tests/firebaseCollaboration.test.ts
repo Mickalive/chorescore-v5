@@ -92,6 +92,14 @@ test('Firebase authority shares exact ledgers, links invited members and isolate
     expect.objectContaining({ householdId: hid, role: 'MEMBER' }),
   ]);
   expect(firestore.read(`groups/${hid}`)?.fields.memberUids).toEqual(['alice', 'bob']);
+  expect(firestore.read(`groups/${hid}`)?.fields.access).toMatchObject({
+    bob: { memberId: bobMember.id, role: 'MEMBER' },
+  });
+  const events = firestore
+    .dump()
+    .filter(([path]) => path.startsWith(`groups/${hid}/events/`));
+  expect(events).toHaveLength(2);
+  expect(Number(firestore.read(`groups/${hid}`)?.fields.revision)).toBe(events.length);
 
   expect(await mallory.repos.households.getAll()).toEqual([]);
   await expect(mallory.sync.pullChanges(hid)).rejects.toMatchObject({ status: 403 });
@@ -186,4 +194,63 @@ test('Firebase authority shares exact ledgers, links invited members and isolate
   const carol = client('carol');
   await expect(carol.sync.acceptInvitation(invitation.token)).rejects.toMatchObject({ status: 404 });
   expect(firestore.read(`groups/${hid}`)?.fields.access).not.toHaveProperty('carol');
+});
+
+test('a revision-0 group left by a crash is repaired without duplicating members', async () => {
+  const groupId = 'half-created-group';
+  const createdAt = new Date(clock).toISOString();
+  firestore.seed(`groups/${groupId}`, {
+    id: groupId,
+    ownerId: 'alice',
+    revision: 0,
+    household: {
+      id: groupId,
+      name: 'Maison interrompue',
+      ownerId: 'alice',
+      contributionUnit: 'points',
+      crossLedgerCompensationEnabled: false,
+      contributionToMoneyRate: null,
+      createdAt,
+    },
+    memberUids: ['alice'],
+    access: { alice: { memberId: 'owner-half', role: 'OWNER' } },
+    createdAt,
+  });
+  const transport = new FirebaseSyncTransport({
+    client: firestore,
+    getAccessToken: async () => 'token-alice',
+    getUid: () => 'alice',
+    now: () => clock,
+    createId: () => 'membership-repair',
+  });
+
+  const result = await transport.request('POST', '/groups', {
+    id: groupId,
+    ownerMemberId: 'owner-half',
+    ownerName: 'Alice',
+    name: 'Maison interrompue',
+    unit: 'points',
+    members: [{ id: 'member-half', name: 'Bob' }],
+  }) as { revision: number; changes: Array<{ collection: string; id: string }> };
+
+  expect(result.revision).toBe(1);
+  expect(result.changes.map((change) => `${change.collection}:${change.id}`).sort()).toEqual([
+    `households:${groupId}`,
+    'members:member-half',
+    'members:owner-half',
+    'memberships:membership-repair',
+  ].sort());
+  expect(Number(firestore.read(`groups/${groupId}`)?.fields.revision)).toBe(1);
+  expect(firestore.dump().filter(([path]) => path.startsWith(`groups/${groupId}/events/`))).toHaveLength(1);
+
+  const again = await transport.request('POST', '/groups', {
+    id: groupId,
+    ownerMemberId: 'owner-half',
+    ownerName: 'Alice',
+    name: 'Maison interrompue',
+    unit: 'points',
+    members: [{ id: 'member-half', name: 'Bob' }],
+  });
+  expect(again).toEqual({ id: groupId });
+  expect(firestore.dump().filter(([path]) => path.startsWith(`groups/${groupId}/events/`))).toHaveLength(1);
 });

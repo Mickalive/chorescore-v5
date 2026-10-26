@@ -6,10 +6,15 @@
  * or Blaze dependency: the signed-in user's ID token is the credential and
  * `firebase/firestore.rules` is the tenant/member authority.
  *
- * Atomicity: group creation, mutation batches, invitations and todo
- * completion each run in ONE Firestore read-write transaction. Optimistic
- * versions and the idempotent mutation log match the frugal SQLite authority,
- * so a retry after an ambiguous network result cannot duplicate a write.
+ * Atomicity: mutation batches, invitations, invitation acceptance and todo
+ * completion each run in ONE Firestore read-write transaction. Group creation
+ * uses two transactions because Firestore rules resolve `exists()` against the
+ * state at the start of a transaction: the group document is created at
+ * revision 0, then its baseline records are appended once membership exists.
+ * A crash in between is repaired on the next `ensureRemoteGroup`, because a
+ * revision-0 group is never treated as fully synced. Optimistic versions and
+ * the idempotent mutation log match the frugal SQLite authority, so a retry
+ * after an ambiguous network result cannot duplicate a write.
  */
 import {
   ContributionEntry,
@@ -485,70 +490,90 @@ export class FirebaseSyncTransport {
       requireCondition(!memberIds.has(memberId), 'Duplicate member');
       memberIds.add(memberId);
     }
-    return this.client.runTransaction(async (transaction) => {
+    const now = this.now();
+    const createdAt = new Date(now).toISOString();
+    const household: Household = {
+      id: groupId,
+      name: name.trim(),
+      ownerId: uid,
+      contributionUnit: unit,
+      crossLedgerCompensationEnabled: false,
+      contributionToMoneyRate: null,
+      createdAt,
+    };
+    const members: Member[] = [
+      { id: ownerMemberId, householdId: groupId, name: ownerName, userId: uid, joinedAt: createdAt },
+      ...(input.members as Array<Record<string, unknown>>).map((member) => ({
+        id: String(member.id),
+        householdId: groupId,
+        name: String(member.name),
+        userId: null,
+        joinedAt: createdAt,
+      })),
+    ];
+    const membership: Membership = {
+      id: typeof input.membershipId === 'string' ? input.membershipId : this.createId(),
+      householdId: groupId,
+      userId: uid,
+      role: 'OWNER',
+      joinedAt: createdAt,
+    };
+    const group: GroupDoc = {
+      id: groupId,
+      ownerId: uid,
+      revision: 0,
+      household,
+      memberUids: [uid],
+      access: { [uid]: { memberId: ownerMemberId, role: 'OWNER' } },
+      createdAt,
+    };
+
+    // Firestore rules resolve exists()/get() against the state at the start of
+    // a transaction. Creating the group and its baseline records in one atomic
+    // commit would therefore deny the records. The group document is committed
+    // first (revision 0), then the baseline append runs in a second transaction
+    // now that membership exists. A crash between them leaves revision 0, which
+    // the next ensureRemoteGroup call repairs instead of declaring the group
+    // synced with missing members.
+    const created = await this.client.runTransaction(async (transaction) => {
       const existing = await this.group(transaction, groupId);
       if (existing) {
         if (existing.ownerId !== uid) throw new FirebaseTransportError(403, 'Group access denied');
-        return { id: groupId };
+        return existing.revision === 0;
       }
-      const now = this.now();
-      const createdAt = new Date(now).toISOString();
-      const household: Household = {
-        id: groupId,
-        name: name.trim(),
-        ownerId: uid,
-        contributionUnit: unit,
-        crossLedgerCompensationEnabled: false,
-        contributionToMoneyRate: null,
-        createdAt,
-      };
-      const members: Member[] = [
-        { id: ownerMemberId, householdId: groupId, name: ownerName, userId: uid, joinedAt: createdAt },
-        ...(input.members as Array<Record<string, unknown>>).map((member) => ({
-          id: String(member.id),
-          householdId: groupId,
-          name: String(member.name),
-          userId: null,
-          joinedAt: createdAt,
-        })),
-      ];
-      const membership: Membership = {
-        id: typeof input.membershipId === 'string' ? input.membershipId : this.createId(),
-        householdId: groupId,
-        userId: uid,
-        role: 'OWNER',
-        joinedAt: createdAt,
-      };
-      const group: GroupDoc = {
-        id: groupId,
-        ownerId: uid,
-        revision: 0,
-        household,
-        memberUids: [uid],
-        access: { [uid]: { memberId: ownerMemberId, role: 'OWNER' } },
-        createdAt,
-      };
       transaction.set(groupPath(groupId), {
         ...group,
         household: sanitize(household),
         memberUids: sanitize(group.memberUids),
         access: sanitize(group.access),
       } as unknown as Record<string, FirestoreValue>);
-      return this.append(
-        transaction,
-        group,
-        [
-          { collection: 'households', id: groupId, baseVersion: 0, value: household as unknown as Record<string, unknown> },
-          { collection: 'memberships', id: membership.id, baseVersion: 0, value: membership as unknown as Record<string, unknown> },
-          ...members.map((member) => ({
-            collection: 'members' as const,
-            id: member.id,
-            baseVersion: 0,
-            value: member as unknown as Record<string, unknown>,
-          })),
-        ],
-        now,
-      );
+      return true;
+    });
+    if (!created) return { id: groupId };
+
+    return this.client.runTransaction(async (transaction) => {
+      const existing = await this.group(transaction, groupId);
+      if (!existing) throw new FirebaseTransportError(404, 'Group disappeared during creation');
+      if (existing.ownerId !== uid) throw new FirebaseTransportError(403, 'Group access denied');
+      if (existing.revision > 0) return { id: groupId };
+      return {
+        id: groupId,
+        ...(await this.append(
+          transaction,
+          existing,
+          [
+            { collection: 'households', id: groupId, baseVersion: 0, value: household as unknown as Record<string, unknown> },
+            { collection: 'memberships', id: membership.id, baseVersion: 0, value: membership as unknown as Record<string, unknown> },
+            ...members.map((member) => ({
+              collection: 'members' as const,
+              id: member.id,
+              baseVersion: 0,
+              value: member as unknown as Record<string, unknown>,
+            })),
+          ],
+          now,
+        )),
+      };
     });
   }
 
@@ -950,12 +975,6 @@ export class FirebaseSyncTransport {
         };
         host.memberUids = Array.from(new Set([...host.memberUids, uid]));
         host.access[uid] = { memberId, role: 'MEMBER', inviteHash: hash } as AccessEntry;
-        transaction.set(groupPath(groupId), {
-          ...host,
-          household: sanitize(host.household),
-          memberUids: sanitize(host.memberUids),
-          access: sanitize(host.access),
-        } as unknown as Record<string, FirestoreValue>);
         transaction.set(
           `groups/${groupId}/invites/${hash}`,
           { ...invitation.fields, acceptedBy: uid },

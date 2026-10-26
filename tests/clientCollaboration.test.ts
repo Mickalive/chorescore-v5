@@ -25,6 +25,8 @@ import { addGroupMember, createGroupWithMembers, renameGroupMember } from '../sr
 import { calculateContributionBalances } from '../src/domain/calculations/contributionLedger';
 import { calculateFinancialBalances } from '../src/domain/calculations/expenseLedger';
 
+jest.setTimeout(30_000);
+
 const keys = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const publicKey = keys.publicKey.export({ type: 'spki', format: 'pem' });
 

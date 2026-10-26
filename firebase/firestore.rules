@@ -117,7 +117,9 @@ service cloud.firestore {
       allow create: if signedIn()
         && request.resource.data.ownerId == request.auth.uid
         && request.resource.data.household.ownerId == request.auth.uid
-        && request.auth.uid in request.resource.data.memberUids
+        && request.resource.data.revision == 0
+        && request.resource.data.memberUids == [request.auth.uid]
+        && request.resource.data.access.keys().hasOnly([request.auth.uid])
         && request.auth.uid in request.resource.data.access
         && request.resource.data.access[request.auth.uid].role == 'OWNER'
         && request.resource.data.access[request.auth.uid].memberId is string;
