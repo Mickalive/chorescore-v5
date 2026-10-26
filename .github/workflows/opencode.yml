@@ -9,6 +9,7 @@ name: OpenCode gratuit — mission ChoreScore
           - check
           - work
           - audit
+          - diagnostic
         default: check
       rounds:
         description: Nombre de passages successifs pour poursuivre le produit (un seul agent à la fois)
@@ -22,20 +23,25 @@ name: OpenCode gratuit — mission ChoreScore
         description: Commit audité sans modifier la branche produit
         type: string
         default: e1d088f9f03ff2b5f4550fcdea340401088e0677
+      diagnostic_run:
+        description: Mission à diagnostiquer sans modifier le produit
+        type: string
+        default: '40371273449'
   issue_comment:
     types:
       - created
 permissions: {}
 concurrency:
   group: >-
-    ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'audit' && format('chorescore-audit-{0}', github.run_id) ||
-    'chorescore-opencode-writer' }}
+    ${{ github.event_name == 'workflow_dispatch' && contains(fromJSON('["audit","diagnostic"]'), inputs.mode) &&
+    format('chorescore-readonly-{0}', github.run_id) || 'chorescore-opencode-writer' }}
   cancel-in-progress: false
 jobs:
   opencode:
     if: >-
-      (github.event_name != 'workflow_dispatch' || inputs.mode != 'audit') && (github.event.repository.private == false &&
-      (github.event_name == 'workflow_dispatch' || (contains(fromJSON('[1,2]'), github.event.issue.number) &&
+      (github.event_name != 'workflow_dispatch' || !contains(fromJSON('["audit","diagnostic"]'), inputs.mode)) &&
+      (github.event.repository.private == false && (github.event_name == 'workflow_dispatch' || (contains(fromJSON('[1,2]'),
+      github.event.issue.number) &&
        contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
        startsWith(github.event.comment.body, '/opencode'))))
     runs-on: ubuntu-latest
@@ -162,58 +168,181 @@ jobs:
         run: >
           set -euo pipefail
 
-          mkdir -p .opencode-ci/previous-worker
+          python3 - <<'PY'
 
-          previous=''
+          import datetime, io, json, os, re, subprocess, zipfile
 
-          for candidate in $(gh run list --workflow opencode.yml --limit 16 --json databaseId,conclusion --jq '.[] |
-          select(.conclusion == "failure" or .conclusion == "cancelled") | .databaseId'); do
-            if gh api "repos/$GITHUB_REPOSITORY/actions/runs/$candidate/jobs" --jq '.jobs[] | select(.name | startswith("opencode (")) | .id' | grep -q .; then
-              previous="$candidate"
+          from pathlib import Path
+
+
+          root = Path('.opencode-ci')
+
+          (root/'candidates').mkdir(parents=True, exist_ok=True)
+
+          (root/'current-batch').mkdir(exist_ok=True)
+
+          (root/'previous-worker').mkdir(exist_ok=True)
+
+          repo = os.environ['GITHUB_REPOSITORY']
+
+          current = os.environ.get('RECOVERY_SOURCE_RUN_ID', os.environ['GITHUB_RUN_ID'])
+
+          assert current.isdigit(), 'Invalid source run identifier'
+
+
+          def api(path):
+              return json.loads(subprocess.check_output(['gh','api',f'repos/{repo}/'+path]))
+
+          def stamp(s):
+              return datetime.datetime.fromisoformat(s.replace('Z','+00:00'))
+
+          def quality(job):
+              steps = {s['name']:s.get('conclusion') for s in job.get('steps',[])}
+              if steps.get('Verify proposed source changes') != 'success': return 0
+              if steps.get('Require integrated Firebase emulator journey') == 'success': return 3
+              if steps.get('Require hostile writes to be rejected') == 'success': return 2
+              return 1
+
+          runs =
+          json.loads(subprocess.check_output(['gh','run','list','--workflow','opencode.yml','--limit','40','--json','databaseId,conclusion']))
+
+          ids = [current] + [str(r['databaseId']) for r in runs if r['conclusion'] in ('failure','cancelled') and
+          str(r['databaseId']) != current]
+
+          ranked, summary, eligible = [], [], 0
+
+          for run in ids:
+              jobs = api(f'actions/runs/{run}/jobs?per_page=100')['jobs']
+              work = [j for j in jobs if j['name'].startswith('opencode (')]
+              if not work: continue
+              good = [j for j in work if quality(j) and j.get('completed_at')]
+              summary.extend({'run':run,'job':j['name'],'quality':quality(j),'conclusion':j.get('conclusion')} for j in work)
+              if not good: continue
+              artifacts = api(f'actions/runs/{run}/artifacts?per_page=100')['artifacts']
+              for artifact in artifacts:
+                  if artifact['expired'] or not artifact['name'].startswith('OpenCode-worker-evidence') or artifact['size_in_bytes'] > 16*1024*1024: continue
+                  created = stamp(artifact['created_at'])
+                  for job in good:
+                      if stamp(job['started_at']) <= created <= stamp(job['completed_at']) + datetime.timedelta(seconds=5):
+                          ranked.append((quality(job),artifact['created_at'],run,job,artifact,artifacts))
+              eligible += 1
+              if eligible >= 3: break
+
+          choices, logs = [], []
+
+          for score,created,run,job,artifact,artifacts in sorted(ranked,key=lambda x:(x[0],x[1]),reverse=True):
+              data = subprocess.check_output(['gh','api',f'repos/{repo}/actions/artifacts/{artifact["id"]}/zip'])
+              with zipfile.ZipFile(io.BytesIO(data)) as z:
+                  files=[i for i in z.infolist() if Path(i.filename).name=='opencode-proposed.patch' and 0 < i.file_size <= 8*1024*1024]
+                  if not files: continue
+                  target=root/'candidates'/f'{run}-{artifact["id"]}.patch'
+                  target.write_bytes(z.read(files[0]))
+              choice={'run':run,'job':job['name'],'quality':score,'artifact':artifact['id'],'createdAt':created,'patch':str(target)}
+              choices.append(choice)
+              passage=re.search(r'\((\d+)\)',job['name']).group(1)
+              gate=next((a for a in artifacts if a['name']==f'Firestore-security-gate-{passage}' and not a['expired'] and a['size_in_bytes'] < 16*1024*1024),None)
+              if gate:
+                  raw=subprocess.check_output(['gh','api',f'repos/{repo}/actions/artifacts/{gate["id"]}/zip'])
+                  with zipfile.ZipFile(io.BytesIO(raw)) as z:
+                      for name in z.namelist():
+                          if Path(name).name not in ('client-journey.log','execution.log'): continue
+                          text=re.sub(r'\x1b\[[0-9;]*[A-Za-z]','',z.read(name).decode(errors='replace'))
+                          lines=[line for line in text.splitlines() if len(line)<1600 and re.search(r'FAIL|Error|denied|permission|evaluation|Tests:|Test Suites:| at |undefined|Missing',line,re.I)]
+                          excerpt='\n'.join(lines[-25:])+'\n'+text[-1200:]
+                          logs.append(f'## {run} {job["name"]} {Path(name).name}\n{excerpt}')
+              if len(choices)>=3: break
+
+          (root/'repair-selection.json').write_text(json.dumps(choices,indent=2)+'\n')
+
+          (root/'current-batch'/'status.json').write_text(json.dumps(summary,indent=2)+'\n')
+
+          context='# Repair handoff — restore the strongest candidate, not the latest regression\n\nQuality 1 = source tests
+          passed; 2 = real security gate passed; 3 = real client journey
+          passed.\n\n'+json.dumps(choices,indent=2)+'\n\n'+'\n\n'.join(logs)
+
+          (root/'repair-context.md').write_text(context)
+
+          (root/'previous-worker'/'failed.log').write_text(context)
+
+          print('Prepared',len(choices),'bounded, tested source candidates; generated/cache artifacts excluded.')
+
+
+          PY
+      - name: Restore strongest tested candidate without credentials
+        if: env.MODE == 'work'
+        run: >
+          set -euo pipefail
+
+          python3 - <<'PY'
+
+          import json, subprocess
+
+          from pathlib import Path
+
+
+          data=Path('.opencode-ci/repair-selection.json')
+
+          choices=json.loads(data.read_text()) if data.exists() else []
+
+          filters=['--exclude=*.jar','--exclude=*.zip','--exclude=*.apk','--exclude=*.db','--exclude=*.sqlite','--exclude=*.log','--exclude=*.pyc','--exclude=**/node_modules/**','--exclude=docs/source-history/**','--exclude=**/.env*']
+
+          for prefix in ['src','app','tests','backend','backend-tests','firebase','plugins','scripts','docs','assets','deploy']:
+              filters.append('--include='+prefix+'/**')
+          for name in
+          ['package.json','package-lock.json','app.json','firebase.json','.firebaserc','.gitignore','README.md','VERIFICATION.md','.github/workflows/android-apk.yml']:
+              filters.append('--include='+name)
+          assert subprocess.run(['git','diff','--quiet']).returncode == 0, 'Unexpected existing source edits before recovery'
+
+          assert subprocess.run(['git','diff','--cached','--quiet']).returncode == 0, 'Unexpected staged edits before recovery'
+
+          restored=None
+
+          for choice in choices:
+              args=['git','apply','--whitespace=nowarn',*filters,choice['patch']]
+              if subprocess.run(args[:2]+['--reverse','--check',*args[2:]],capture_output=True).returncode == 0: continue
+              check=subprocess.run(args[:2]+['--check','--index',*args[2:]],capture_output=True,text=True)
+              if check.returncode: continue
+              subprocess.run(args[:2]+['--index',*args[2:]],check=True)
+              restored=choice
+              print('Restored candidate:',json.dumps(choice))
               break
-            fi
-          done
+          Path('.opencode-ci/restored-candidate.json').write_text(json.dumps(restored,indent=2)+'\n')
 
-          if [ -n "$previous" ]; then
-            gh run view "$previous" --log-failed > .opencode-ci/previous-worker/failed.log 2>&1 || true
-            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$previous/artifacts" --jq '.artifacts[] | select(.expired == false) | .id' > .opencode-ci/previous-worker/artifact-ids.txt
-            while read -r artifact_id; do
-              mkdir -p ".opencode-ci/previous-worker/$artifact_id"
-              if gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$RUNNER_TEMP/worker-$artifact_id.zip"; then
-                unzip -q -o "$RUNNER_TEMP/worker-$artifact_id.zip" -d ".opencode-ci/previous-worker/$artifact_id"
-              fi
-            done < .opencode-ci/previous-worker/artifact-ids.txt
-          fi
+          if restored is None: print('No clean candidate applied; patches retained for the agent to reconcile. No destructive
+          reset.')
 
 
-          # Each matrix passage must see failures from earlier passages of THIS run.
+          PY
 
-          mkdir -p .opencode-ci/current-batch
-
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs" --jq '.jobs[] | select(.conclusion == "failure") |
-          .id' > .opencode-ci/current-batch/failed-jobs.txt
-
-          while read -r job_id; do
-            gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$job_id/logs" > ".opencode-ci/current-batch/job-$job_id.log" 2>&1 || true
-          done < .opencode-ci/current-batch/failed-jobs.txt
-
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --jq '.artifacts[] | select(.expired == false) |
-          .id' > .opencode-ci/current-batch/artifact-ids.txt
-
-          while read -r artifact_id; do
-            mkdir -p ".opencode-ci/current-batch/$artifact_id"
-            if gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$RUNNER_TEMP/current-$artifact_id.zip"; then
-              unzip -q -o "$RUNNER_TEMP/current-$artifact_id.zip" -d ".opencode-ci/current-batch/$artifact_id"
-            fi
-          done < .opencode-ci/current-batch/artifact-ids.txt
+          if ! git diff --cached --quiet -- package.json package-lock.json; then npm ci --no-audit --no-fund; fi
+      - name: Java for real Firestore security gate
+        if: env.MODE == 'work'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Cache official emulator
+        uses: actions/cache@v4
+        with:
+          path: '${{ runner.temp }}/firestore-emulators'
+          key: firestore-emulator-1.19.8
+        if: env.MODE == 'work'
+        id: firestore_cache
       - name: OpenCode implements the next verified product slice
         if: env.MODE == 'work'
         timeout-minutes: 26
         run: >
           set -euo pipefail
 
-          timeout 1500 opencode run --agent build --model opencode/big-pickle --format json "$(cat .github/OPENCODE_MISSION.md)" |
-          tee "$RUNNER_TEMP/opencode-work.jsonl"
+          timeout 1500 opencode run --agent build --model opencode/big-pickle --format json "PRIORITY: read
+          .opencode-ci/repair-context.md and restored-candidate.json first. The strongest tested source is already restored; do
+          not restart from baseline or apply an older regression. Fix the first still-failing acceptance gate shown in
+          repair-context. When Firebase is not yet validated, check raw resource names in commit JSON versus encoded HTTP URLs and
+          real Node HTTP under jest-expo. Once Firebase passes, fix the latest native failure and then the remaining product
+          criteria. Do not change Git metadata/history; the runner owns commits. Do not write another audit. Preserve security
+          checks and zero billing. Then follow the mission and newest issue instructions.
+
+          $(cat .github/OPENCODE_MISSION.md)" | tee "$RUNNER_TEMP/opencode-work.jsonl"
 
           python3 - <<'PYWORK'
 
@@ -243,6 +372,54 @@ jobs:
             echo '::warning::Worker edits to its execution controls were rejected and preserved as evidence; restoring the authorized baseline before testing product changes.'
             git restore --source="$base" --staged --worktree -- .github/workflows/opencode.yml opencode.json .github/OPENCODE_MISSION.md
           fi
+      - name: Stage only product source and squash unpublished agent commits
+        if: env.MODE == 'work'
+        run: >
+          set -euo pipefail
+
+          python3 - <<'PY'
+
+          import os, subprocess
+
+          from pathlib import Path
+
+
+          base=(Path(os.environ['RUNNER_TEMP'])/'opencode-base-head').read_text().strip()
+
+          subprocess.run(['git','cat-file','-e',base+'^{commit}'],check=True)
+
+          # Only local, unpublished agent commits in this fresh runner are squashed.
+
+          subprocess.run(['git','reset','--soft',base],check=True)
+
+          raw=subprocess.check_output(['git','diff','--name-only','-z',base]).split(b'\0')
+
+          raw+=subprocess.check_output(['git','ls-files','--others','--exclude-standard','-z']).split(b'\0')
+
+          prefixes={'src','app','tests','backend','backend-tests','firebase','plugins','scripts','docs','assets','deploy'}
+
+          roots={'package.json','package-lock.json','app.json','firebase.json','.firebaserc','.gitignore','README.md','VERIFICATION.md','.github/workflows/android-apk.yml'}
+
+          generated={'.jar','.zip','.apk','.db','.sqlite','.log','.pyc','.class','.heapsnapshot'}
+
+          for encoded in sorted(set(raw)):
+              if not encoded: continue
+              name=encoded.decode();path=Path(name)
+              allowed=(name in roots or (path.parts and path.parts[0] in prefixes))
+              allowed=allowed and not name.startswith('docs/source-history/') and path.suffix not in generated
+              allowed=allowed and not any(part in {'.git','node_modules','.cache','.opencode-ci','__pycache__'} for part in path.parts)
+              allowed=allowed and not (path.name.startswith('.env') and path.name!='.env.example')
+              allowed=allowed and name!='docs/CROSS_REPOSITORY_REQUIREMENTS.md'
+              if path.exists() and (path.is_symlink() or path.is_file() and path.stat().st_size>5*1024*1024): allowed=False
+              if allowed:
+                  subprocess.run(['git','add','-A','--',name],check=True)
+              elif subprocess.run(['git','cat-file','-e',base+':'+name],capture_output=True).returncode == 0:
+                  subprocess.run(['git','restore','--source='+base,'--staged','--worktree','--',name],check=True)
+              else:
+                  subprocess.run(['git','rm','--cached','--ignore-unmatch','--',name],check=True,stdout=subprocess.DEVNULL)
+                  print('Excluded generated or non-product path:',name)
+
+          PY
       - name: Verify proposed source changes
         if: env.MODE == 'work'
         run: |
@@ -251,18 +428,6 @@ jobs:
           npm test
           npm run test:backend
           git diff --check
-      - name: Java for real Firestore security gate
-        if: env.MODE == 'work'
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-      - name: Cache official emulator
-        uses: actions/cache@v4
-        with:
-          path: '${{ runner.temp }}/firestore-emulators'
-          key: firestore-emulator-1.19.8
-        if: env.MODE == 'work'
       - name: Prepare isolated demo project and hostile requests
         run: >
           mkdir -p /tmp/chorescore-audit-firestore
@@ -453,15 +618,35 @@ jobs:
 
           npm exec --yes --package=firebase-tools@14.22.0 -- firebase emulators:exec --project demo-chorescore-audit --config
           /tmp/chorescore-audit-firestore/firebase.json --only firestore 'npm test -- --runTestsByPath
-          tests/firebaseEmulator.test.ts' 2>&1 | tee /tmp/chorescore-audit-firestore/client-journey.log
+          tests/firebaseEmulator.test.ts --json --outputFile=/tmp/chorescore-audit-firestore/client-tests.json' 2>&1 | tee
+          /tmp/chorescore-audit-firestore/client-journey.log
+
+
+          python3 - <<'PY'
+
+          import json
+
+          from pathlib import Path
+
+          r=json.loads(Path('/tmp/chorescore-audit-firestore/client-tests.json').read_text())
+
+          assert r['numPassedTests'] > 0, 'No actual emulator journey test executed'
+
+          assert r['numFailedTests'] == 0 and r['numPendingTests'] == 0, 'Emulator journey has failed or skipped tests'
+
+          PY
       - name: Expose precise audit failure diagnostics
         if: failure() && env.MODE == 'work'
         run: |-
           python3 - <<'PY'
+          import re
           from pathlib import Path
-          p=Path('/tmp/chorescore-audit-firestore/execution.log')
-          if p.exists():
-           s=p.read_text(errors='replace')[-6000:]
+          root=Path('/tmp/chorescore-audit-firestore')
+          p=next((root/n for n in ('client-journey.log','execution.log') if (root/n).exists()),None)
+          if p:
+           text=re.sub(r'\x1b\[[0-9;]*[A-Za-z]','',p.read_text(errors='replace'))
+           lines=[s for s in text.splitlines() if len(s)<1600 and re.search(r'FAIL|Error|denied|permission|evaluation|Tests:|Test Suites:| at |undefined|Missing',s,re.I)]
+           s=p.name+'\n'+'\n'.join(lines[-25:])+'\n'+text[-1500:]
            print('::error::'+s.replace('%','%25').replace('\r','%0D').replace('\n','%0A'))
           PY
       - name: Security gate evidence
@@ -479,7 +664,11 @@ jobs:
         run: >
           set -euo pipefail
 
-          git add -A
+          git config core.hooksPath /dev/null
+
+          git diff --exit-code
+
+          git diff --cached --check
 
           python3 - <<'PY'
 
@@ -503,8 +692,8 @@ jobs:
           fi
 
           if [ "$(git rev-parse HEAD)" = "$(cat "$RUNNER_TEMP/opencode-base-head")" ]; then
-            echo 'No source change: no commit or claim of delivery.' >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+            echo '::error::No implemented repair: no commit, no delivery claim. Preserve diagnostics for the next passage.'
+            exit 1
           fi
 
           gh auth setup-git
@@ -533,18 +722,62 @@ jobs:
           criteria.\n' >> "$GITHUB_STEP_SUMMARY"
       - name: Preserve worker response and proposed patch
         if: always()
-        run: |
-          git add -N .
-          if [ -f "$RUNNER_TEMP/opencode-base-head" ]; then
-            git diff --binary "$(cat "$RUNNER_TEMP/opencode-base-head")" > "$RUNNER_TEMP/opencode-proposed.patch"
-          else
-            git diff --binary > "$RUNNER_TEMP/opencode-proposed.patch"
-          fi
+        run: >
+          python3 - <<'PY'
+
+          import os, subprocess
+
+          from pathlib import Path
+
+
+          base=(Path(os.environ['RUNNER_TEMP'])/'opencode-base-head').read_text().strip()
+
+          subprocess.run(['git','cat-file','-e',base+'^{commit}'],check=True)
+
+          # Only local, unpublished agent commits in this fresh runner are squashed.
+
+
+          raw=subprocess.check_output(['git','diff','--name-only','-z',base]).split(b'\0')
+
+          raw+=subprocess.check_output(['git','ls-files','--others','--exclude-standard','-z']).split(b'\0')
+
+          prefixes={'src','app','tests','backend','backend-tests','firebase','plugins','scripts','docs','assets','deploy'}
+
+          roots={'package.json','package-lock.json','app.json','firebase.json','.firebaserc','.gitignore','README.md','VERIFICATION.md','.github/workflows/android-apk.yml'}
+
+          generated={'.jar','.zip','.apk','.db','.sqlite','.log','.pyc','.class','.heapsnapshot'}
+
+          for encoded in sorted(set(raw)):
+              if not encoded: continue
+              name=encoded.decode();path=Path(name)
+              allowed=(name in roots or (path.parts and path.parts[0] in prefixes))
+              allowed=allowed and not name.startswith('docs/source-history/') and path.suffix not in generated
+              allowed=allowed and not any(part in {'.git','node_modules','.cache','.opencode-ci','__pycache__'} for part in path.parts)
+              allowed=allowed and not (path.name.startswith('.env') and path.name!='.env.example')
+              allowed=allowed and name!='docs/CROSS_REPOSITORY_REQUIREMENTS.md'
+              if path.exists() and (path.is_symlink() or path.is_file() and path.stat().st_size>5*1024*1024): allowed=False
+              if allowed:
+                  subprocess.run(['git','add','-A','--',name],check=True)
+              elif subprocess.run(['git','cat-file','-e',base+':'+name],capture_output=True).returncode == 0:
+                  subprocess.run(['git','restore','--source='+base,'--staged','--worktree','--',name],check=True)
+              else:
+                  subprocess.run(['git','rm','--cached','--ignore-unmatch','--',name],check=True,stdout=subprocess.DEVNULL)
+                  print('Excluded generated or non-product path:',name)
+
+          with open(Path(os.environ['RUNNER_TEMP'])/'opencode-proposed.patch','wb') as output:
+           subprocess.run(['git','diff','--cached','--binary',base],stdout=output,check=True)
+          PY
+      - name: Keep official emulator cache even after test failure
+        if: always() && env.MODE == 'work' && steps.firestore_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: '${{ runner.temp }}/firestore-emulators'
+          key: firestore-emulator-1.19.8
       - name: Worker evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: OpenCode-worker-evidence
+          name: 'OpenCode-worker-evidence-${{ matrix.passage }}'
           path: |
             ${{ runner.temp }}/opencode-health.jsonl
             ${{ runner.temp }}/opencode-work.jsonl
@@ -554,7 +787,7 @@ jobs:
           retention-days: 7
   firestore_audit:
     name: Audit réel des règles Firestore — aucun déploiement
-    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'audit'
+    if: github.event.repository.private == false && (github.event_name == 'workflow_dispatch' && inputs.mode == 'audit')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -788,3 +1021,182 @@ jobs:
           path: /tmp/chorescore-audit-firestore/
           retention-days: 14
           if-no-files-found: error
+  diagnostic:
+    name: Diagnostic des blocages et candidats conservés
+    if: github.event.repository.private == false && (github.event_name == 'workflow_dispatch' && inputs.mode == 'diagnostic')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check current product branch for recovery test
+        uses: actions/checkout@v4
+        with:
+          ref: feat/product-reconstruction
+          persist-credentials: false
+      - name: Choose strongest retained source candidate
+        env:
+          GH_TOKEN: '${{ github.token }}'
+          RECOVERY_SOURCE_RUN_ID: '${{ inputs.diagnostic_run }}'
+        run: >
+          python3 - <<'PY'
+
+          import datetime, io, json, os, re, subprocess, zipfile
+
+          from pathlib import Path
+
+
+          root = Path('.opencode-ci')
+
+          (root/'candidates').mkdir(parents=True, exist_ok=True)
+
+          (root/'current-batch').mkdir(exist_ok=True)
+
+          (root/'previous-worker').mkdir(exist_ok=True)
+
+          repo = os.environ['GITHUB_REPOSITORY']
+
+          current = os.environ.get('RECOVERY_SOURCE_RUN_ID', os.environ['GITHUB_RUN_ID'])
+
+          assert current.isdigit(), 'Invalid source run identifier'
+
+
+          def api(path):
+              return json.loads(subprocess.check_output(['gh','api',f'repos/{repo}/'+path]))
+
+          def stamp(s):
+              return datetime.datetime.fromisoformat(s.replace('Z','+00:00'))
+
+          def quality(job):
+              steps = {s['name']:s.get('conclusion') for s in job.get('steps',[])}
+              if steps.get('Verify proposed source changes') != 'success': return 0
+              if steps.get('Require integrated Firebase emulator journey') == 'success': return 3
+              if steps.get('Require hostile writes to be rejected') == 'success': return 2
+              return 1
+
+          runs =
+          json.loads(subprocess.check_output(['gh','run','list','--workflow','opencode.yml','--limit','40','--json','databaseId,conclusion']))
+
+          ids = [current] + [str(r['databaseId']) for r in runs if r['conclusion'] in ('failure','cancelled') and
+          str(r['databaseId']) != current]
+
+          ranked, summary, eligible = [], [], 0
+
+          for run in ids:
+              jobs = api(f'actions/runs/{run}/jobs?per_page=100')['jobs']
+              work = [j for j in jobs if j['name'].startswith('opencode (')]
+              if not work: continue
+              good = [j for j in work if quality(j) and j.get('completed_at')]
+              summary.extend({'run':run,'job':j['name'],'quality':quality(j),'conclusion':j.get('conclusion')} for j in work)
+              if not good: continue
+              artifacts = api(f'actions/runs/{run}/artifacts?per_page=100')['artifacts']
+              for artifact in artifacts:
+                  if artifact['expired'] or not artifact['name'].startswith('OpenCode-worker-evidence') or artifact['size_in_bytes'] > 16*1024*1024: continue
+                  created = stamp(artifact['created_at'])
+                  for job in good:
+                      if stamp(job['started_at']) <= created <= stamp(job['completed_at']) + datetime.timedelta(seconds=5):
+                          ranked.append((quality(job),artifact['created_at'],run,job,artifact,artifacts))
+              eligible += 1
+              if eligible >= 3: break
+
+          choices, logs = [], []
+
+          for score,created,run,job,artifact,artifacts in sorted(ranked,key=lambda x:(x[0],x[1]),reverse=True):
+              data = subprocess.check_output(['gh','api',f'repos/{repo}/actions/artifacts/{artifact["id"]}/zip'])
+              with zipfile.ZipFile(io.BytesIO(data)) as z:
+                  files=[i for i in z.infolist() if Path(i.filename).name=='opencode-proposed.patch' and 0 < i.file_size <= 8*1024*1024]
+                  if not files: continue
+                  target=root/'candidates'/f'{run}-{artifact["id"]}.patch'
+                  target.write_bytes(z.read(files[0]))
+              choice={'run':run,'job':job['name'],'quality':score,'artifact':artifact['id'],'createdAt':created,'patch':str(target)}
+              choices.append(choice)
+              passage=re.search(r'\((\d+)\)',job['name']).group(1)
+              gate=next((a for a in artifacts if a['name']==f'Firestore-security-gate-{passage}' and not a['expired'] and a['size_in_bytes'] < 16*1024*1024),None)
+              if gate:
+                  raw=subprocess.check_output(['gh','api',f'repos/{repo}/actions/artifacts/{gate["id"]}/zip'])
+                  with zipfile.ZipFile(io.BytesIO(raw)) as z:
+                      for name in z.namelist():
+                          if Path(name).name not in ('client-journey.log','execution.log'): continue
+                          text=re.sub(r'\x1b\[[0-9;]*[A-Za-z]','',z.read(name).decode(errors='replace'))
+                          lines=[line for line in text.splitlines() if len(line)<1600 and re.search(r'FAIL|Error|denied|permission|evaluation|Tests:|Test Suites:| at |undefined|Missing',line,re.I)]
+                          excerpt='\n'.join(lines[-25:])+'\n'+text[-1200:]
+                          logs.append(f'## {run} {job["name"]} {Path(name).name}\n{excerpt}')
+              if len(choices)>=3: break
+
+          (root/'repair-selection.json').write_text(json.dumps(choices,indent=2)+'\n')
+
+          (root/'current-batch'/'status.json').write_text(json.dumps(summary,indent=2)+'\n')
+
+          context='# Repair handoff — restore the strongest candidate, not the latest regression\n\nQuality 1 = source tests
+          passed; 2 = real security gate passed; 3 = real client journey
+          passed.\n\n'+json.dumps(choices,indent=2)+'\n\n'+'\n\n'.join(logs)
+
+          (root/'repair-context.md').write_text(context)
+
+          (root/'previous-worker'/'failed.log').write_text(context)
+
+          print('Prepared',len(choices),'bounded, tested source candidates; generated/cache artifacts excluded.')
+
+
+          PY
+      - name: Validate source restoration without running or publishing product code
+        run: >
+          python3 - <<'PY'
+
+          import json, subprocess
+
+          from pathlib import Path
+
+
+          data=Path('.opencode-ci/repair-selection.json')
+
+          choices=json.loads(data.read_text()) if data.exists() else []
+
+          filters=['--exclude=*.jar','--exclude=*.zip','--exclude=*.apk','--exclude=*.db','--exclude=*.sqlite','--exclude=*.log','--exclude=*.pyc','--exclude=**/node_modules/**','--exclude=docs/source-history/**','--exclude=**/.env*']
+
+          for prefix in ['src','app','tests','backend','backend-tests','firebase','plugins','scripts','docs','assets','deploy']:
+              filters.append('--include='+prefix+'/**')
+          for name in
+          ['package.json','package-lock.json','app.json','firebase.json','.firebaserc','.gitignore','README.md','VERIFICATION.md','.github/workflows/android-apk.yml']:
+              filters.append('--include='+name)
+          assert subprocess.run(['git','diff','--quiet']).returncode == 0, 'Unexpected existing source edits before recovery'
+
+          assert subprocess.run(['git','diff','--cached','--quiet']).returncode == 0, 'Unexpected staged edits before recovery'
+
+          restored=None
+
+          for choice in choices:
+              args=['git','apply','--whitespace=nowarn',*filters,choice['patch']]
+              if subprocess.run(args[:2]+['--reverse','--check',*args[2:]],capture_output=True).returncode == 0: continue
+              check=subprocess.run(args[:2]+['--check','--index',*args[2:]],capture_output=True,text=True)
+              if check.returncode: continue
+              subprocess.run(args[:2]+['--index',*args[2:]],check=True)
+              restored=choice
+              print('Restored candidate:',json.dumps(choice))
+              break
+          Path('.opencode-ci/restored-candidate.json').write_text(json.dumps(restored,indent=2)+'\n')
+
+          if restored is None: print('No clean candidate applied; patches retained for the agent to reconcile. No destructive
+          reset.')
+
+
+          import json
+
+          result=json.loads(Path('.opencode-ci/restored-candidate.json').read_text())
+
+          assert result is not None, 'No retained candidate could be restored'
+
+          print('::notice::RESTORED '+json.dumps(result))
+
+          PY
+
+          git diff --cached --stat
+      - name: Preserve recovery proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Verified-candidate-recovery
+          path: .opencode-ci/
+          include-hidden-files: true
+          retention-days: 3
