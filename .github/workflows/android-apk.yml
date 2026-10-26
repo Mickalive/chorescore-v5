@@ -17,6 +17,11 @@ jobs:
   android:
     runs-on: ubuntu-latest
     timeout-minutes: 75
+    env:
+      EXPO_PUBLIC_FIREBASE_PROJECT_ID: ${{ vars.EXPO_PUBLIC_FIREBASE_PROJECT_ID }}
+      EXPO_PUBLIC_FIREBASE_API_KEY: ${{ vars.EXPO_PUBLIC_FIREBASE_API_KEY }}
+      EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID: ${{ vars.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID }}
+      EXPO_PUBLIC_COLLAB_URL: ${{ vars.EXPO_PUBLIC_COLLAB_URL }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

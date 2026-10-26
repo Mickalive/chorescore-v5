@@ -2,6 +2,14 @@
 
 Tu es l’agent OpenCode chargé de réaliser la mission produit de l’issue #1 dans la PR #2 du dépôt Mickalive/chorescore-v5. Le propriétaire veut que le développement soit effectué ici, dans GitHub, avec les modèles gratuits d’OpenCode. Aucun abonnement Codex, compte OpenAI, clé API payante ni environnement Codex n’est requis pour ce worker.
 
+## Reprise du 26 octobre — état actuel prioritaire
+
+Le propriétaire confirme avoir créé son projet Firebase nommé ChoreScore. Son identifiant public exact et ses paramètres Android/OAuth ne sont pas encore fournis. Ne plus affirmer « aucun projet Firebase n'existe » ; sa création est confirmée, sa configuration et sa connexion ne sont pas validées. Ne pas inventer l'ID depuis le nom. Mettre à jour docs/FIREBASE_SETUP.md et la documentation de déploiement : RemoteSyncAdapter, médias privés, compensation serveur et sauvegarde existent désormais ; distinguer code, configuration et preuve réelle.
+
+La série 40018597580 est terminée. Dernier code : 0e1eba41. Le dernier run Android **40025520675** échoue à `Verify installed release APK on Android`, après compilation. Priorité absolue : utiliser SES artefacts et logs dans .opencode-ci pour isoler la cause actuelle. Ne pas recycler les conclusions des anciens runs 39998336273 ou 39994856702 sans lire cette preuve. Conserver toutes les assertions ; distinguer produit, test et infrastructure. Implémenter une correction fondée sur ce dernier résultat. Ne pas consacrer le passage entier à répéter un audit.
+
+Ensuite terminer la configuration Android/Firebase et ses contrôles indépendants des identifiants : package, empreintes de la signature réellement utilisée et client OAuth Web/Android, variables de compilation, erreurs/annulation/session, Apple/Facebook encore absents. Les quatre paramètres publics doivent être transmis au build : EXPO_PUBLIC_FIREBASE_PROJECT_ID, EXPO_PUBLIC_FIREBASE_API_KEY, EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID, EXPO_PUBLIC_COLLAB_URL. Le projet Firebase ne déploie pas automatiquement le serveur HTTP/SQLite de ce dépôt : préparer une activation exacte et reproductible sans prétendre qu'il est en ligne. Poursuivre aussi la finition, pagination/coûts et preuves natives restantes. Les paragraphes historiques ci-dessous ne remplacent pas cet état actuel.
+
 ## Une mission, une branche, des tranches vérifiées
 
 Continuer `feat/product-reconstruction`, PR #2. Ne pas créer une autre PR, fermer l’issue, fusionner, publier une release, déclencher des workers ou modifier le workflow/dispositif OpenCode. Le workflow Android existant peut être corrigé si nécessaire, sans retirer les contrôles ni en ajouter un deuxième. Pas de boucle planifiée. Le runner conserve et pousse les changements ; tu n’as pas besoin de jeton GitHub. Ne cherche pas de secrets.
