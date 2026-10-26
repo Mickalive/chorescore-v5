@@ -97,6 +97,14 @@ describe('Android journey driver', () => {
     }
   });
 
+  it('only feeds ASCII to adb input text and fails loudly otherwise', () => {
+    const input = functionBody('input_text');
+    expect(input).toContain('isascii()');
+    expect(input).toContain('AssertionError');
+    expect(source).not.toContain("fill('todos.createTitle','Todo tâche CI')");
+    expect(source).not.toContain("fill('todos.createTitle','Todo dépense CI')");
+  });
+
   it('keeps the full native journey assertions', () => {
     for (const marker of [
       'add_member_at_creation',

@@ -249,29 +249,22 @@ def scroll_find(label=None,resource=None,partial=False):
 def scroll_to(label=None,resource=None,partial=False):
     tap_node(scroll_find(label,resource,partial))
 
+def input_text(value):
+    # `adb shell input text` feeds the device key map, which cannot emit
+    # arbitrary Unicode: run 40328753105 died with exit 255 on 'â'. The Android
+    # journey therefore types ASCII labels only; Unicode persistence is proven
+    # by the repository/domain tests instead of by a flaky key event. Fail
+    # loudly if a future edit reintroduces a character adb cannot type.
+    if not value.isascii():
+        raise AssertionError(f'adb input text cannot type non-ASCII value: {value!r}')
+    adb('shell','input','text',value.replace(' ','%s'))
+
 def fill_node(node,value,clear=False):
     tap_node(node)
     if clear:
         adb('shell','input','keyevent','KEYCODE_MOVE_END')
         for _ in range(12):adb('shell','input','keyevent','KEYCODE_DEL')
-    # Use input text with %s for spaces; for unicode, use base64 via input text is unreliable,
-    # so prefer typing char by char with keyevents where possible or use am broadcast/ime
-    # ADB input text supports unicode in some Android versions but better to use 'input text' with encoding
-    try:
-        # Replace spaces
-        escaped = value.replace(' ', '%s')
-        adb('shell','input','text',escaped)
-    except Exception:
-        # Fallback: type via keyevents for ASCII parts
-        for ch in value:
-            if ch == ' ':
-                adb('shell','input','keyevent','62')
-            elif ch.isascii():
-                # Use input keyevent for letters/digits
-                adb('shell','input','text',ch)
-            else:
-                # Try to send as text anyway
-                adb('shell','input','text',ch.replace(' ','%s'))
+    input_text(value)
     hide_keyboard()
 
 def fill(resource,value,clear=False):
@@ -622,7 +615,7 @@ try:
     # Two todo kinds; complete each with a double tap, exactly one entry each.
     tap('À faire')
     tap(resource='todos.newItem')
-    fill('todos.createTitle','Todo tâche CI')
+    fill('todos.createTitle','Todo tache CI')
     fill('todos.createNotes','Rappel CI')
     scroll_to(resource='todos.reminderDateTime')
     tomorrow=time.strftime('%Y-%m-%d',time.localtime(time.time()+86400))
@@ -641,7 +634,7 @@ try:
     locate(resource='todos.newItem')
 
     tap(resource='todos.newItem')
-    fill('todos.createTitle','Todo dépense CI')
+    fill('todos.createTitle','Todo depense CI')
     scroll_to(resource='todos.createKind.expense')
     fill('todos.createAmount','2.00')
     scroll_to(resource='todos.createSubmit')
@@ -673,8 +666,8 @@ try:
     tap('Balances')
     scroll_find('Courses CI',partial=True)
     scroll_find('Cuisine CI',partial=True)
-    scroll_find('Todo tâche CI',partial=True)
-    scroll_find('Todo dépense CI',partial=True)
+    scroll_find('Todo tache CI',partial=True)
+    scroll_find('Todo depense CI',partial=True)
     screenshot('balances-before-restart-android')
     adb('shell','am','force-stop',PACKAGE)
     start()

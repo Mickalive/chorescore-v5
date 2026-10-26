@@ -62,17 +62,28 @@ test('real SQLite: task + expense completion is unique, rollback-safe and durabl
     const result = await Promise.allSettled([completeTodoAtomic(repos, input), completeTodoAtomic(repos, input)]);
     expect(result.filter(r => r.status === 'fulfilled')).toHaveLength(1);
   }
+  const unicodeTodo = await repos.todos.create({ householdId: household.id,
+    title: 'Payer l\u2019électricité – tâche café', kind: 'task', status: 'todo',
+    assigneeMemberId: ids[0], beneficiaryMemberIds: ids, dueAt: null, reminderAt: null,
+    notes: 'Dépôt à l\u2019agence nº 4', persistentTaskId: null });
   native.close();
   native = new sqlite.DatabaseSync(path);
+  expect(await repos.todos.getById(unicodeTodo.id)).toMatchObject({
+    title: 'Payer l\u2019électricité – tâche café',
+    notes: 'Dépôt à l\u2019agence nº 4',
+  });
   expect(await repos.contributions.getByHousehold(household.id)).toEqual([
     expect.objectContaining({ unit: 'points', value: 12, note: 'Persistante' }),
   ]);
   const expenses = await repos.expenses.getByHousehold(household.id);
   expect(expenses).toHaveLength(1);
   expect(expenses[0]).toMatchObject({ amountMinor: 101, currency: 'EUR', note: 'Persistante' });
-  expect(await repos.todos.getByHousehold(household.id)).toEqual([
-    expect.objectContaining({ status: 'completed' }), expect.objectContaining({ status: 'completed' }),
-  ]);
+  const persistedTodos = await repos.todos.getByHousehold(household.id);
+  expect(persistedTodos).toHaveLength(3);
+  expect(persistedTodos).toEqual(expect.arrayContaining([
+    expect.objectContaining({ status: 'completed' }),
+    expect.objectContaining({ status: 'todo', title: 'Payer l\u2019électricité – tâche café' }),
+  ]));
   await initializeSchema(mockDatabase);
   expect(await applyV4ColumnMigrations(mockDatabase)).toBe(0);
   expect((await repos.households.getById(household.id))?.contributionUnit).toBe('points');
