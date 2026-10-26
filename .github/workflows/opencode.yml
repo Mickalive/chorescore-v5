@@ -61,17 +61,6 @@ jobs:
           ref: feat/product-reconstruction
           fetch-depth: 1
           persist-credentials: false
-      - name: Keep reviewed automation in the integrated product branch
-        run: |-
-          set -euo pipefail
-          git fetch origin main --depth=1
-          git show FETCH_HEAD:.github/workflows/opencode.yml > .github/workflows/opencode.yml
-          if ! git diff --quiet -- .github/workflows/opencode.yml; then
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add .github/workflows/opencode.yml
-            git commit -m 'Keep reviewed free delivery and security gates in the integrated PR'
-          fi
       - name: Record starting revision
         run: git rev-parse HEAD > "$RUNNER_TEMP/opencode-base-head"
       - uses: actions/setup-node@v4
