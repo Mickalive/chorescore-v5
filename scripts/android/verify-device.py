@@ -106,30 +106,51 @@ def dismiss_system_dialog(root):
     return False
 
 def keyboard_shown():
-    """Report whether the IME currently owns the focused window.
+    """Report whether the IME window is actually visible on screen.
 
-    `dumpsys input_method` keeps stale mInputShown flags while a React Native
-    text field re-attaches, which previously made the journey press BACK after
-    Enter had already hidden the keyboard. BACK then closed MainActivity and
-    left the Pixel Launcher on screen. The focused-window line is the same
-    signal Android uses to route BACK, so it is the only safe indicator here.
+    On Android 15 the focused-window line can keep naming InputMethod after the
+    IME has hidden (run 40025520675: Enter hid the keyboard at 13:30:16, the app
+    still owned the task, yet the old focus check decided BACK was safe and the
+    BACK closed MainActivity at 13:30:19). Never trust mCurrentFocus alone and
+    never use dumpsys input_method's stale mInputShown flags. Inspect the real
+    InputMethod window block instead.
     """
     dump=adb('shell','dumpsys','window','windows')
-    focus=[line for line in dump.splitlines() if 'mCurrentFocus=' in line]
-    if focus:
-        return any('InputMethod' in line for line in focus)
-    fallback=adb('shell','dumpsys','input_method')
-    return bool(re.search(r'mInputShown=true|mIsInputViewShown=true',fallback))
+    blocks=re.split(r'\n  Window #',dump)
+    for block in blocks:
+        if 'InputMethod' not in block:
+            continue
+        visible=re.search(r'mViewVisibility=0x0\b',block)
+        concealed=re.search(r'isVisible=false|mHasSurface=false',block)
+        if visible and not concealed:
+            return True
+    return False
 
 def hide_keyboard():
-    """Dismiss the IME only while it really has input focus.
+    """Dismiss a visible IME without sending BACK or ESCAPE.
 
-    A BACK press sent when the IME is already gone reaches MainActivity and
-    exits the app. Re-check the focused window immediately before pressing.
+    BACK is not safe: when the IME has already hidden (for example because a
+    field uses blurAndSubmit) it reaches MainActivity and exits the app. In run
+    40025520675 that is exactly what happened after typing "Camille": no
+    crash, only a BACK arriving at 13:30:19 and the task closing. ESCAPE is not
+    a safe substitute either, because an unhandled ESCAPE can be redispatched
+    as BACK by the platform. Check visibility first and use gestures instead.
     """
-    if keyboard_shown():
-        adb('shell','input','keyevent','KEYCODE_BACK')
-        time.sleep(.5)
+    if not keyboard_shown():
+        return
+    # Prefer the IME's own hide affordance when it is exposed to UIAutomator.
+    for label in ('Hide keyboard','Masquer le clavier','Fermer le clavier','Close keyboard'):
+        nodes=candidates(hierarchy(),label=label,partial=True)
+        if nodes:
+            tap_node(nodes[0])
+            time.sleep(.5)
+            return
+    # Every journey form is a ScreenContainer ScrollView with
+    # keyboardDismissMode="on-drag". Drag above the IME, never on it, so the
+    # keyboard hides without touching the navigation key. Callers re-locate
+    # their next control after this possible scroll.
+    adb('shell','input','swipe','206','500','206','200','300')
+    time.sleep(.5)
 
 def foreground_packages(root):
     return {node.attrib.get('package','') for node in root.iter('node')} - {''}
@@ -168,7 +189,9 @@ def tap(label=None,resource=None,partial=False):
     tap_node(locate(label,resource,partial))
 
 def swipe(up=True):
-    adb('shell','input','swipe','206','740' if up else '260','206','260' if up else '740','350')
+    # Stay above the keyboard area (about 280 px tall on the 412x915 test
+    # profile) so scrolling works even while an IME is still animating away.
+    adb('shell','input','swipe','206','610' if up else '190','206','190' if up else '610','350')
 
 def scroll_top():
     for _ in range(12):

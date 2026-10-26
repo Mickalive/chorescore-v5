@@ -1,5 +1,5 @@
 import { LocalAuthAdapter } from '../src/infrastructure/local/LocalAuthAdapter';
-import { FirebaseAuthAdapter } from '../src/infrastructure/cloud/FirebaseAuthAdapter';
+import { FirebaseAuthAdapter, firebaseAuthConfig } from '../src/infrastructure/cloud/FirebaseAuthAdapter';
 import { SecureStorageGateway } from '../src/application/ports';
 import { randomUUID } from 'node:crypto';
 jest.mock('expo-crypto', () => ({ randomUUID: () => require('node:crypto').randomUUID() }));
@@ -76,4 +76,27 @@ test('a refresh finishing after signout cannot restore authentication', async ()
   expect(auth.getCurrentUser()).toBeNull();
   expect(await new FirebaseAuthAdapter(config, storage).restoreSession()).toBeNull();
   request.mockRestore();
+});
+
+test('the confirmed public Firebase project id is the default and stays overridable', () => {
+  const previous = { ...process.env };
+  try {
+    process.env.EXPO_PUBLIC_FIREBASE_API_KEY = 'public-test-key';
+    process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID = 'public-client-id';
+    delete process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID;
+    expect(firebaseAuthConfig()).toEqual({
+      apiKey: 'public-test-key',
+      projectId: 'chorescore-a75b1',
+      googleWebClientId: 'public-client-id',
+    });
+    process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID = 'other-project';
+    expect(firebaseAuthConfig()!.projectId).toBe('other-project');
+    delete process.env.EXPO_PUBLIC_FIREBASE_API_KEY;
+    expect(firebaseAuthConfig()).toBeNull();
+  } finally {
+    for (const key of Object.keys(process.env)) {
+      if (!(key in previous)) delete process.env[key];
+    }
+    Object.assign(process.env, previous);
+  }
 });

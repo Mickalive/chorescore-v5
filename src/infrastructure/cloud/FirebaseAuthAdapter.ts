@@ -6,12 +6,14 @@ import { AuthGateway, AuthSessionToken, AuthUser, SecureStorageGateway } from '.
 import { authUserFromSession } from '../local/e2eAuthConfig';
 
 const SESSION_KEY = 'chorescore.firebase.session';
+/** Public project id confirmed by the owner; override with the build variable. */
+export const DEFAULT_FIREBASE_PROJECT_ID = 'chorescore-a75b1';
 export interface FirebaseAuthConfig { apiKey: string; projectId: string; googleWebClientId: string; }
 export function firebaseAuthConfig(): FirebaseAuthConfig | null {
   const apiKey = process.env.EXPO_PUBLIC_FIREBASE_API_KEY;
-  const projectId = process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID;
+  const projectId = process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID || DEFAULT_FIREBASE_PROJECT_ID;
   const googleWebClientId = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
-  return apiKey && projectId && googleWebClientId ? { apiKey, projectId, googleWebClientId } : null;
+  return apiKey && googleWebClientId ? { apiKey, projectId, googleWebClientId } : null;
 }
 
 export class FirebaseAuthAdapter implements AuthGateway {

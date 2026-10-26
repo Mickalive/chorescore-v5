@@ -1,6 +1,6 @@
 # Serveur de collaboration — tranche en cours
 
-Ce serveur HTTP est implémenté et testé, avec stockage privé des médias, sauvegarde/restauration vérifiées et artefacts de déploiement TLS dans `deploy/`. Il **n’est ni déployé** (aucun compte/projet cloud fourni) et n’a pas été exercé entre deux téléphones réels.
+Ce serveur HTTP est implémenté et testé, avec stockage privé des médias, sauvegarde/restauration vérifiées et artefacts de déploiement TLS dans `deploy/`. Le projet Firebase ChoreScore existe (ID public `chorescore-a75b1`), mais ce serveur **n’est pas déployé** et sa configuration fournisseur/Android n’est pas encore validée. Il n’a pas été exercé entre deux téléphones réels.
 
 ## Exécution
 
@@ -30,7 +30,7 @@ Les membres autorisés peuvent écrire les tâches, dépenses, todos, modèles, 
 
 `npm test -- tests/clientCollaboration.test.ts` raccorde deux jeux de repositories indépendants au vrai serveur HTTP/SQLite via `RemoteSyncAdapter` (le même adaptateur que l’application) : création de groupe, invitation ciblée sans doublon, ajout/renommage de membre gardant le même identifiant, réglages de groupe, soldes identiques au centime/point, pull paginé au-delà de 100 événements, panne réseau avec outbox conservée puis `startSync`, conflit 409 qui préserve l’édition locale et reste visible, résolution par une édition ultérieure, tombstone, redémarrage du serveur et refus d’une identité étrangère. Les repositories clients de ce test sont en mémoire ; la persistance SQLite est couverte séparément par `tests/sqlite.test.ts`.
 
-**Ce test ne constitue pas une connexion réelle à Firebase ou un essai sur deux téléphones.** Le projet Firebase n’existe pas encore et aucun service distant n’est déployé.
+**Ce test ne constitue pas une connexion réelle à Firebase ou un essai sur deux téléphones.** Le projet Firebase `chorescore-a75b1` est créé, mais son fournisseur Google, son client OAuth et ses empreintes Android ne sont pas validés ; aucun service distant n’est déployé.
 
 ## Exploitation
 
@@ -40,4 +40,4 @@ Les membres autorisés peuvent écrire les tâches, dépenses, todos, modèles, 
 
 ## Travail restant avant activation
 
-Déployer ce serveur avec un vrai domaine et un vrai projet Firebase, puis vérifier le flux complet sur deux appareils authentifiés. L’interface de synchronisation existe mais son rendu Android n’a pas encore été observé. Ajouter la limitation de débit et la révocation de session côté hébergement/identité. La compensation est désormais validée et synchronisée par l’autorité, mais son écran natif de conflit/aperçu n’est pas encore prouvé sur deux appareils.
+Déployer ce serveur avec un vrai domaine, terminer la configuration du projet Firebase existant, puis vérifier le flux complet sur deux appareils authentifiés. L’interface de synchronisation existe mais son rendu Android n’a pas encore été observé. Ajouter la limitation de débit et la révocation de session côté hébergement/identité. La compensation est désormais validée et synchronisée par l’autorité, mais son écran natif de conflit/aperçu n’est pas encore prouvé sur deux appareils.

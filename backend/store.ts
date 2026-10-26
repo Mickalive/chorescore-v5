@@ -29,8 +29,14 @@ const MEDIA_GRACE_MS = 24 * 60 * 60 * 1000;
 export class CollaborationStore {
   readonly database: DatabaseSync;
   readonly mediaDirectory: string;
-  constructor(path: string, mediaDirectory = join(dirname(path), 'media')) {
+  private readonly now: () => number;
+  constructor(
+    path: string,
+    mediaDirectory = join(dirname(path), 'media'),
+    now: () => number = Date.now,
+  ) {
     this.mediaDirectory = mediaDirectory;
+    this.now = now;
     this.database = new DatabaseSync(path);
     this.database.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS groups(id TEXT PRIMARY KEY, owner TEXT NOT NULL, revision INTEGER NOT NULL, value TEXT NOT NULL);
@@ -130,7 +136,7 @@ export class CollaborationStore {
     writeFileSync(temporary,bytes,{mode:0o600});
     renameSync(temporary,destination);
     try {
-      const createdAt = Date.now();
+      const createdAt = this.now();
       this.database.prepare('INSERT INTO media VALUES(?,?,?,?,?,?,?)')
         .run(groupId,mediaId,mimeType,bytes.length,sha256,createdAt,uid);
       return { id:mediaId,mimeType,byteSize:bytes.length,sha256,createdAt:new Date(createdAt).toISOString() };
@@ -160,10 +166,15 @@ export class CollaborationStore {
     rmSync(this.mediaPath(groupId,mediaId),{force:true});
     return { deleted:true };
   }
-  /** Remove private media that no current entry references after a grace period. */
+  /** Remove private media that no current entry references after a grace period.
+   *
+   * The comparison is inclusive so an upload and a maintenance pass in the same
+   * millisecond are deterministic: grace 0 means "eligible now". The clock is
+   * injectable for boundary tests instead of relying on sleeps.
+   */
   collectMediaGarbage(graceMs = MEDIA_GRACE_MS) {
-    const cutoff = Date.now() - Math.max(0,graceMs);
-    const rows = this.database.prepare(`SELECT groupId,id FROM media m WHERE createdAt < ?
+    const cutoff = this.now() - Math.max(0,graceMs);
+    const rows = this.database.prepare(`SELECT groupId,id FROM media m WHERE createdAt <= ?
       AND NOT EXISTS (SELECT 1 FROM media_refs r WHERE r.groupId=m.groupId AND r.mediaId=m.id) LIMIT 100`).all(cutoff) as Row[];
     for (const row of rows) {
       this.database.prepare('DELETE FROM media WHERE groupId=? AND id=?').run(row.groupId,row.id);

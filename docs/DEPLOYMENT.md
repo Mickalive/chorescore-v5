@@ -1,15 +1,27 @@
 # Déploiement reproductible du serveur de collaboration
 
 Ce dossier fournit un déploiement à **un seul processus écrivain**, avec TLS
-automatique, volume persistant et sauvegarde vérifiée. Il ne crée aucun compte
-cloud : sans projet Firebase réel et sans nom de domaine, le serveur ne peut
-pas authentifier d'utilisateur ni être exposé en HTTPS public.
+automatique, volume persistant, stockage privé des médias et sauvegarde
+vérifiée. Le projet Firebase ChoreScore existe (ID public
+`chorescore-a75b1`), mais son fournisseur Google, son application Android, ses
+empreintes et son client OAuth ne sont pas encore validés. Sans fournisseur
+Google activé et sans nom de domaine, le serveur ne peut pas authentifier
+d'utilisateur ni être exposé en HTTPS public. Le code client
+(`RemoteSyncAdapter`, `HttpMediaGateway`) est raccordé à cette URL quand elle
+est fournie ; cela ne remplace pas un déploiement réel.
+
+Le projet Firebase **ne déploie pas** ce serveur : il ne faut pas s'attendre à
+ce que `chorescore-a75b1` fasse tourner le processus HTTP/SQLite. Le serveur
+doit être hébergé séparément, puis son URL publique doit être injectée dans
+`EXPO_PUBLIC_COLLAB_URL` au build Android.
 
 ## Prérequis externes réels
 
-- Un projet Firebase gratuit avec le fournisseur Google activé et l'application
-  Android `app.chorescore.v5` enregistrée avec l'empreinte de la clé de
-  signature réellement utilisée (voir `FIREBASE_SETUP.md`).
+- Le projet Firebase gratuit `chorescore-a75b1` avec le fournisseur Google
+  activé et l'application Android `app.chorescore.v5` enregistrée avec
+  l'empreinte de la clé de signature réellement utilisée (voir
+  `FIREBASE_SETUP.md`). L'identifiant du projet est public et déjà proposé par
+  défaut dans `deploy/.env.example`.
 - Un serveur Linux avec Docker et Docker Compose, et un nom DNS qui pointe vers
   lui (ports 80 et 443 joignables). Caddy obtient le certificat TLS.
 - Un volume disque pour `data/` et un autre pour `backups/`, sauvegardés hors
@@ -36,6 +48,10 @@ curl -fsS https://"$COLLAB_DOMAIN"/health
 ni token n'est nécessaire : le serveur vérifie les ID tokens Firebase avec les
 certificats publics de Google. Le port du serveur n'est pas publié ; seul Caddy
 écoute sur 80/443 et termine TLS. `/health` est le seul endpoint non authentifié.
+
+Une fois `https://$COLLAB_DOMAIN/health` vérifié, transmettre cette URL de base
+au build Android via `EXPO_PUBLIC_COLLAB_URL` et reconstruire l'APK. Sans cette
+étape, l'application reste locale même si le serveur est en ligne.
 
 ## Sauvegarde et restauration
 
@@ -75,8 +91,13 @@ testée n'est pas une preuve de reprise.
 
 ## Ce que cette configuration ne prouve pas
 
-- Aucun projet Firebase, domaine ou serveur n'est fourni par ce dépôt.
-- Aucun test à deux téléphones réels n'a été exécuté.
+- Le projet Firebase existe, mais la configuration des fournisseurs, des
+  empreintes Android et du client OAuth Web n'est pas validée ici.
+- Aucun domaine ni serveur public n'est fourni par ce dépôt ; la configuration
+  décrite n'a pas été déployée depuis ce runner.
+- `RemoteSyncAdapter`, les médias privés, la compensation autoritaire et la
+  sauvegarde ont du code et des tests HTTP locaux ; ils ne prouvent ni une mise
+  en ligne réelle ni deux téléphones authentifiés.
 - Les migrations de schéma ne sont pas automatisées ; le schéma actuel est créé
   idempotemment au démarrage et ne doit pas être modifié sans migration testée.
 - La limitation de débit et la révocation globale de session restent à traiter

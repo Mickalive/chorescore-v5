@@ -9,7 +9,7 @@ import { firebaseAuthConfig } from '../src/infrastructure/cloud/FirebaseAuthAdap
  */
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { View, StyleSheet, TouchableOpacity, Alert, TextInput } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, Alert, TextInput, Keyboard } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ScreenContainer } from '../src/ui/components/ScreenContainer';
 import { Text } from '../src/ui/components/Text';
@@ -108,6 +108,9 @@ export default function HomeScreen() {
     if (!name) return;
     setMemberNames((current) => [...current, name]);
     setMemberInput('');
+    // Keyboard re-renders with the cleared field on Android 15 and can re-open
+    // after submit. Dismiss explicitly so the next control is reachable.
+    Keyboard.dismiss();
   };
 
   const handleRemoveMemberName = (index: number) => {

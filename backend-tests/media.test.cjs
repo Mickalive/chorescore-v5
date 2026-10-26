@@ -21,7 +21,8 @@ test('HTTP: private media ACL, idempotence, tenant isolation and attachment auth
  const directory=mkdtempSync(join(tmpdir(),'chorescore-media-'));
  const mediaDirectory=join(directory,'media');
  const path=join(directory,'shared.sqlite');
- const store=new CollaborationStore(path,mediaDirectory);
+ let clock=Date.now();
+ const store=new CollaborationStore(path,mediaDirectory,()=>clock);
  const verifier=new FirebaseTokenVerifier('chorescore-test',async()=>({'test-key':publicKey}));
  const server=createCollaborationServer(store,verifier);
  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
@@ -87,6 +88,19 @@ test('HTTP: private media ACL, idempotence, tenant isolation and attachment auth
 
  const orphan=await media('alice','/groups/home/media/orphan',jpeg(Buffer.alloc(70,2)),'image/jpeg');
  assert.equal(orphan.status,200);
- store.collectMediaGarbage(0);
+ // Same-millisecond boundary and grace boundary are controlled by the injected
+ // clock, not by sleeping: a fresh orphan survives a grace pass, and grace 0
+ // collects an upload created in exactly this millisecond.
+ assert.equal(store.collectMediaGarbage(1000).removed,0);
+ assert.equal((await media('bob','/groups/home/media/orphan')).status,200);
+ assert.equal(store.collectMediaGarbage(0).removed,1);
  assert.equal((await media('bob','/groups/home/media/orphan')).status,404);
+
+ const aged=await media('alice','/groups/home/media/aged',jpeg(Buffer.alloc(80,3)),'image/jpeg');
+ assert.equal(aged.status,200);
+ clock+=999;
+ assert.equal(store.collectMediaGarbage(1000).removed,0);
+ clock+=1;
+ assert.equal(store.collectMediaGarbage(1000).removed,1);
+ assert.equal((await media('bob','/groups/home/media/aged')).status,404);
 });
