@@ -107,6 +107,24 @@ jobs:
             gh run view "$failed" --log-failed > .opencode-ci/failed.log 2>&1 || true
             gh run download "$failed" --name ChoreScore-Android-evidence --dir .opencode-ci/evidence 2> .opencode-ci/download-error.txt || true
           fi
+      - name: Recover diagnostics and unpublished work from the previous failed mission
+        if: env.MODE == 'work'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p .opencode-ci/previous-worker
+          previous=$(gh run list --workflow opencode.yml --limit 12 --json databaseId,conclusion --jq '[.[] | select(.conclusion == "failure")][0].databaseId // empty')
+          if [ -n "$previous" ]; then
+            gh run view "$previous" --log-failed > .opencode-ci/previous-worker/failed.log 2>&1 || true
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$previous/artifacts" --jq '.artifacts[] | select(.expired == false) | .id' > .opencode-ci/previous-worker/artifact-ids.txt
+            while read -r artifact_id; do
+              mkdir -p ".opencode-ci/previous-worker/$artifact_id"
+              if gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$RUNNER_TEMP/worker-$artifact_id.zip"; then
+                unzip -q -o "$RUNNER_TEMP/worker-$artifact_id.zip" -d ".opencode-ci/previous-worker/$artifact_id"
+              fi
+            done < .opencode-ci/previous-worker/artifact-ids.txt
+          fi
       - name: OpenCode implements the next verified product slice
         if: env.MODE == 'work'
         timeout-minutes: 26
@@ -122,6 +140,16 @@ jobs:
           assert not any(e.get('type')=='error' for e in events), 'OpenCode worker reported a session error'
           assert any(e.get('type')=='text' for e in events), 'No worker response received'
           PYWORK
+      - name: Preserve execution controls while retaining product work
+        if: env.MODE == 'work'
+        run: |
+          set -euo pipefail
+          base=$(cat "$RUNNER_TEMP/opencode-base-head")
+          git diff --binary "$base" -- .github/workflows/opencode.yml opencode.json .github/OPENCODE_MISSION.md > "$RUNNER_TEMP/opencode-rejected-controls.patch"
+          if [ -s "$RUNNER_TEMP/opencode-rejected-controls.patch" ]; then
+            echo '::warning::Worker edits to its execution controls were rejected and preserved as evidence; restoring the authorized baseline before testing product changes.'
+            git restore --source="$base" --staged --worktree -- .github/workflows/opencode.yml opencode.json .github/OPENCODE_MISSION.md
+          fi
       - name: Verify proposed source changes
         if: env.MODE == 'work'
         run: |
@@ -185,5 +213,6 @@ jobs:
             ${{ runner.temp }}/opencode-health.jsonl
             ${{ runner.temp }}/opencode-work.jsonl
             ${{ runner.temp }}/opencode-proposed.patch
+            ${{ runner.temp }}/opencode-rejected-controls.patch
           if-no-files-found: warn
           retention-days: 14
