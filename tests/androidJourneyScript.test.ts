@@ -54,6 +54,15 @@ describe('Android journey driver', () => {
     expect(source).not.toMatch(/'206',\s*'(500|520|610)'/);
   });
 
+  it('matches category chips exposed as raw resource names, not only prefixed ids', () => {
+    const chip = functionBody('category_chip');
+    const name = functionBody('resource_name');
+    expect(name).toContain("split('/')[-1]");
+    expect(chip).toContain("startswith('add.category.')");
+    expect(chip).toContain("rid != 'add.category.none'");
+    expect(chip).not.toContain("'/add.category.' in");
+  });
+
   it('scrolls every expanded category control into view instead of tapping blindly', () => {
     for (const resource of [
       'add.categoryDraftRatioToggle',

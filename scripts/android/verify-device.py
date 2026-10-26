@@ -277,12 +277,22 @@ def fill_nth(resource,index,value,clear=False):
     if len(nodes)<=index:raise AssertionError(f'Missing {resource}[{index}]')
     fill_node(nodes[index],value,clear)
 
+def resource_name(node):
+    """Return the raw resource name with or without a package/id prefix.
+
+    Some UIAutomator builds expose ``add.category.foo`` while others expose the
+    fully qualified ``app.chorescore.v5:id/add.category.foo``. Matching on a
+    leading slash therefore missed every real user category and failed the
+    journey with "Category chip missing" while the chip was visible.
+    """
+    return node.attrib.get('resource-id','').split('/')[-1]
+
 def category_chip(name):
     for node in hierarchy().iter('node'):
-        attrs=node.attrib
-        if ('/add.category.' in attrs.get('resource-id','')
-                and attrs.get('resource-id','').split('/')[-1] != 'add.category.none'
-                and name in attrs.get('text','')):
+        rid=resource_name(node)
+        if (rid.startswith('add.category.')
+                and rid != 'add.category.none'
+                and name in node.attrib.get('text','')):
             return node
     return None
 
