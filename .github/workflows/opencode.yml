@@ -422,11 +422,29 @@ jobs:
           PY
       - name: Verify proposed source changes
         if: env.MODE == 'work'
-        run: |
+        run: >
+          python3 - <<'PY'
+
+          import subprocess
+
+          paths=subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines()
+
+          roots={'app.json','package.json','package-lock.json','firebase.json','.firebaserc','.github/workflows/android-apk.yml'}
+
+          assert
+          any(p.startswith(('src/','app/','backend/','backend-tests/','tests/','firebase/','plugins/','scripts/','assets/')) or p
+          in roots for p in paths), 'No product or executable test/config change: a status report alone is not a repair'
+
+          PY
+
           set -euo pipefail
+
           npm run typecheck
+
           npm test
+
           npm run test:backend
+
           git diff --check
       - name: Prepare isolated demo project and hostile requests
         run: >
