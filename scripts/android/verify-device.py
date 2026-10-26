@@ -254,8 +254,24 @@ def fill_node(node,value,clear=False):
     if clear:
         adb('shell','input','keyevent','KEYCODE_MOVE_END')
         for _ in range(12):adb('shell','input','keyevent','KEYCODE_DEL')
-    # Test input is ASCII; unicode labels are matched through UIAutomator XML.
-    adb('shell','input','text',value.replace(' ','%s'))
+    # Use input text with %s for spaces; for unicode, use base64 via input text is unreliable,
+    # so prefer typing char by char with keyevents where possible or use am broadcast/ime
+    # ADB input text supports unicode in some Android versions but better to use 'input text' with encoding
+    try:
+        # Replace spaces
+        escaped = value.replace(' ', '%s')
+        adb('shell','input','text',escaped)
+    except Exception:
+        # Fallback: type via keyevents for ASCII parts
+        for ch in value:
+            if ch == ' ':
+                adb('shell','input','keyevent','62')
+            elif ch.isascii():
+                # Use input keyevent for letters/digits
+                adb('shell','input','text',ch)
+            else:
+                # Try to send as text anyway
+                adb('shell','input','text',ch.replace(' ','%s'))
     hide_keyboard()
 
 def fill(resource,value,clear=False):
