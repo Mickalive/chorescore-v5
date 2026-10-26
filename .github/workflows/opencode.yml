@@ -61,6 +61,17 @@ jobs:
           ref: feat/product-reconstruction
           fetch-depth: 1
           persist-credentials: false
+      - name: Keep reviewed automation in the integrated product branch
+        run: |-
+          set -euo pipefail
+          git fetch origin main --depth=1
+          git show FETCH_HEAD:.github/workflows/opencode.yml > .github/workflows/opencode.yml
+          if ! git diff --quiet -- .github/workflows/opencode.yml; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add .github/workflows/opencode.yml
+            git commit -m 'Keep reviewed free delivery and security gates in the integrated PR'
+          fi
       - name: Record starting revision
         run: git rev-parse HEAD > "$RUNNER_TEMP/opencode-base-head"
       - uses: actions/setup-node@v4
@@ -184,6 +195,28 @@ jobs:
               fi
             done < .opencode-ci/previous-worker/artifact-ids.txt
           fi
+
+
+          # Each matrix passage must see failures from earlier passages of THIS run.
+
+          mkdir -p .opencode-ci/current-batch
+
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs" --jq '.jobs[] | select(.conclusion == "failure") |
+          .id' > .opencode-ci/current-batch/failed-jobs.txt
+
+          while read -r job_id; do
+            gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$job_id/logs" > ".opencode-ci/current-batch/job-$job_id.log" 2>&1 || true
+          done < .opencode-ci/current-batch/failed-jobs.txt
+
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" --jq '.artifacts[] | select(.expired == false) |
+          .id' > .opencode-ci/current-batch/artifact-ids.txt
+
+          while read -r artifact_id; do
+            mkdir -p ".opencode-ci/current-batch/$artifact_id"
+            if gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$RUNNER_TEMP/current-$artifact_id.zip"; then
+              unzip -q -o "$RUNNER_TEMP/current-$artifact_id.zip" -d ".opencode-ci/current-batch/$artifact_id"
+            fi
+          done < .opencode-ci/current-batch/artifact-ids.txt
       - name: OpenCode implements the next verified product slice
         if: env.MODE == 'work'
         timeout-minutes: 26
@@ -438,6 +471,16 @@ jobs:
           raise SystemExit(1 if bad else 0)
           PY
         if: env.MODE == 'work'
+      - name: Expose precise audit failure diagnostics
+        if: failure() && env.MODE == 'work'
+        run: |-
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('/tmp/chorescore-audit-firestore/execution.log')
+          if p.exists():
+           s=p.read_text(errors='replace')[-6000:]
+           print('::error::'+s.replace('%','%25').replace('\r','%0D').replace('\n','%0A'))
+          PY
       - name: Security gate evidence
         if: always() && env.MODE == 'work'
         uses: actions/upload-artifact@v4
