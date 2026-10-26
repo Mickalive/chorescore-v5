@@ -69,6 +69,24 @@ describe('Android journey driver', () => {
     expect(chip).toMatch(/name in label/);
   });
 
+  it('taps the real document row and not the DocumentsUI preview overlay', () => {
+    const picker = functionBody('picker_file_node');
+    const select = functionBody('select_photo');
+    expect(picker).toContain('startswith(name)');
+    expect(picker).toContain("'preview' in value.lower()");
+    expect(select).toContain('picker_file_node(PHOTO_NAME)');
+    expect(select).not.toContain("label='chorescore-photo'");
+    expect(select).toContain("resource='dir_list'");
+  });
+
+  it('waits for the app and the attached-photo chip after picking', () => {
+    const select = functionBody('select_photo');
+    expect(select).toContain('foreground_packages');
+    expect(select).toContain("label='Photo jointe'");
+    expect(select).toContain('add.taskPhotoButton');
+    expect(select).not.toContain('Some builds might use different text');
+  });
+
   it('scrolls every expanded category control into view instead of tapping blindly', () => {
     for (const resource of [
       'add.categoryDraftRatioToggle',

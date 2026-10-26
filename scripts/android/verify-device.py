@@ -429,54 +429,79 @@ def dismiss_alert():
             return True
     return False
 
+def picker_file_node(name):
+    """Return the real document row, never the tiny corner preview button."""
+    for node in hierarchy().iter('node'):
+        values=(node.attrib.get('text','').strip(),
+                node.attrib.get('content-desc','').strip())
+        if not any(value.startswith(name) for value in values):
+            continue
+        if any('preview' in value.lower() or 'aperçu' in value.lower() for value in values):
+            continue
+        bounds=list(map(int,re.findall(r'\d+',node.attrib.get('bounds',''))))
+        if len(bounds)==4 and bounds[2]>bounds[0] and bounds[3]>bounds[1]:
+            return node
+    return None
+
+def picker_root_labels():
+    return ('Downloads','Téléchargements','Images','Photos','Recent','Récents')
+
 def select_photo():
-    deadline=time.monotonic()+30
+    deadline=time.monotonic()+90
+    app_without_chip=0
     while time.monotonic()<deadline:
-        focus=adb('shell','dumpsys','window','windows')
-        if 'documentsui' in focus.lower() or 'picker' in focus.lower() or 'chooser' not in focus.lower() and 'activityresolver' not in focus.lower():
-            # DocumentsUI or file picker will be present
-            if 'documentsui' in focus.lower() or 'com.google.android.documentsui' in focus.lower(): break
-        # Also just try to proceed if we've waited a bit and focus is different
-        if time.monotonic()-deadline > -15:
-            try:
-                root=hierarchy()
-                # If we see Downloads or file list, proceed
-                if candidates(root,label='Downloads',partial=True) or candidates(root,label='Images',partial=True) or candidates(root,label='Recent',partial=True):
+        root=hierarchy()
+        packages=foreground_packages(root)
+        if APP_PACKAGE in packages:
+            if candidates(root,label='Photo jointe',partial=True):
+                return
+            app_without_chip+=1
+            if app_without_chip>6:
+                buttons=candidates(root,resource='add.taskPhotoButton')
+                if buttons:
+                    tap_node(buttons[0])
+                    time.sleep(1)
+                    app_without_chip=0
+            time.sleep(.5)
+            continue
+        if dismiss_system_dialog(root) or dismiss_permission(root):
+            continue
+        if any('documentsui' in package for package in packages):
+            # A preview overlay is not a selection; go back to the file list.
+            if not candidates(root,resource='dir_list'):
+                adb('shell','input','keyevent','KEYCODE_BACK')
+                time.sleep(.8)
+                continue
+            node=picker_file_node(PHOTO_NAME)
+            if node:
+                tap_node(node)
+                # Wait until the picker closes and the form exposes the chip.
+                # A second tap on the corner preview icon used to leave the
+                # journey stuck inside DocumentsUI.
+                settle=time.monotonic()+20
+                while time.monotonic()<settle:
+                    time.sleep(.5)
+                    current=hierarchy()
+                    if APP_PACKAGE in foreground_packages(current):
+                        if candidates(current,label='Photo jointe',partial=True):
+                            return
+                        break
+                    if not candidates(current,resource='dir_list'):
+                        break
+                    if dismiss_system_dialog(current) or dismiss_permission(current):
+                        break
+                continue
+            for label in picker_root_labels():
+                taps=candidates(root,label=label,partial=True)
+                if taps:
+                    tap_node(taps[0])
                     break
-            except Exception: pass
+            else:
+                swipe(False)
+            time.sleep(.8)
+            continue
         time.sleep(.5)
-    file_node=None
-    for _ in range(15):
-        root=hierarchy()
-        nodes=candidates(root,label='chorescore-photo',partial=True)
-        if nodes:
-            file_node=nodes[0]
-            break
-        for label in ('Downloads','Téléchargements','Images','Photos','Recent','Récents'):
-            taps=candidates(root,label=label,partial=True)
-            if taps:
-                tap_node(taps[0])
-                break
-        else:
-            swipe(False)
-        time.sleep(.8)
-    if file_node is None:
-        # Try to tap first image-like item if visible
-        root=hierarchy()
-        for n in root.iter('node'):
-            a=n.attrib
-            rid=a.get('resource-id','')
-            if 'document_title' in rid or 'icon_thumb' in rid or 'grid' in rid:
-                tap_node(n); break
-        else:
-            raise AssertionError('Test photo not visible in picker')
-    else:
-        tap_node(file_node)
-    try:
-        locate('Photo jointe',timeout=25)
-    except Exception:
-        # Some builds might use different text; proceed if we got back to app
-        pass
+    raise AssertionError('Photo picker did not return a saved attachment')
 
 def start():
     adb('shell','am','start','-W','-n',PACKAGE+'/.MainActivity',timeout=55)

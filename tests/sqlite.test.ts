@@ -164,3 +164,48 @@ test('group deletion is isolated, owner-only, rollback-safe and clears private r
   const dirty=await raw.syncState.getDirtyRecords(household.id,'households',0);
   expect(dirty).toEqual([expect.objectContaining({id:household.id,payload:null,deletedAt:expect.any(String)})]);
 });
+
+test('repository pagination reads a bounded window from 50 000 entries', async () => {
+  const { loadActivityHistoryPage } = await import('../src/application/use-cases/activityHistory');
+  const repos = (await createSqliteRepositories())!;
+  const householdId = 'bulk-history';
+  const insert = native.prepare(`INSERT INTO contribution_entries
+    (id, householdId, label, performedByMemberId, beneficiaryMemberIds, value, unit,
+     persistentTaskId, occurredAt, createdBy, modifiedBy, categoryId,
+     categoryLabelSnapshot, note, attachmentsJson, splitMode, splitWeightsJson, splitSource)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  native.exec('BEGIN');
+  try {
+    for (let index = 0; index < 50_000; index += 1) {
+      const occurredAt = new Date(Date.UTC(2025, 0, 1) + index * 1_000).toISOString();
+      insert.run(
+        `bulk-${String(index).padStart(5, '0')}`, householdId, `Bulk ${index}`,
+        'm1', '["m1"]', 1, 'minutes', null, occurredAt, 'u',
+        null, null, null, null, null, null, null, null,
+      );
+    }
+    native.exec('COMMIT');
+  } catch (error) {
+    native.exec('ROLLBACK');
+    throw error;
+  }
+
+  const started = process.hrtime.bigint();
+  const page = await loadActivityHistoryPage(repos, householdId, {
+    limit: 20,
+    filter: 'contribution',
+  });
+  const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+
+  expect(page.entries).toHaveLength(20);
+  expect(page.hasMore).toBe(true);
+  const labels = page.entries.map((entry) => {
+    if (entry.type !== 'contribution') throw new Error('unexpected history type');
+    return entry.entry.label;
+  });
+  expect(labels[0]).toBe('Bulk 49999');
+  expect(labels[19]).toBe('Bulk 49980');
+  expect(elapsedMs).toBeLessThan(2_000);
+
+  native.prepare('DELETE FROM contribution_entries WHERE householdId = ?').run(householdId);
+}, 30_000);

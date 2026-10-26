@@ -69,10 +69,10 @@ import {
   deltaUpdateMoneyFromSettlement,
 } from '../../src/domain/calculations/materializedBalances';
 import {
-  paginateActivityLog,
   ActivityFilter,
   ActivityLogPage,
 } from '../../src/domain/calculations/activityLog';
+import { loadActivityHistoryPage } from '../../src/application/use-cases/activityHistory';
 
 // ── Helpers ────────────────────────────────────────────────────
 
@@ -654,21 +654,29 @@ export default function BalancesScreen() {
 
   // ── History pagination ─────────────────────────────────────
 
-  const loadHistoryPage = useCallback((filter: ActivityFilter, cursor?: string | null) => {
+  const historyRequestRef = useRef(0);
+  const loadHistoryPage = useCallback(async (filter: ActivityFilter, cursor?: string | null) => {
+    if (!currentHouseholdId) return;
+    const request = historyRequestRef.current + 1;
+    historyRequestRef.current = request;
     setHistoryLoading(true);
-    const page = paginateActivityLog(contributions, expenses, settlements, {
-      limit: HISTORY_PAGE_SIZE,
-      filter,
-      cursor: cursor ?? null,
-    });
-    setHistoryPage(page);
-    setHistoryLoading(false);
-  }, [contributions, expenses, settlements]);
+    try {
+      const page = await loadActivityHistoryPage(repos, currentHouseholdId, {
+        limit: HISTORY_PAGE_SIZE,
+        filter,
+        cursor: cursor ?? null,
+      });
+      if (request === historyRequestRef.current) setHistoryPage(page);
+    } finally {
+      if (request === historyRequestRef.current) setHistoryLoading(false);
+    }
+  }, [currentHouseholdId, repos]);
 
-  // Reset history page on filter change
+  // Reset history page on filter change and after every local ledger change.
+  // The page itself comes from the repository, never from the full arrays.
   useEffect(() => {
-    loadHistoryPage(historyFilter);
-  }, [historyFilter, loadHistoryPage]);
+    void loadHistoryPage(historyFilter);
+  }, [historyFilter, loadHistoryPage, contributions, expenses, settlements]);
 
   // ── Render ─────────────────────────────────────────────────
 
