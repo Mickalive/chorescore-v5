@@ -471,6 +471,24 @@ jobs:
           raise SystemExit(1 if bad else 0)
           PY
         if: env.MODE == 'work'
+      - name: Require integrated Firebase emulator journey
+        if: env.MODE == 'work'
+        env:
+          FIREBASE_EMULATORS_PATH: '${{ runner.temp }}/firestore-emulators'
+          FIREBASE_PROJECT_ID: demo-chorescore-audit
+          EXPO_PUBLIC_FIREBASE_PROJECT_ID: demo-chorescore-audit
+          CI: 'true'
+        run: >
+          set -euo pipefail
+
+          if [ ! -f tests/firebaseEmulator.test.ts ]; then
+            echo '::error::Missing real Firebase client journey. Implement tests/firebaseEmulator.test.ts using the actual REST transport and loaded rules: two accounts, invitations, writes/deltas, offline replay, private media and owner deletion; no InMemoryFirestore.'
+            exit 1
+          fi
+
+          npm exec --yes --package=firebase-tools@14.22.0 -- firebase emulators:exec --project demo-chorescore-audit --config
+          /tmp/chorescore-audit-firestore/firebase.json --only firestore 'npm test -- --runTestsByPath
+          tests/firebaseEmulator.test.ts' 2>&1 | tee /tmp/chorescore-audit-firestore/client-journey.log
       - name: Expose precise audit failure diagnostics
         if: failure() && env.MODE == 'work'
         run: |-
