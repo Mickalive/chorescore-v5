@@ -290,9 +290,13 @@ def resource_name(node):
 def category_chip(name):
     for node in hierarchy().iter('node'):
         rid=resource_name(node)
+        # RN exposes the chip label in content-desc and leaves text empty on the
+        # clickable Button node; the visible label is only on its child. Accept
+        # either so a real chip is never reported missing.
+        label=node.attrib.get('text','')+' '+node.attrib.get('content-desc','')
         if (rid.startswith('add.category.')
                 and rid != 'add.category.none'
-                and name in node.attrib.get('text','')):
+                and name in label):
             return node
     return None
 

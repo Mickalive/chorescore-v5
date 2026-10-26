@@ -63,6 +63,12 @@ describe('Android journey driver', () => {
     expect(chip).not.toContain("'/add.category.' in");
   });
 
+  it('finds category chips whose label is only in content-desc', () => {
+    const chip = functionBody('category_chip');
+    expect(chip).toContain("node.attrib.get('content-desc','')");
+    expect(chip).toMatch(/name in label/);
+  });
+
   it('scrolls every expanded category control into view instead of tapping blindly', () => {
     for (const resource of [
       'add.categoryDraftRatioToggle',
