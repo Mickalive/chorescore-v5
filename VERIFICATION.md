@@ -254,3 +254,10 @@ Candidat local du code mobile `5eefb93` également compilé avec succès (incré
 ## Arrêt des automatisations GitHub — demande du propriétaire
 
 Les deux workflows Android et OpenCode ont été désactivés sur GitHub (état disabled_manually vérifié), aucune exécution active ou en attente. Leurs fichiers, le mandat OpenCode et sa configuration sont supprimés de cette branche. Les scripts de vérification locaux et l’historique des preuves sont conservés. Les instructions du dépôt demandent désormais du développement direct, sans réactivation automatique.
+
+## Corrections directes après arrêt des automations
+
+- Authentification : deux tests échouaient avant correction. Une restauration SecureStore terminée après déconnexion ne rétablit plus la session ; le renouvellement d’un compte ne bloque plus celui du compte suivant. Les requêtes concurrentes restent regroupées pour une même session. Les 8 tests d’authentification passent.
+- Compensation : ajout de la saisie libre manquante à côté des boutons 15/30/60. Les virgules françaises sont interprétées correctement dans la valeur et le taux de groupe ; le montant du taux utilise le parseur monétaire exact, sans arrondi silencieux d’un sous-centime. Une référence de soumission empêche deux confirmations concurrentes de créer deux écritures ; les échecs de stockage restent dans le formulaire avec une erreur.
+- Tests des vrais écrans : compensation de 1,5 points, 150 centimes au taux convenu, double confirmation, une seule écriture persistante et rechargement ; enregistrement d’un taux 1,5 = 1,01 CHF et refus de 1.005 CHF sans altérer l’ancien taux. Le test de compensation échouait sur l’absence de saisie avant correction.
+- Les nombres positifs des tâches/ratios refusent maintenant les textes tels que abc1 ou 1e3 au lieu de les transformer silencieusement en une autre valeur. Deux suites / 31 tests ciblés passent.

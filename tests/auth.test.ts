@@ -100,3 +100,45 @@ test('the confirmed public Firebase project id is the default and stays overrida
     Object.assign(process.env, previous);
   }
 });
+
+test('a pending secure-storage restore cannot sign the user back in after signout', async () => {
+  const storage = store();
+  let finish!: (value: string | null) => void;
+  const read = jest.spyOn(storage, 'getItem').mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const auth = new FirebaseAuthAdapter(config, storage);
+  const restore = auth.restoreSession();
+  await auth.signOut();
+  finish(JSON.stringify(expired));
+  expect(await restore).toBeNull();
+  expect(auth.getCurrentUser()).toBeNull();
+  read.mockRestore();
+});
+
+test('a new account never shares the previous account pending token refresh', async () => {
+  const storage = store();
+  const auth = new FirebaseAuthAdapter(config, storage);
+  await auth.persistSession(expired); await auth.restoreSession();
+  let finishOld!: (response: Response) => void;
+  const request = jest.spyOn(global, 'fetch')
+    .mockImplementationOnce(() => new Promise(resolve => { finishOld = resolve; }))
+    .mockResolvedValueOnce({ ok: true, json: async () => ({
+      user_id: 'firebase-b', id_token: 'fresh-b', refresh_token: 'refresh-b', expires_in: '3600',
+    }) } as Response);
+  try {
+    const old = auth.getIdToken();
+    const oldResult = old.catch(error => error);
+    await auth.signOut();
+    await auth.persistSession({ ...expired, userId: 'firebase-b', refreshToken: 'refresh-b' });
+    await auth.restoreSession();
+    const current = auth.getIdToken();
+    // A fresh request must start immediately, without waiting for account A.
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(await current).toBe('fresh-b');
+    finishOld({ ok: true, json: async () => ({
+      user_id: 'firebase-a', id_token: 'fresh-a', refresh_token: 'refresh-a', expires_in: '3600',
+    }) } as Response);
+    expect(await oldResult).toBeInstanceOf(Error);
+    expect(auth.getCurrentUserId()).toBe('firebase-b');
+    expect((await new FirebaseAuthAdapter(config, storage).restoreSession())!.accessToken).toBe('fresh-b');
+  } finally { request.mockRestore(); }
+});

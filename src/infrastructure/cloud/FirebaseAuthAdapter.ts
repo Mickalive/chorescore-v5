@@ -21,7 +21,7 @@ export class FirebaseAuthAdapter implements AuthGateway {
   private listeners = new Set<(user: AuthUser | null) => void>();
   private storageWrites: Promise<void> = Promise.resolve();
   private generation = 0;
-  private refreshing: Promise<string> | null = null;
+  private refreshing: { session: AuthSessionToken; promise: Promise<string> } | null = null;
   constructor(private config: FirebaseAuthConfig, private store: SecureStorageGateway) {}
   isAvailable() { return true; }
   getCurrentUserId() { return this.session?.userId ?? null; }
@@ -42,7 +42,7 @@ export class FirebaseAuthAdapter implements AuthGateway {
   async signInWithFacebook(): Promise<null> { return null; }
 
   async signInWithGoogle(): Promise<AuthUser | null> {
-    const generation = this.generation;
+    const generation = ++this.generation;
     // Lazy import: local builds, Node tests and web do not require native Google services.
     const { GoogleSignin } = require('@react-native-google-signin/google-signin') as typeof import('@react-native-google-signin/google-signin');
     GoogleSignin.configure({ webClientId: this.config.googleWebClientId });
@@ -77,8 +77,9 @@ export class FirebaseAuthAdapter implements AuthGateway {
     await write;
   }
   async restoreSession(): Promise<AuthSessionToken | null> {
+    const generation = this.generation;
     const raw = await this.store.getItem(SESSION_KEY);
-    if (!raw) return null;
+    if (generation !== this.generation || !raw) return null;
     const token = JSON.parse(raw) as AuthSessionToken;
     if (token.provider !== 'google' || !token.userId || !token.refreshToken || !token.accessToken ||
         !Number.isFinite(Date.parse(token.expiresAt))) throw new Error('Invalid stored Firebase session');
@@ -91,7 +92,7 @@ export class FirebaseAuthAdapter implements AuthGateway {
     await write;
   }
   async signOut() {
-    this.generation += 1; this.session = null; this.notify();
+    this.generation += 1; this.session = null; this.refreshing = null; this.notify();
     await this.clearSession();
   }
 
@@ -99,9 +100,11 @@ export class FirebaseAuthAdapter implements AuthGateway {
   async getIdToken(): Promise<string> {
     if (!this.session) throw new Error('Authentication required');
     if (Date.parse(this.session.expiresAt) > Date.now() + 60_000) return this.session.accessToken;
-    if (this.refreshing) return this.refreshing;
+    if (this.refreshing?.session === this.session) return this.refreshing.promise;
     const previous = this.session;
-    this.refreshing = (async () => {
+    const refresh = { session: previous, promise: Promise.resolve('') };
+    this.refreshing = refresh;
+    refresh.promise = (async () => {
       const response = await this.request(`https://securetoken.googleapis.com/v1/token?key=${encodeURIComponent(this.config.apiKey)}`, {
         method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: `grant_type=refresh_token&refresh_token=${encodeURIComponent(previous.refreshToken!)}`,
@@ -118,7 +121,7 @@ export class FirebaseAuthAdapter implements AuthGateway {
       if (this.session !== previous) throw new Error('Session changed during refresh');
       this.session = token;
       return token.accessToken;
-    })().finally(() => { this.refreshing = null; });
-    return this.refreshing;
+    })().finally(() => { if (this.refreshing === refresh) this.refreshing = null; });
+    return refresh.promise;
   }
 }
