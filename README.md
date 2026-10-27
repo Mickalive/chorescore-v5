@@ -1,6 +1,6 @@
 # ChoreScore V5
 
-**Un produit, un dépôt, un workflow Android.** Nous reprenons le moteur de calcul et le stockage de la V4. Nous reconstruisons l'expérience utilisateur et les intégrations réellement manquantes. Aucun système « factory / finalizer », aucune validation fondée sur le seul nombre de tests.
+**Un produit, un dépôt, développement direct sans automatisation GitHub.** Nous reprenons le moteur de calcul et le stockage de la V4. Nous reconstruisons l'expérience utilisateur et les intégrations réellement manquantes. Aucun système « factory / finalizer », aucune validation fondée sur le seul nombre de tests.
 
 ## Etat honnête
 

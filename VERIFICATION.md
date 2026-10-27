@@ -250,3 +250,7 @@ Candidat local du code mobile `5eefb93` également compilé avec succès (incré
 - Android 40444748316 : compilation et tests préalables réussis, Firebase officiel réussi ; parcours natif échoué lors de la recherche du champ todos.reminderDateTime.time après saisie de la date. Aucune validation Android complète ni disponibilité de production revendiquée.
 
 - Capture finale de 40444748316 inspectée : le champ Heure est présent ([40,278][372,329]), le clavier reste visible. Le ScrollView du dialogue DateTimeField manquait de fermeture explicite du clavier sur glissement. Ajout de keyboardDismissMode et Keyboard.dismiss comme dans les autres formulaires ; test du vrai composant vérifiant le glissement puis la confirmation du 28/10/2026 à 12:00 réussi, TypeScript réussi. Il s’agit d’une correction candidate ; son efficacité native n’est pas encore démontrée.
+
+## Arrêt des automatisations GitHub — demande du propriétaire
+
+Les deux workflows Android et OpenCode ont été désactivés sur GitHub (état disabled_manually vérifié), aucune exécution active ou en attente. Leurs fichiers, le mandat OpenCode et sa configuration sont supprimés de cette branche. Les scripts de vérification locaux et l’historique des preuves sont conservés. Les instructions du dépôt demandent désormais du développement direct, sans réactivation automatique.
