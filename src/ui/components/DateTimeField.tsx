@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Modal, View, TextInput, StyleSheet, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import { Keyboard, Modal, View, TextInput, StyleSheet, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { Text } from './Text';
 import { Button } from './Button';
 import { colors, spacing, borderRadius } from '../design-system/theme';
@@ -39,7 +39,8 @@ export function DateTimeField({ label, value, onChange, emptyLabel, clearable, t
       variant="secondary" onPress={open} testID={testID} accessibilityLabel={label} />
     <Modal visible={visible} transparent animationType="none" onRequestClose={() => setVisible(false)}>
       <KeyboardAvoidingView style={styles.overlay} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <ScrollView contentContainerStyle={styles.center} keyboardShouldPersistTaps="handled">
+        <ScrollView contentContainerStyle={styles.center} keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag" onScrollBeginDrag={() => Keyboard.dismiss()}>
           <View style={styles.dialog} accessibilityViewIsModal>
             <Text variant="sectionTitle">{label}</Text>
             <Text variant="caption">{t('dateTime.localHint')}</Text>
