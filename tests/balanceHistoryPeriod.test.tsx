@@ -29,8 +29,10 @@ test('history periods hide old entries without hiding their perpetual task or mo
     occurredAt: '2000-01-01T12:00:00.000Z', createdBy: 'a' });
   await repos.expenses.create({ householdId: household.id, title: 'Récente dépense', amountMinor: 200, currency: 'CHF',
     paidByMemberId: ids[0], participantMemberIds: ids, splitMode: 'equal', occurredAt: now, createdBy: 'a' });
+  let notify!: (type: string, householdId: string) => Promise<void>;
   mockApp.mockReturnValue({ currentHouseholdId: household.id, currentUser: { userId: 'a' }, repos,
-    subscribeToDataChanges: () => () => undefined, emitDataChange: jest.fn(), services: {} });
+    subscribeToDataChanges: (listener: typeof notify) => { notify = listener; return () => undefined; },
+    emitDataChange: jest.fn(), services: {} });
   let tree!: renderer.ReactTestRenderer;
   try {
     await act(async () => { tree = renderer.create(<BalancesScreen />); });
@@ -53,6 +55,13 @@ test('history periods hide old entries without hiding their perpetual task or mo
     expect(content()).toContain('Ancienne dépense');
     expect(await repos.contributions.getByHousehold(household.id)).toHaveLength(2);
     expect(await repos.expenses.getByHousehold(household.id)).toHaveLength(2);
+    await repos.members.create({ householdId: household.id, name: 'Charlie', userId: null });
+    await act(async () => { await notify('member', household.id); });
+    expect(content()).toContain('Charlie');
+    expect(content()).toContain('0 pts');
+    expect(content()).toContain('+ 5 pts');
+    expect(content()).toMatch(/\+ 1,51\sCHF/);
+    expect(content()).toMatch(/0,00\sCHF/);
   } finally {
     await act(async () => tree.unmount());
   }

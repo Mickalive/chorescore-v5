@@ -383,6 +383,19 @@ export default function BalancesScreen() {
       }
       case 'member': {
         const mems = await repos.members.getByHousehold(currentHouseholdId);
+        const snapshot = snapshotRef.current;
+        if (snapshot) {
+          const contribution = new Map(snapshot.contribution);
+          const moneyByCurrency = new Map([...snapshot.moneyByCurrency].map(([currency, balances]) =>
+            [currency, new Map(balances)] as const));
+          for (const member of mems) {
+            if (!contribution.has(member.id)) contribution.set(member.id, 0);
+            for (const balances of moneyByCurrency.values()) {
+              if (!balances.has(member.id)) balances.set(member.id, 0);
+            }
+          }
+          snapshotRef.current = { contribution, moneyByCurrency };
+        }
         setMembers(mems);
         break;
       }
