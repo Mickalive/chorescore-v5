@@ -50,12 +50,16 @@ def candidates(root, label=None, resource=None, partial=False):
 
 APP_PACKAGE = 'app.chorescore.v5'
 
-# On the 412x915 test profile an open IME can cover the bottom ~400 px. A drag
-# that starts or ends inside the IME is delivered to the keyboard instead of
-# the form ScrollView, so every journey gesture stays in this safe band.
+# On the 412x915 test profile the Gboard IME can start as high as y=461, and a
+# drag that touches it is delivered to the keyboard instead of the form
+# ScrollView (run 40421090709: the next field was under the IME, the tap hit
+# the "g" key and the notes were appended to the title). Every journey gesture,
+# including keyboard-dismiss drags, therefore stays in this upper form band.
 SWIPE_X = '206'
-SWIPE_LOW = '180'
-SWIPE_HIGH = '470'
+SWIPE_LOW = '140'
+SWIPE_HIGH = '320'
+
+_SCREEN_SIZE = None
 
 # Only these system processes may be recovered from automatically. The dialog
 # must both come from the Android system window and name one of these explicit
@@ -133,6 +137,70 @@ def keyboard_shown():
             return True
     return False
 
+def ime_top():
+    """Return the top edge of a really-visible IME window, or None.
+
+    UIAutomator still reports fields that are physically covered by the
+    keyboard. Tapping their bounds sends the event to Gboard, which is not a
+    product interaction. Parsing the InputMethod window frame lets the driver
+    scroll a field into the uncovered area before tapping it.
+    """
+    dump=adb('shell','dumpsys','window','windows')
+    for block in re.split(r'\n  Window #',dump):
+        if 'InputMethod' not in block:
+            continue
+        visible=re.search(r'mViewVisibility=0x0\b',block)
+        concealed=re.search(r'isVisible=false|mHasSurface=false',block)
+        if not visible or concealed:
+            continue
+        frame=re.search(r'[Ff]rame=\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]',block)
+        if frame:
+            top=int(frame.group(2))
+            if top>0:
+                return top
+        # Visible IME without a parseable frame: keep a conservative boundary
+        # above the tallest observed keyboard instead of tapping into it.
+        return 420
+    return None
+
+def screen_size():
+    global _SCREEN_SIZE
+    if _SCREEN_SIZE is None:
+        match=re.search(r'(\d+)x(\d+)',adb('shell','wm','size'))
+        if not match:
+            raise AssertionError('Unable to read the emulator display size')
+        _SCREEN_SIZE=(int(match.group(1)),int(match.group(2)))
+    return _SCREEN_SIZE
+
+def node_geometry(node):
+    bounds=list(map(int,re.findall(r'\d+',node.attrib.get('bounds',''))))
+    if len(bounds)!=4 or bounds[2]<=bounds[0] or bounds[3]<=bounds[1]:
+        return None
+    return ((bounds[0]+bounds[2])//2,(bounds[1]+bounds[3])//2)
+
+def onscreen(node,bottom):
+    centre=node_geometry(node)
+    if centre is None:
+        return False
+    width,_=screen_size()
+    return 6<=centre[0]<=width and 6<=centre[1]<bottom
+
+def usable_bottom():
+    top=ime_top()
+    height=screen_size()[1]
+    return (top-6) if top else (height-4)
+
+def find_visible(root,label,resource,partial):
+    """Return the first match that is not below the visible IME band."""
+    nodes=candidates(root,label,resource,partial)
+    if not nodes:
+        return None
+    bottom=usable_bottom()
+    for node in nodes:
+        if onscreen(node,bottom):
+            return node
+    return None
+
 def hide_keyboard():
     """Dismiss a visible IME without sending BACK or ESCAPE.
 
@@ -142,27 +210,31 @@ def hide_keyboard():
     crash, only a BACK arriving at 13:30:19 and the task closing. ESCAPE is not
     a safe substitute either, because an unhandled ESCAPE can be redispatched
     as BACK by the platform. Check visibility first and use gestures instead.
+
+    The drag must live entirely above the IME. A drag starting at y=470 landed
+    on Gboard in run 40421090709 and swipe-typed extra text into the focused
+    field, so every attempt now uses the upper SWIPE_LOW..SWIPE_HIGH band.
     """
-    if not keyboard_shown():
-        return
-    # Prefer the IME's own hide affordance when it is exposed to UIAutomator.
-    for label in ('Hide keyboard','Masquer le clavier','Fermer le clavier','Close keyboard'):
-        nodes=candidates(hierarchy(),label=label,partial=True)
-        if nodes:
-            tap_node(nodes[0])
-            time.sleep(.5)
+    for _ in range(3):
+        if not keyboard_shown():
             return
-    # Every journey form is a ScreenContainer ScrollView with
-    # keyboardDismissMode="on-drag". Drag above the IME, never on it, so the
-    # keyboard hides without touching the navigation key. Keep the drag short:
-    # a 300 px swipe moved the next field above the viewport in run 40328753105
-    # (add.taskValue after add.taskLabel). If the short drag did not dismiss
-    # the IME, the longer fallback is still followed by scroll_find's rewind.
-    adb('shell','input','swipe',SWIPE_X,SWIPE_HIGH,SWIPE_X,'350','220')
-    time.sleep(.5)
-    if keyboard_shown():
-        adb('shell','input','swipe',SWIPE_X,SWIPE_HIGH,SWIPE_X,SWIPE_LOW,'300')
+        # Prefer the IME's own hide affordance when it is exposed to UIAutomator.
+        for label in ('Hide keyboard','Masquer le clavier','Fermer le clavier','Close keyboard'):
+            nodes=candidates(hierarchy(),label=label,partial=True)
+            if nodes:
+                tap_node(nodes[0])
+                time.sleep(.5)
+                break
+        if not keyboard_shown():
+            return
+        # Every journey form is a ScreenContainer ScrollView with
+        # keyboardDismissMode="on-drag". Keep the drag short: a 300 px swipe
+        # moved the next field above the viewport in run 40328753105
+        # (add.taskValue after add.taskLabel).
+        adb('shell','input','swipe',SWIPE_X,SWIPE_HIGH,SWIPE_X,SWIPE_LOW,'220')
         time.sleep(.5)
+    # A still-visible keyboard is not fatal: fill/scroll callers refuse to tap
+    # controls below it, so the next field is scrolled into the clear band.
 
 def foreground_packages(root):
     return {node.attrib.get('package','') for node in root.iter('node')} - {''}
@@ -217,36 +289,41 @@ def scroll_top():
             continue
         swipe(False)
 
-def scroll_find(label=None,resource=None,partial=False):
-    # System dialogs (e.g. the emulator's Pixel Launcher ANR) can steal the
-    # window hierarchy while the app is still running. Dismiss only the known
-    # system processes, never a ChoreScore ANR, and keep the product assertion.
+def _scroll_find_pass(label,resource,partial,attempts):
     dismissed=0
-    for _ in range(12):
+    for _ in range(attempts):
         root=hierarchy()
-        nodes=candidates(root,label,resource,partial)
-        if nodes:return nodes[0]
+        node=find_visible(root,label,resource,partial)
+        if node:return node
+        # The control exists but is covered by the IME: dismiss the keyboard
+        # first instead of tapping Gboard. Swiping while it is visible cannot
+        # move the form and may swipe-type into the focused field.
+        if candidates(root,label,resource,partial) and keyboard_shown():
+            hide_keyboard()
+            continue
         if dismissed<8 and (dismiss_system_dialog(root) or dismiss_permission(root)):
             dismissed+=1
             continue
         swipe()
+    return None
+
+def scroll_find(label=None,resource=None,partial=False):
+    # System dialogs (e.g. the emulator's Pixel Launcher ANR) can steal the
+    # window hierarchy while the app is still running. Dismiss only the known
+    # system processes, never a ChoreScore ANR, and keep the product assertion.
+    node=_scroll_find_pass(label,resource,partial,12)
+    if node:return node
     # A keyboard-dismiss drag or an earlier form action can leave the target
     # just above the viewport. Swiping only downwards would then never find it
     # (run 40328753105: add.taskValue was missed after add.taskLabel). Rewind
     # to the start of the form and search in the other direction before failing.
     scroll_top()
-    dismissed=0
-    for _ in range(16):
-        root=hierarchy()
-        nodes=candidates(root,label,resource,partial)
-        if nodes:return nodes[0]
-        if dismissed<8 and (dismiss_system_dialog(root) or dismiss_permission(root)):
-            dismissed+=1
-            continue
-        swipe()
+    node=_scroll_find_pass(label,resource,partial,16)
+    if node:return node
     raise AssertionError(f'Control absent after scrolling: {resource or label}')
 
 def scroll_to(label=None,resource=None,partial=False):
+    hide_keyboard()
     tap_node(scroll_find(label,resource,partial))
 
 def input_text(value):
@@ -268,23 +345,43 @@ def fill_node(node,value,clear=False):
     hide_keyboard()
 
 def fill(resource,value,clear=False):
+    hide_keyboard()
     fill_node(scroll_find(resource=resource),value,clear)
 
 def fill_nth(resource,index,value,clear=False):
-    nodes=candidates(hierarchy(),resource=resource)
+    hide_keyboard()
+    visible=lambda ns:[n for n in ns if onscreen(n,usable_bottom())]
+    nodes=visible(candidates(hierarchy(),resource=resource))
     if len(nodes)<=index:
         for _ in range(8):
             swipe()
-            nodes=candidates(hierarchy(),resource=resource)
+            nodes=visible(candidates(hierarchy(),resource=resource))
             if len(nodes)>index:break
     if len(nodes)<=index:
         scroll_top()
         for _ in range(16):
-            nodes=candidates(hierarchy(),resource=resource)
+            nodes=visible(candidates(hierarchy(),resource=resource))
             if len(nodes)>index:break
             swipe()
     if len(nodes)<=index:raise AssertionError(f'Missing {resource}[{index}]')
     fill_node(nodes[index],value,clear)
+
+def open_datetime(resource):
+    """Tap a real date-time control and prove its draft dialog opened.
+
+    Replaces the former sleep/scroll retry: a tap can be lost to a transient
+    overlay, so retry once, but the date field is still mandatory. No arbitrary
+    delay is needed because locate polls the hierarchy until the deadline.
+    """
+    last_error=None
+    for attempt in range(2):
+        hide_keyboard()
+        tap_node(scroll_find(resource=resource))
+        try:
+            return locate(resource=resource+'.date', timeout=12)
+        except AssertionError as error:
+            last_error=error
+    raise last_error
 
 def resource_name(node):
     """Return the raw resource name with or without a package/id prefix.
@@ -617,15 +714,7 @@ try:
     tap(resource='todos.newItem')
     fill('todos.createTitle','Todo tache CI')
     fill('todos.createNotes','Rappel CI')
-    scroll_to(resource='todos.reminderDateTime')
-    time.sleep(5)
-    try:
-        locate(resource='todos.reminderDateTime.date', timeout=15)
-    except Exception:
-        # try again
-        scroll_to(resource='todos.reminderDateTime')
-        time.sleep(5)
-        locate(resource='todos.reminderDateTime.date', timeout=15)
+    open_datetime('todos.reminderDateTime')
     tomorrow=time.strftime('%Y-%m-%d',time.localtime(time.time()+86400))
     fill('todos.reminderDateTime.date',tomorrow)
     fill('todos.reminderDateTime.time','12:00')
@@ -660,14 +749,7 @@ try:
     tap(resource='todos.newItem')
     fill('todos.createTitle','Rappel natif CI')
     fill('todos.createNotes','Notification CI')
-    scroll_to(resource='todos.reminderDateTime')
-    time.sleep(5)
-    try:
-        locate(resource='todos.reminderDateTime.date', timeout=15)
-    except Exception:
-        scroll_to(resource='todos.reminderDateTime')
-        time.sleep(5)
-        locate(resource='todos.reminderDateTime.date', timeout=15)
+    open_datetime('todos.reminderDateTime')
     reminder_date,reminder_time=device_time_plus(2)
     fill('todos.reminderDateTime.date',reminder_date)
     fill('todos.reminderDateTime.time',reminder_time)

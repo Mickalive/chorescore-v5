@@ -74,8 +74,8 @@ const server = createServer((req, res) => {
     await expect(field('add.expenseTitle')).toHaveValue('');
     await page.getByRole('tab', { name: 'Balances', exact: true }).click();
     await page.getByText(/^Cuisine\s/).first().waitFor();
-    await expect(page.getByText('+ 4.5 points', { exact: true })).toBeVisible();
-    await expect(page.getByText('+ CHF 0.50', { exact: true })).toBeVisible();
+    await expect(page.getByText('+ 4,5 pts', { exact: true })).toBeVisible();
+    await expect(page.getByText(/^\+ 0,50[\s\u00a0\u202f]CHF$/)).toBeVisible();
     await screenshot('balances-web');
     await page.getByText(/^Cuisine\s/).first().click();
     await button('Modifier la tâche').click();
@@ -86,7 +86,7 @@ const server = createServer((req, res) => {
     await page.getByText(/Cuisine.*20 pts/).first().waitFor();
     await page.reload();
     await page.getByText(/Cuisine.*20 pts/).first().waitFor();
-    await expect(page.getByText('+ 10 points', { exact: true })).toBeVisible();
+    await expect(page.getByText('+ 10 pts', { exact: true })).toBeVisible();
     await page.getByText(/^Courses\s/).first().waitFor();
     await page.getByRole('tab', { name: 'À faire', exact: true }).click();
     await button('Nouvel élément').click();
@@ -115,7 +115,7 @@ const server = createServer((req, res) => {
     await button('Nouvel élément').waitFor();
     await page.getByRole('tab', { name: 'Balances', exact: true }).click();
     await page.getByText(/Lessive prévue.*6 pts/).first().waitFor();
-    await expect(page.getByText('+ 13 points', { exact: true })).toBeVisible();
+    await expect(page.getByText('+ 13 pts', { exact: true })).toBeVisible();
     // User-created category ratios, their historical snapshot, and explicit override.
     await page.getByRole('tab', { name: 'Ajouter', exact: true }).click();
     await page.getByText('Tâche', { exact: true }).click();

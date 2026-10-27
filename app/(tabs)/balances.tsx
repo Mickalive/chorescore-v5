@@ -41,7 +41,6 @@ import {
   ExpenseEntry,
   Household,
   Member,
-  ContributionTransfer,
   MoneyTransfer,
   ActivityEntry,
 } from '../../src/domain/entities';
@@ -73,61 +72,38 @@ import {
   ActivityLogPage,
 } from '../../src/domain/calculations/activityLog';
 import { loadActivityHistoryPage } from '../../src/application/use-cases/activityHistory';
+import {
+  formatContributionValue,
+  formatCurrencyAmount,
+  formatMoneyAmount,
+  formatQuantity,
+  formatTransferContribution,
+  formatTransferMoney,
+} from '../../src/presentation/balanceFormat';
 
 // ── Helpers ────────────────────────────────────────────────────
-
-function formatContributionValue(value: number, unitShort: string): string {
-  const abs = Math.abs(value);
-  if (value > 0) return `+ ${abs} ${unitShort}`;
-  if (value < 0) return `- ${abs} ${unitShort}`;
-  return `0 ${unitShort}`;
-}
-
-function formatMoneyAmount(amountMinor: number, currency: string): string {
-  const abs = Math.abs(amountMinor);
-  const whole = Math.floor(abs / 100);
-  const cents = abs % 100;
-  const formatted = `${whole}.${cents.toString().padStart(2, '0')}`;
-  if (amountMinor > 0) return `+ ${currency} ${formatted}`;
-  if (amountMinor < 0) return `- ${currency} ${formatted}`;
-  return `${currency} 0.00`;
-}
-
-function formatTransferContribution(
-  t: ContributionTransfer,
-  memberName: (id: string) => string,
-  unitShort: string,
-): string {
-  return `${memberName(t.fromMemberId)} → ${memberName(t.toMemberId)} : ${t.value} ${unitShort}`;
-}
-
-function formatTransferMoney(t: MoneyTransfer, memberName: (id: string) => string): string {
-  const abs = Math.abs(t.amountMinor);
-  const whole = Math.floor(abs / 100);
-  const cents = abs % 100;
-  return `${memberName(t.fromMemberId)} → ${memberName(t.toMemberId)} : ${t.currency} ${whole}.${cents.toString().padStart(2, '0')}`;
-}
 
 function formatActivityRow(
   entry: ActivityEntry,
   memberName: (id: string) => string,
   unitShort: string,
   settlementLabel: string,
+  locale: string,
 ): string {
   switch (entry.type) {
     case 'contribution': {
       const e = entry.entry;
-      const val = formatContributionValue(e.value, unitShort);
+      const val = formatContributionValue(e.value, unitShort, locale);
       return `${e.label}  ${val}  ${memberName(e.performedByMemberId)} → ${e.beneficiaryMemberIds.map(memberName).join(', ')}`;
     }
     case 'expense': {
       const e = entry.entry;
-      return `${e.title}  ${formatMoneyAmount(e.amountMinor, e.currency)}  ${memberName(e.paidByMemberId)} → ${e.participantMemberIds.map(memberName).join(', ')}`;
+      return `${e.title}  ${formatMoneyAmount(e.amountMinor, e.currency, locale)}  ${memberName(e.paidByMemberId)} → ${e.participantMemberIds.map(memberName).join(', ')}`;
     }
     case 'cross-ledger-settlement': {
       const e = entry.entry;
-      const contrib = formatContributionValue(-e.contributionValue, unitShort);
-      const money = formatMoneyAmount(e.moneyAmountMinor, e.currency);
+      const contrib = formatContributionValue(-e.contributionValue, unitShort, locale);
+      const money = formatMoneyAmount(e.moneyAmountMinor, e.currency, locale);
       return `${settlementLabel}  ${memberName(e.contributionCreditorMemberId)} ${contrib} ↔ ${money}`;
     }
   }
@@ -138,7 +114,7 @@ const HISTORY_PAGE_SIZE = 20;
 // ── Component ──────────────────────────────────────────────────
 
 export default function BalancesScreen() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const router = useRouter();
   const { currentHouseholdId, currentUser, repos, services, subscribeToDataChanges, emitDataChange } = useApp();
   const [period, setPeriod] = useState<Period>('all-time');
@@ -741,7 +717,7 @@ export default function BalancesScreen() {
 
   const handleShareEntry = (entry: ActivityEntry) => {
     setSelectedEntry(null);
-    const message = formatActivityRow(entry, memberName, unitLabel, t('add.settlement'));
+    const message = formatActivityRow(entry, memberName, unitLabel, t('add.settlement'), locale);
     services.share.share({ message });
   };
 
@@ -795,7 +771,7 @@ export default function BalancesScreen() {
                       : colors.textSecondary
                   }
                 >
-                  {formatContributionValue(balance.value, unit)}
+                  {formatContributionValue(balance.value, unitLabel, locale)}
                 </Text>
               </View>
             ))
@@ -820,7 +796,7 @@ export default function BalancesScreen() {
             {contributionSuggestions.map((transfer, i) => (
               <View key={i} style={styles.suggestionRow}>
                 <Text variant="body" style={styles.suggestionText}>
-                  {formatTransferContribution(transfer, memberName, unitLabel)}
+                  {formatTransferContribution(transfer, memberName, unitLabel, locale)}
                 </Text>
               </View>
             ))}
@@ -858,7 +834,7 @@ export default function BalancesScreen() {
                           : colors.textSecondary
                       }
                     >
-                      {formatMoneyAmount(balance.amountMinor, currency)}
+                      {formatMoneyAmount(balance.amountMinor, currency, locale)}
                     </Text>
                   </View>
                 ))}
@@ -883,7 +859,7 @@ export default function BalancesScreen() {
             {moneySuggestions.map((transfer, i) => (
               <View key={i} style={styles.suggestionRow}>
                 <Text variant="body" style={styles.suggestionText}>
-                  {formatTransferMoney(transfer, memberName)}
+                  {formatTransferMoney(transfer, memberName, locale)}
                 </Text>
               </View>
             ))}
@@ -908,10 +884,16 @@ export default function BalancesScreen() {
             <Text variant="body" style={styles.compensationDescription}>
               {household.crossLedgerCompensationEnabled
                 ? t('balances.compensationRate', {
-                    value: household.contributionToMoneyRate?.contributionValue ?? '',
+                    value: household.contributionToMoneyRate
+                      ? formatQuantity(household.contributionToMoneyRate.contributionValue, locale)
+                      : '',
                     unit: unitLabel,
                     money: household.contributionToMoneyRate
-                      ? `${household.contributionToMoneyRate.moneyAmountMinor / 100} ${household.contributionToMoneyRate.currency}`
+                      ? formatCurrencyAmount(
+                          household.contributionToMoneyRate.moneyAmountMinor,
+                          household.contributionToMoneyRate.currency,
+                          locale,
+                        )
                       : '—',
                   })
                 : t('balances.compensationDisabledHelp')}
@@ -969,10 +951,11 @@ export default function BalancesScreen() {
                     memberName,
                     unitLabel,
                     t('add.settlement'),
+                    locale,
                   )}
                 >
                   <Text variant="body" style={styles.historyText} numberOfLines={2}>
-                    {formatActivityRow(entry, memberName, unitLabel, t('add.settlement'))}
+                    {formatActivityRow(entry, memberName, unitLabel, t('add.settlement'), locale)}
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -1018,7 +1001,7 @@ export default function BalancesScreen() {
                 style={styles.actionSheetSummary}
                 numberOfLines={2}
               >
-                {formatActivityRow(selectedEntry, memberName, unitLabel, t('add.settlement'))}
+                {formatActivityRow(selectedEntry, memberName, unitLabel, t('add.settlement'), locale)}
               </Text>
             )}
 
@@ -1146,11 +1129,11 @@ export default function BalancesScreen() {
                     <View key={b.memberId} style={styles.previewRow}>
                       <Text variant="body" style={{ flex: 1 }}>{memberName(b.memberId)}</Text>
                       <Text variant="body" style={{ width: 80, textAlign: 'right' }}>
-                        {formatContributionValue(b.value, unit)}
+                        {formatContributionValue(b.value, unitLabel, locale)}
                       </Text>
                       <Text variant="body" style={{ width: 20, textAlign: 'center' }}>→</Text>
                       <Text variant="body" style={{ width: 80, textAlign: 'right' }}>
-                        {formatContributionValue(after?.value ?? b.value, unit)}
+                        {formatContributionValue(after?.value ?? b.value, unitLabel, locale)}
                       </Text>
                     </View>
                   );
@@ -1165,11 +1148,11 @@ export default function BalancesScreen() {
                     <View key={b.memberId} style={styles.previewRow}>
                       <Text variant="body" style={{ flex: 1 }}>{memberName(b.memberId)}</Text>
                       <Text variant="body" style={{ width: 80, textAlign: 'right' }}>
-                        {formatMoneyAmount(b.amountMinor, b.currency)}
+                        {formatMoneyAmount(b.amountMinor, b.currency, locale)}
                       </Text>
                       <Text variant="body" style={{ width: 20, textAlign: 'center' }}>→</Text>
                       <Text variant="body" style={{ width: 80, textAlign: 'right' }}>
-                        {formatMoneyAmount(after?.amountMinor ?? b.amountMinor, b.currency)}
+                        {formatMoneyAmount(after?.amountMinor ?? b.amountMinor, b.currency, locale)}
                       </Text>
                     </View>
                   );
@@ -1177,16 +1160,22 @@ export default function BalancesScreen() {
 
                 <Text variant="caption" color={colors.textSecondary} style={{ marginTop: spacing.md }}>
                   {t('balances.composerRateSnapshot', {
-                    value: compenserPreview.rate.contributionValue,
+                    value: formatQuantity(compenserPreview.rate.contributionValue, locale),
                     unit: unitLabel,
-                    money: compenserPreview.rate.moneyAmountMinor / 100,
-                    currency: compenserPreview.rate.currency,
+                    money: formatCurrencyAmount(
+                      compenserPreview.rate.moneyAmountMinor,
+                      compenserPreview.rate.currency,
+                      locale,
+                    ),
                   })}
                 </Text>
                 <Text variant="caption" color={colors.textSecondary}>
                   {t('balances.composerAmount', {
-                    amount: compenserPreview.moneyAmount / 100,
-                    currency: compenserPreview.rate.currency,
+                    amount: formatCurrencyAmount(
+                      compenserPreview.moneyAmount,
+                      compenserPreview.rate.currency,
+                      locale,
+                    ),
                   })}
                 </Text>
               </Card>

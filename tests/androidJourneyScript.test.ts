@@ -39,19 +39,42 @@ describe('Android journey driver', () => {
     expect(top).toContain('swipe(False)');
   });
 
-  it('keeps the keyboard-dismiss drag short enough not to skip the next field', () => {
+  it('drags the keyboard away inside the upper form band, never on Gboard', () => {
     const hide = functionBody('hide_keyboard');
-    expect(hide).toContain("SWIPE_X,SWIPE_HIGH,SWIPE_X,'350','220'");
-    expect(hide).toContain("SWIPE_X,SWIPE_HIGH,SWIPE_X,SWIPE_LOW,'300'");
+    expect(hide).toContain("SWIPE_X,SWIPE_HIGH,SWIPE_X,SWIPE_LOW");
+    expect(hide).toContain('keyboard_shown');
+    expect(hide).not.toMatch(/'206',\s*'(470|500|520|610)'/);
   });
 
-  it('keeps every scroll drag above the tall IME band', () => {
+  it('keeps every scroll and dismiss drag above the tall IME band', () => {
     const swipe = functionBody('swipe');
-    expect(source).toContain("SWIPE_HIGH = '470'");
-    expect(source).toContain("SWIPE_LOW = '180'");
+    expect(source).toContain("SWIPE_HIGH = '320'");
+    expect(source).toContain("SWIPE_LOW = '140'");
     expect(swipe).toContain('SWIPE_HIGH if up else SWIPE_LOW');
     expect(swipe).toContain('SWIPE_LOW if up else SWIPE_HIGH');
-    expect(source).not.toMatch(/'206',\s*'(500|520|610)'/);
+    expect(source).not.toMatch(/'206',\s*'(470|500|520|610)'/);
+  });
+
+  it('never taps a field hidden under a visible IME', () => {
+    const find = functionBody('_scroll_find_pass');
+    expect(find).toContain('find_visible');
+    expect(find).toContain('keyboard_shown()');
+    expect(find).toContain('hide_keyboard()');
+    const top = functionBody('ime_top');
+    expect(top).toContain('InputMethod');
+    expect(top).toContain('frame');
+    const visible = functionBody('find_visible');
+    expect(visible).toContain('usable_bottom()');
+    expect(visible).toContain('onscreen');
+  });
+
+  it('opens each reminder dialog deterministically without arbitrary sleeps', () => {
+    expect(source).toContain("open_datetime('todos.reminderDateTime')");
+    expect(source).not.toContain("scroll_to(resource='todos.reminderDateTime')");
+    expect(source).not.toContain("locate(resource='todos.reminderDateTime.date'");
+    const open = functionBody('open_datetime');
+    expect(open).toContain("resource+'.date'");
+    expect(open).toContain('for attempt in range(2)');
   });
 
   it('matches category chips exposed as raw resource names, not only prefixed ids', () => {
