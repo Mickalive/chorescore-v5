@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 import traceback
+import urllib.request
 import xml.etree.ElementTree as ET
 
 APK = Path(sys.argv[1]).resolve()
@@ -28,8 +29,24 @@ def adb(*args, binary=False, timeout=35):
     return result.stdout if binary else result.stdout.decode('utf-8',errors='replace')
 
 def hierarchy():
-    adb('shell','uiautomator','dump','/data/local/tmp/chorescore-window.xml')
-    data = adb('shell','cat','/data/local/tmp/chorescore-window.xml')
+    rpc=os.environ.get('ANDROID_UIAUTOMATOR_RPC_URL')
+    if rpc:
+        # Optional persistent native UIAutomator server. It reads the same real
+        # accessibility tree, avoiding a Java VM startup for every assertion.
+        request=urllib.request.Request(rpc, data=json.dumps({
+            'jsonrpc':'2.0', 'id':'chorescore', 'method':'dumpWindowHierarchy',
+            'params':[False, 100],
+        }).encode(), headers={'Content-Type':'application/json'})
+        with urllib.request.urlopen(request, timeout=120) as response:
+            result=json.load(response)
+        if result.get('error') or not isinstance(result.get('result'),str):
+            raise AssertionError('Native UIAutomator hierarchy request failed')
+        data=result['result']
+    else:
+        # Software-only Android can spend >35s starting the Java dump process.
+        adb('shell','uiautomator','dump','/data/local/tmp/chorescore-window.xml',
+            timeout=int(os.environ.get('ANDROID_UI_DUMP_TIMEOUT', '35')))
+        data = adb('shell','cat','/data/local/tmp/chorescore-window.xml')
     (EVIDENCE/'latest-window.xml').write_text(data)
     return ET.fromstring(data)
 

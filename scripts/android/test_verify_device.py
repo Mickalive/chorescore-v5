@@ -1,6 +1,8 @@
 """Exercise real journey selectors against UIAutomator XML without a device."""
 import ast
 import hashlib
+import io
+import json
 import tempfile
 from pathlib import Path
 import re
@@ -21,6 +23,7 @@ def driver():
     )
     env = {'re': re, 'ET': ET}
     exec(compile(functions, 'verify-device.py', 'exec'), env)
+    env['real_hierarchy'] = env['hierarchy']
     env['real_keyboard_shown'] = env['keyboard_shown']
     env['real_scroll_top'] = env['scroll_top']
     env.update(
@@ -33,6 +36,20 @@ def driver():
 
 
 class SelectorBehavior(unittest.TestCase):
+    def test_persistent_native_hierarchy_is_parsed_and_rpc_failures_are_rejected(self):
+        env = driver()
+        xml='<hierarchy><node resource-id="groups.newButton" text="Créer un groupe" /></hierarchy>'
+        with tempfile.TemporaryDirectory() as folder:
+            request=SimpleNamespace(Request=Mock(),urlopen=Mock(return_value=io.StringIO(json.dumps({'result':xml}))))
+            env.update(os=SimpleNamespace(environ={'ANDROID_UIAUTOMATOR_RPC_URL':'http://127.0.0.1:19008/jsonrpc/0'}),
+                       urllib=SimpleNamespace(request=request),json=json,EVIDENCE=Path(folder))
+            root=env['real_hierarchy']()
+            self.assertEqual(root[0].get('resource-id'), 'groups.newButton')
+            self.assertEqual((Path(folder)/'latest-window.xml').read_text(), xml)
+            request.urlopen.return_value=io.StringIO(json.dumps({'error':{'message':'disconnected'}}))
+            with self.assertRaisesRegex(AssertionError, 'hierarchy request failed'):
+                env['real_hierarchy']()
+
     def test_aosp_full_height_ime_uses_visible_content_insets(self):
         env = driver()
         # Actual AOSP 35 window dump: transparent IME window starts at y=24,
