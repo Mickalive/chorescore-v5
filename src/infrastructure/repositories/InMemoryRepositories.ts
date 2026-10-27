@@ -2,7 +2,7 @@
  * ChoreScore V3 — In-Memory Repositories
  *
  * Used for testing and as a fallback when SQLite is not available.
- * Each repository generates deterministic IDs for testability.
+ * Record identities use the same device-independent UUIDs as SQLite.
  */
 
 import {
@@ -43,11 +43,7 @@ import {
   PaginatedQuery,
 } from './index';
 
-let idCounter = 0;
-function generateId(prefix: string): string {
-  idCounter += 1;
-  return `${prefix}-${idCounter}-${Date.now()}`;
-}
+import { generateRecordId as generateId } from './recordIdentity';
 
 export class InMemoryUserRepository implements UserRepository {
   private items = new Map<string, User>();

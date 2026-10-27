@@ -48,6 +48,7 @@ import {
 } from './index';
 import { getDatabase as openDatabase, parseJsonArray, toJsonArray } from '../local/SqliteStorage';
 import type { SQLiteDatabase } from 'expo-sqlite';
+import { generateRecordId as generateId } from './recordIdentity';
 
 export type SqliteDatabaseProvider = () => Promise<SQLiteDatabase>;
 
@@ -61,12 +62,6 @@ class SqliteDatabaseBound {
   protected db(): Promise<SQLiteDatabase> {
     return this.databaseProvider();
   }
-}
-
-let idCounter = 0;
-function generateId(prefix: string): string {
-  idCounter += 1;
-  return `${prefix}-${idCounter}-${Date.now()}`;
 }
 
 /**

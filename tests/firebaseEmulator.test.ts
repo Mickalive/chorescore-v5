@@ -13,15 +13,40 @@
 import { randomUUID } from 'node:crypto';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
-  createInMemoryRepositories,
+  createSqliteRepositories,
   AllRepositories,
 } from '../src/infrastructure/repositories/RepositoryFactory';
+import { closeDatabase } from '../src/infrastructure/local/SqliteStorage';
 import { RemoteSyncAdapter } from '../src/infrastructure/sync/RemoteSyncAdapter';
 import { FirebaseSyncTransport } from '../src/infrastructure/firebase/FirebaseSyncTransport';
 import { FirebaseMediaGateway } from '../src/infrastructure/firebase/FirebaseMediaGateway';
 import { FirestoreRestClient } from '../src/infrastructure/firebase/FirestoreRestClient';
 import { createGroupWithMembers } from '../src/application/use-cases/groupMembers';
+
+let mockDirectory: string;
+const databases = new Set<string>();
+jest.mock('expo-sqlite', () => ({
+  openDatabaseAsync: async (name: string) => {
+    const sqlite = (process as any).getBuiltinModule('node:sqlite');
+    const database = new sqlite.DatabaseSync(`${mockDirectory}/${name}`);
+    return {
+      execAsync: async (sql: string) => database.exec(sql),
+      runAsync: async (sql: string, ...args: any[]) => database.prepare(sql).run(...(Array.isArray(args[0]) ? args[0] : args)),
+      getAllAsync: async (sql: string, ...args: any[]) => database.prepare(sql).all(...(Array.isArray(args[0]) ? args[0] : args)),
+      getFirstAsync: async (sql: string, ...args: any[]) => database.prepare(sql).get(...(Array.isArray(args[0]) ? args[0] : args)) ?? null,
+      closeAsync: async () => database.close(),
+      withTransactionAsync: async (fn: () => Promise<void>) => {
+        database.exec('BEGIN');
+        try { await fn(); database.exec('COMMIT'); }
+        catch (error) { database.exec('ROLLBACK'); throw error; }
+      },
+    };
+  },
+}));
 
 const emulatorHost = process.env.FIRESTORE_EMULATOR_HOST;
 const projectId =
@@ -54,7 +79,6 @@ function nodeFetch(url: URL, init: RequestInit = {}): Promise<Response> {
   // has no status metadata outside a React Native runtime, so an emulator test
   // must use Node's HTTP stack directly rather than globalThis.fetch.
   return new Promise((resolve, reject) => {
-    console.error('REQ', init.method ?? 'GET', url.pathname + url.search);
     const transport = url.protocol === 'https:' ? httpsRequest : httpRequest;
     const request = transport(
       url,
@@ -68,9 +92,7 @@ function nodeFetch(url: URL, init: RequestInit = {}): Promise<Response> {
         response.on('end', () => {
           const text = Buffer.concat(chunks).toString('utf8');
           const status = response.statusCode ?? 0;
-          console.error('RES', status, url.pathname);
-          if (status >= 400) console.error('BODY', text, 'REQBODY', init.body);
-        resolve({
+          resolve({
             status,
             ok: status >= 200 && status < 300,
             text: async () => text,
@@ -79,7 +101,7 @@ function nodeFetch(url: URL, init: RequestInit = {}): Promise<Response> {
         });
       },
     );
-    request.on('error', (error) => { console.error('REQERR', url.pathname, error.message); reject(error); });
+    request.on('error', reject);
     if (init.signal) {
       init.signal.addEventListener('abort', () => request.destroy(new Error('Aborted')));
     }
@@ -110,6 +132,7 @@ function emulatorFetch(fail: { next: boolean }): typeof fetch {
 }
 
 interface Client {
+  databaseName: string;
   uid: string;
   repos: AllRepositories;
   sync: RemoteSyncAdapter;
@@ -120,7 +143,7 @@ interface Client {
   fail: { next: boolean };
 }
 
-function client(uid: string): Client {
+async function client(uid: string): Promise<Client> {
   const fail = { next: false };
   const fetchImpl = emulatorFetch(fail);
   const getAccessToken = async () => token(uid);
@@ -143,7 +166,10 @@ function client(uid: string): Client {
       return `membership-${idSequence}-${uid}`;
     },
   });
-  const repos = createInMemoryRepositories();
+  const databaseName = `${uid}.db`;
+  databases.add(databaseName);
+  const repos = await createSqliteRepositories(databaseName);
+  if (!repos) throw new Error('The Firebase journey requires a real SQLite database');
   const cache = new Map<string, Uint8Array>();
   const media = new FirebaseMediaGateway({
     client: firestore,
@@ -159,14 +185,31 @@ function client(uid: string): Client {
     compress: async (uri) => ({ uri, mimeType: 'image/jpeg' }),
     now: () => clock,
   });
+  let result: Client;
   const sync = new RemoteSyncAdapter({
     request: (method, path, body) => transport.request(method, path, body),
     getAccessToken,
-    getRepos: () => repos,
+    getRepos: () => result.repos,
     media,
     pollIntervalMs: 0,
   });
-  return { uid, repos, sync, media, transport, firestore, cache, fail };
+  result = { uid, databaseName, repos, sync, media, transport, firestore, cache, fail };
+  return result;
+}
+
+async function restart(target: Client): Promise<void> {
+  await target.sync.stopSync('*');
+  await closeDatabase(target.databaseName);
+  const repos = await createSqliteRepositories(target.databaseName);
+  if (!repos) throw new Error('Failed to reopen SQLite');
+  target.repos = repos;
+  target.sync = new RemoteSyncAdapter({
+    request: (method, path, body) => target.transport.request(method, path, body),
+    getAccessToken: async () => token(target.uid),
+    getRepos: () => target.repos,
+    media: target.media,
+    pollIntervalMs: 0,
+  });
 }
 
 async function householdRevision(target: Client, householdId: string): Promise<number> {
@@ -176,12 +219,17 @@ async function householdRevision(target: Client, householdId: string): Promise<n
 
 describeEmulator('real Firestore rules and collaboration journey', () => {
   jest.setTimeout(120_000);
+  beforeAll(() => { mockDirectory = mkdtempSync(join(tmpdir(), 'chorescore-firestore-sqlite-')); });
+  afterAll(async () => {
+    for (const name of databases) await closeDatabase(name);
+    rmSync(mockDirectory, { recursive: true, force: true });
+  });
 
   test('two accounts, targeted invitation, real deltas, media and owner deletion', async () => {
     const suffix = randomUUID().slice(0, 8);
-    const alice = client(`alice-${suffix}`);
-    const bob = client(`bob-${suffix}`);
-    const mallory = client(`mallory-${suffix}`);
+    const alice = await client(`alice-${suffix}`);
+    const bob = await client(`bob-${suffix}`);
+    const mallory = await client(`mallory-${suffix}`);
 
     const { household, ownerMember, namedMembers } = await createGroupWithMembers(alice.repos, {
       name: `Maison ${suffix}`,
@@ -228,6 +276,9 @@ describeEmulator('real Firestore rules and collaboration journey', () => {
       value: 10,
       unit: 'points',
     });
+    await restart(bob);
+    expect(await bob.repos.contributions.getById(entry.id)).toMatchObject({ value: 10 });
+    expect((await bob.repos.members.getByHousehold(hid)).map(member => member.id)).toContain(bobMember.id);
 
     const categoryId = `category-${suffix}`;
     const category = {
@@ -260,6 +311,10 @@ describeEmulator('real Firestore rules and collaboration journey', () => {
     });
     bob.fail.next = true;
     await expect(bob.sync.pushChanges(hid)).rejects.toThrow(/offline/);
+    const pending = await bob.repos.syncState.getPendingMutation(hid);
+    expect(pending).not.toBeNull();
+    await restart(bob);
+    expect(await bob.repos.syncState.getPendingMutation(hid)).toEqual(pending);
     await bob.sync.pushChanges(hid);
     await alice.sync.pullChanges(hid);
     expect(await alice.repos.categories.getById(bobCategory.id)).toMatchObject({

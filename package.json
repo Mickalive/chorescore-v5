@@ -71,6 +71,9 @@
     "testMatch": [
       "**/__tests__/**/*.{ts,tsx,js,jsx}",
       "**/*.{test,spec}.{ts,tsx,js,jsx}"
+    ],
+    "setupFilesAfterEnv": [
+      "<rootDir>/tests/setupCrypto.ts"
     ]
   },
   "engines": {
