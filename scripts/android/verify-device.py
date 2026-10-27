@@ -66,7 +66,9 @@ def hierarchy():
     if rpc:
         # Optional persistent native UIAutomator server. It reads the same real
         # accessibility tree, avoiding a Java VM startup for every assertion.
-        data=native_rpc('dumpWindowHierarchy',[False,100])
+        # Read the active Android window explicitly. The all-windows query can
+        # be empty after a software-only reboot even while the app is rendered.
+        data=native_rpc('dumpWindowHierarchy',[False,100,True])
         if not isinstance(data,str):
             raise AssertionError('Native UIAutomator hierarchy request failed')
     else:
