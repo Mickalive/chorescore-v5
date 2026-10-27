@@ -399,7 +399,7 @@ export class FirebaseSyncTransport {
   ): Promise<RecordDoc[]> {
     const filter: FirestoreFilter[] = [{ field: 'collection', op: '==', value: collection }];
     const documents = await transaction.query(`groups/${groupId}/records`, filter);
-    return documents.map((document) => ({
+    return documents.filter(document => document.fields.value != null).map((document) => ({
       id: String(document.fields.id ?? ''),
       collection,
       version: Number(document.fields.version ?? 0),
@@ -672,8 +672,13 @@ export class FirebaseSyncTransport {
         }
         return previous.fields.response as unknown as MutationDoc['response'];
       }
-      for (const change of changes) {
+      for (const change of changes.filter(change => change.collection !== 'settlements')) {
         await this.validateChange(transaction, group, uid, change, changes);
+      }
+      const priorSettlements: Record<string, unknown>[] = [];
+      for (const change of changes.filter(change => change.collection === 'settlements')) {
+        await this.validateChange(transaction, group, uid, change, changes, priorSettlements);
+        if (change.value) priorSettlements.push(change.value);
       }
       const result = await this.append(transaction, group, changes, this.now());
       transaction.set(mutationPath, {
@@ -692,6 +697,7 @@ export class FirebaseSyncTransport {
     uid: string,
     change: ClientChange,
     pending: ClientChange[] = [],
+    priorSettlements: Record<string, unknown>[] = [],
   ): Promise<void> {
     requireId(change.id);
     requireCondition(WRITABLE.has(change.collection), 'Collection is not client-writable');
@@ -816,7 +822,7 @@ export class FirebaseSyncTransport {
     }
     if (change.collection === 'settlements') {
       requireCondition(!previous?.value, 'Settlements are immutable');
-      const household = group.household;
+      const household = (await related('households', groupId) ?? group.household) as unknown as Household;
       requireCondition(household.crossLedgerCompensationEnabled === true, 'Compensation is not enabled');
       const rate = household.contributionToMoneyRate;
       if (!rate) throw new FirebaseTransportError(400, 'A compensation rate is required');
@@ -845,17 +851,27 @@ export class FirebaseSyncTransport {
         ) === value.moneyAmountMinor,
         'Settlement amount does not match its rate snapshot',
       );
-      const contributionRecords = await this.readCollection(transaction, groupId, 'contribution_entries');
-      const expenseRecords = await this.readCollection(transaction, groupId, 'expense_entries');
-      const settlementRecords = await this.readCollection(transaction, groupId, 'settlements');
-      const members = (await this.readCollection(transaction, groupId, 'members')).map((record) => String(record.value?.id ?? record.id));
+      const finalValues = async (collection: string): Promise<Record<string, unknown>[]> => {
+        const records = await this.readCollection(transaction, groupId, collection);
+        const values = new Map(records.map(record => [record.id, record.value!]));
+        for (const staged of pending) {
+          if (staged.collection !== collection) continue;
+          if (staged.value === null) values.delete(staged.id);
+          else values.set(staged.id, staged.value);
+        }
+        return [...values.values()];
+      };
+      const contributionRecords = await finalValues('contribution_entries');
+      const expenseRecords = await finalValues('expense_entries');
+      const settlementRecords = (await this.readCollection(transaction, groupId, 'settlements')).map(record => record.value!);
+      const members = (await finalValues('members')).map(record => String(record.id));
       const proposal = { ...value, id: change.id, householdId: groupId } as unknown as CrossLedgerSettlement;
       const preconditions = validateSettlementPreconditions(
         proposal,
-        contributionRecords.map((record) => record.value) as unknown as ContributionEntry[],
-        expenseRecords.map((record) => record.value) as unknown as ExpenseEntry[],
+        contributionRecords as unknown as ContributionEntry[],
+        expenseRecords as unknown as ExpenseEntry[],
         members,
-        settlementRecords.map((record) => record.value) as unknown as CrossLedgerSettlement[],
+        [...settlementRecords, ...priorSettlements] as unknown as CrossLedgerSettlement[],
         true,
       );
       requireCondition(preconditions.valid, preconditions.errors[0] ?? 'Settlement rejected');

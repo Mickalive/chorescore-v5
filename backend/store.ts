@@ -206,7 +206,8 @@ export class CollaborationStore {
     });
   }
   listGroups(uid: string) {
-    return this.database.prepare(`SELECT g.id,g.value,g.revision,a.memberId,a.role FROM access a JOIN groups g ON g.id=a.groupId WHERE a.uid=?`).all(uid)
+    return this.database.prepare(`SELECT g.id,r.value,g.revision,a.memberId,a.role FROM access a JOIN groups g ON g.id=a.groupId
+      JOIN records r ON r.groupId=g.id AND r.collection='households' AND r.id=g.id WHERE a.uid=? AND r.value IS NOT NULL`).all(uid)
       .map((row: any) => ({ household:JSON.parse(row.value), revision:row.revision, memberId:row.memberId, role:row.role }));
   }
   deltas(uid: string, groupId: string, since: number) {
@@ -215,7 +216,8 @@ export class CollaborationStore {
     const rows = this.database.prepare('SELECT revision,changes FROM events WHERE groupId=? AND revision>? ORDER BY revision LIMIT 101').all(groupId,since) as Row[];
     return { events:rows.slice(0,100).map(row => ({revision:row.revision,changes:JSON.parse(row.changes)})), hasMore:rows.length > 100 };
   }
-  private validate(groupId: string, uid: string, role: string, change: Change) {
+  private validate(groupId: string, uid: string, role: string, change: Change,
+    pending: ReadonlyMap<string, Change> = new Map(), priorSettlements: Row[] = []) {
     id(change.id); requireValue(editable.has(change.collection),'Collection is not client-writable');
     requireValue(Number.isSafeInteger(change.baseVersion) && change.baseVersion >= 0,'Invalid base version');
     const previous = this.record(groupId,change.collection,change.id);
@@ -238,12 +240,27 @@ export class CollaborationStore {
       'Cross-group payload denied',
     );
     requireValue(JSON.stringify(value).length <= 65536,'Record too large');
-    const member = (memberId: unknown) => { id(memberId); requireValue(this.value(groupId,'members',memberId),'Unknown group member'); };
+    // References may point at another record in this SAME atomic batch. Every
+    // record is still independently checked for tenant, version and identity.
+    const lookup = (collection: string, entityId: string): Row | null => {
+      const key = `${collection}:${entityId}`;
+      return pending.has(key) ? pending.get(key)!.value : this.value(groupId,collection,entityId);
+    };
+    const values = (collection: string): Row[] => {
+      const result = new Map(this.values(groupId,collection).map(item => [item.id,item]));
+      for (const change of pending.values()) {
+        if (change.collection !== collection) continue;
+        if (change.value === null) result.delete(change.id);
+        else result.set(change.id,change.value);
+      }
+      return [...result.values()];
+    };
+    const member = (memberId: unknown) => { id(memberId); requireValue(lookup('members',memberId),'Unknown group member'); };
     const participants = (values: unknown) => {
       requireValue(Array.isArray(values) && values.length > 0 && new Set(values).size === values.length,'Invalid participants');
       for (const value of values) member(value);
     };
-    if (value.categoryId) requireValue(this.value(groupId,'categories',value.categoryId),'Unknown category');
+    if (value.categoryId) requireValue(lookup('categories',value.categoryId),'Unknown category');
     if (value.note !== undefined) requireValue(typeof value.note === 'string' && value.note.length <= 10000,'Invalid note');
     if (value.attachments !== undefined) {
       requireValue(Array.isArray(value.attachments) && value.attachments.length <= 10,'Invalid attachments');
@@ -316,7 +333,7 @@ export class CollaborationStore {
       // It is never an arbitrary client-supplied balance mutation and it can
       // never be deleted or rewritten through the generic editor.
       requireValue(previous?.value === undefined || previous?.value === null,'Settlements are immutable');
-      const household = this.value(groupId,'households',groupId) as Household | null;
+      const household = lookup('households',groupId) as Household | null;
       requireValue(household?.crossLedgerCompensationEnabled === true,'Compensation is not enabled');
       const rate = household?.contributionToMoneyRate;
       if (!rate) throw new HttpError(400,'A compensation rate is required');
@@ -340,14 +357,14 @@ export class CollaborationStore {
         quoteCrossLedgerMoneyAmount(value.contributionValue,value.contributionUnit,snapshot) === value.moneyAmountMinor,
         'Settlement amount does not match its rate snapshot',
       );
-      const members = this.values(groupId,'members').map(item => item.id);
+      const members = values('members').map(item => item.id);
       const proposal = {...value,id:change.id,householdId:groupId} as CrossLedgerSettlement;
       const preconditions = validateSettlementPreconditions(
         proposal,
-        this.values(groupId,'contribution_entries') as ContributionEntry[],
-        this.values(groupId,'expense_entries') as ExpenseEntry[],
+        values('contribution_entries') as ContributionEntry[],
+        values('expense_entries') as ExpenseEntry[],
         members,
-        this.values(groupId,'settlements') as CrossLedgerSettlement[],
+        [...this.values(groupId,'settlements'), ...priorSettlements] as CrossLedgerSettlement[],
         true,
       );
       requireValue(preconditions.valid,preconditions.errors[0] ?? 'Settlement rejected');
@@ -378,8 +395,8 @@ export class CollaborationStore {
         // deterministic ledger entry written by the same atomic local
         // operation. Balances are never taken from the todo payload.
         const expected = `todo-${digest(change.id)}`;
-        const contribution = this.value(groupId,'contribution_entries',expected);
-        const expense = this.value(groupId,'expense_entries',expected);
+        const contribution = lookup('contribution_entries',expected);
+        const expense = lookup('expense_entries',expected);
         requireValue(Boolean(contribution || expense),'Use atomic completion endpoint');
         requireValue(
           (value.kind === 'task' && Boolean(contribution)) ||
@@ -409,7 +426,17 @@ export class CollaborationStore {
       const previous = this.database.prepare('SELECT hash,response FROM mutations WHERE groupId=? AND uid=? AND id=?').get(groupId,uid,operationId) as Row | undefined;
       if (previous) { if (previous.hash !== hash) throw new HttpError(409,'Operation ID reused with different data'); return JSON.parse(previous.response); }
       requireValue(new Set(changes.map(c => `${c.collection}:${c.id}`)).size === changes.length,'Duplicate record in batch');
-      for (const change of changes) this.validate(groupId,uid,membership.role,change);
+      const pending = new Map(changes.map(change => [`${change.collection}:${change.id}`,change]));
+      for (const change of changes.filter(change => change.collection !== 'settlements')) {
+        this.validate(groupId,uid,membership.role,change,pending);
+      }
+      // Validate settlements sequentially against the final ordinary records
+      // and the already validated settlements, so a batch cannot over-settle.
+      const priorSettlements: Row[] = [];
+      for (const change of changes.filter(change => change.collection === 'settlements')) {
+        this.validate(groupId,uid,membership.role,change,pending,priorSettlements);
+        if (change.value) priorSettlements.push(change.value);
+      }
       const result = this.append(groupId,changes);
       this.database.prepare('INSERT INTO mutations VALUES(?,?,?,?,?)').run(groupId,uid,operationId,hash,JSON.stringify(result));
       return result;

@@ -25,6 +25,7 @@ import {
 } from '../src/infrastructure/repositories/RepositoryFactory';
 import { closeDatabase } from '../src/infrastructure/local/SqliteStorage';
 import { RemoteSyncAdapter } from '../src/infrastructure/sync/RemoteSyncAdapter';
+import { completeTodoAtomic } from '../src/application/use-cases/completeTodoAtomic';
 import { createGroupWithMembers } from '../src/application/use-cases/groupMembers';
 import { calculateContributionBalances } from '../src/domain/calculations/contributionLedger';
 
@@ -144,6 +145,9 @@ afterAll(async () => {
   await closeDatabase('bob.db').catch(() => undefined);
   await closeDatabase('carol.db').catch(() => undefined);
   await closeDatabase('dave.db').catch(() => undefined);
+  await closeDatabase('completion-a.db').catch(() => undefined);
+  await closeDatabase('completion-b.db').catch(() => undefined);
+  await closeDatabase('recovery.db').catch(() => undefined);
   rmSync(directory, { recursive: true, force: true });
 });
 
@@ -442,4 +446,66 @@ test('a batch boundary keeps unsent changes durable across restart and reaches t
   expect(new Set(received.map(category => category.name)).size).toBe(121);
   await alice.sync.pushChanges(hid);
   expect(remoteCount()).toBe(121);
+});
+
+
+test('ordinary HTTP outbox synchronizes both local todo completions with their new category', async () => {
+  const a = await openClient('completion-a', 'completion-a.db');
+  const b = await openClient('completion-b', 'completion-b.db');
+  const { household, ownerMember, namedMembers } = await createGroupWithMembers(a.repos, {
+    name: 'Complétions locales', owner: { userId: a.uid, displayName: 'Alice' },
+    memberNames: ['Bob'], contributionUnit: 'points',
+  });
+  const hid = household.id;
+  const ids = [ownerMember.id, namedMembers[0].id];
+  await a.sync.ensureRemoteGroup(hid, a.uid);
+  const invitation = await a.sync.createInvitation(hid, ids[1]);
+  await b.sync.acceptInvitation(invitation.token);
+  const category = await a.repos.categories.create({ householdId: hid, name: 'Nouvelle catégorie', defaultTaskRatio: null });
+  for (const kind of ['task', 'expense'] as const) {
+    const todo = await a.repos.todos.create({ householdId: hid, title: `Local ${kind}`, kind, status: 'todo',
+      assigneeMemberId: ids[0], beneficiaryMemberIds: ids, dueAt: null, reminderAt: null, notes: 'Prévue',
+      persistentTaskId: null, categoryId: category.id });
+    if (kind === 'task') {
+      await completeTodoAtomic(a.repos, { todo, household, performerMemberId: ids[0], value: 3,
+        beneficiaryMemberIds: ids, completedByUserId: a.uid });
+    } else {
+      await completeTodoAtomic(a.repos, { todo, household, paidByMemberId: ids[0], amountMinor: 201, currency: 'CHF',
+        participantMemberIds: ids, completedByUserId: a.uid });
+    }
+  }
+  await restart(a);
+  await a.sync.pushChanges(hid);
+  await b.sync.pullChanges(hid);
+  expect((await b.repos.todos.getByHousehold(hid)).map(todo => todo.status)).toEqual(['completed', 'completed']);
+  expect(await b.repos.contributions.getByHousehold(hid)).toEqual([expect.objectContaining({ value: 3, categoryId: category.id })]);
+  expect(await b.repos.expenses.getByHousehold(hid)).toEqual([expect.objectContaining({ amountMinor: 201, categoryId: category.id })]);
+  await a.sync.pushChanges(hid);
+  expect(await b.repos.categories.getByHousehold(hid)).toHaveLength(1);
+  expect(serverCount('SELECT COUNT(*) AS n FROM records WHERE groupId=? AND collection IN (?,?)', hid, 'contribution_entries', 'expense_entries')).toBe(2);
+});
+
+
+test('lost group-creation response survives restart without conflicts or dropping offline settings and members', async () => {
+  const a = await openClient('recovery', 'recovery.db');
+  const { household, namedMembers } = await createGroupWithMembers(a.repos, {
+    name: 'Création interrompue', owner: { userId: a.uid, displayName: 'Alice' }, memberNames: ['Bob'], contributionUnit: 'points',
+  });
+  const hid = household.id;
+  a.loseNextResponse = true;
+  await expect(a.sync.ensureRemoteGroup(hid, a.uid)).rejects.toThrow('response lost');
+  const rate = { contributionValue: 2, contributionUnit: 'points' as const, moneyAmountMinor: 150, currency: 'CHF' };
+  await a.repos.households.update(hid, { name: 'Renommé hors ligne', crossLedgerCompensationEnabled: true, contributionToMoneyRate: rate });
+  await a.repos.members.update(namedMembers[0].id, { name: 'Robert' });
+  const added = await a.repos.members.create({ householdId: hid, name: 'Charlie', userId: null });
+  await restart(a);
+  await a.sync.startSync(hid);
+  const status = await a.sync.getStatus(hid);
+  expect(status.conflicts).toBe(0);
+  expect(status.pendingChanges).toBe(0);
+  const remote = store.listGroups(a.uid).find(group => group.household.id === hid)!;
+  expect(remote.household).toMatchObject({ name: 'Renommé hors ligne', contributionToMoneyRate: rate });
+  const events = store.deltas(a.uid, hid, 0).events.flatMap(event => event.changes);
+  expect(events.findLast((change: any) => change.id === namedMembers[0].id).value.name).toBe('Robert');
+  expect(events.find((change: any) => change.id === added.id).value.name).toBe('Charlie');
 });

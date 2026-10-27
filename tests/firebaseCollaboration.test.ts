@@ -371,3 +371,39 @@ test('owner deletion reaches both persistent clients instead of remaining local'
   expect(await bob.repos.households.getById(hid)).toBeNull();
   expect(store.read(`groups/${hid}`)?.fields.deleted).toBe(true);
 });
+
+test('Firebase group creation can lose its response without dropping later offline settings', async () => {
+  const store = new InMemoryFirestore();
+  const repos = createInMemoryRepositories();
+  const uid = 'creation-recovery';
+  const transport = new FirebaseSyncTransport({ client: store, getAccessToken: async () => `token-${uid}`, getUid: () => uid });
+  let loseCreation = true;
+  const makeSync = () => new RemoteSyncAdapter({ getRepos: () => repos, getAccessToken: async () => `token-${uid}`, pollIntervalMs: 0,
+    request: async (method, path, body) => {
+      const response = await transport.request(method, path, body);
+      if (loseCreation && method === 'POST' && path === '/groups') {
+        loseCreation = false;
+        throw new Error('creation response lost');
+      }
+      return response;
+    },
+  });
+  let sync = makeSync();
+  const { household, namedMembers } = await createGroupWithMembers(repos, {
+    name: 'Initial', owner: { userId: uid, displayName: 'Alice' }, memberNames: ['Bob'], contributionUnit: 'points',
+  });
+  await expect(sync.ensureRemoteGroup(household.id, uid)).rejects.toThrow('creation response lost');
+  const rate = { contributionValue: 2, contributionUnit: 'points' as const, moneyAmountMinor: 150, currency: 'CHF' };
+  await repos.households.update(household.id, { name: 'Offline rename', crossLedgerCompensationEnabled: true, contributionToMoneyRate: rate });
+  await repos.members.update(namedMembers[0].id, { name: 'Robert' });
+  const added = await repos.members.create({ householdId: household.id, name: 'Charlie', userId: null });
+  sync = makeSync();
+  await sync.startSync(household.id);
+  expect(await sync.getStatus(household.id)).toMatchObject({ conflicts: 0, pendingChanges: 0, error: null });
+  const remote: any = await transport.request('GET', '/groups');
+  expect(remote.find((entry: any) => entry.household.id === household.id).household).toMatchObject({ name: 'Offline rename', contributionToMoneyRate: rate });
+  const received = client(uid, store);
+  await received.sync.discoverGroups(uid);
+  expect(await received.repos.members.getById(added.id)).toMatchObject({ name: 'Charlie' });
+  expect(await received.repos.members.getById(namedMembers[0].id)).toMatchObject({ name: 'Robert' });
+});

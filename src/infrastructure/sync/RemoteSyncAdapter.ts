@@ -303,71 +303,75 @@ export class RemoteSyncAdapter implements SyncGateway {
   async ensureRemoteGroup(householdId: string, userId: string): Promise<void> {
     const state = await this.state(householdId);
     if (state.remoteKnown) return;
-
-    const household = await this.repos().households.getById(householdId);
+    const repos = this.repos();
+    const household = await repos.households.getById(householdId);
     if (!household) throw new Error('Groupe local introuvable');
-    if (household.ownerId !== userId) {
-      throw new Error('Seul le propriétaire peut publier ce groupe');
-    }
-    const members = await this.repos().members.getByHousehold(householdId);
-    const ownerMember = members.find((member) => member.userId === userId);
+    if (household.ownerId !== userId) throw new Error('Seul le propriétaire peut publier ce groupe');
+    const members = await repos.members.getByHousehold(householdId);
+    const ownerMember = members.find(member => member.userId === userId);
     if (!ownerMember) throw new Error('Membre propriétaire introuvable');
-    const memberships = await this.repos().memberships.getByHousehold(householdId);
-    const membership = memberships.find((entry) => entry.userId === userId);
+    const memberships = await repos.memberships.getByHousehold(householdId);
+    const membership = memberships.find(entry => entry.userId === userId);
     if (!membership) throw new Error('Adhésion propriétaire introuvable');
 
-    const response = await this.request<{
-      id?: string;
-      revision?: number;
-      changes?: ServerChange[];
-    }>('POST', '/groups', {
-      id: household.id,
-      ownerMemberId: ownerMember.id,
-      ownerName: ownerMember.name,
-      name: household.name,
-      unit: household.contributionUnit,
-      membershipId: membership.id,
-      members: members
-        .filter((member) => member.id !== ownerMember.id && !member.userId)
-        .map((member) => ({ id: member.id, name: member.name })),
-    });
-
-    const current = await this.state(householdId);
-    await this.repos().syncState.setGroupState({
-      ...current,
-      remoteKnown: true,
-      lastRevision: response.revision ?? 0,
-      lastSyncedAt: new Date().toISOString(),
-      lastError: null,
-    });
-
-    if (Array.isArray(response.changes)) {
-      for (const change of response.changes) {
-        await this.repos().syncState.setRemoteVersion(
-          householdId,
-          change.collection,
-          change.id,
-          change.version,
-        );
-      }
-      // The baseline group rows were just created by the server; their local
-      // copies are authoritative, so start their push cursors at the newest
-      // local revision to avoid sending them again.
-      for (const collection of BASELINE) {
-        const records = await this.repos().syncState.getDirtyRecords(householdId, collection, 0);
-        const max = records.reduce((value, record) => Math.max(value, record.revision), 0);
-        if (max > 0) {
-          await this.repos().syncState.setCursor({
-            householdId,
-            collection,
-            lastRevision: max,
-            lastSyncedAt: new Date().toISOString(),
-          });
-        }
-      }
-    } else {
-      await this.pullChanges(householdId);
+    // Capture revisions BEFORE the request. A local edit while the response is
+    // pending must remain dirty, even if it rewrites a baseline record.
+    const baseline = new Map<SyncCollection, SyncRecord[]>();
+    for (const collection of BASELINE) {
+      const cursor = await repos.syncState.getCursor(householdId, collection);
+      baseline.set(collection, await repos.syncState.getDirtyRecords(householdId, collection, cursor?.lastRevision ?? 0));
     }
+    let response = await this.request<{ id?: string; revision?: number; changes?: ServerChange[] }>('POST', '/groups', {
+      id: household.id, ownerMemberId: ownerMember.id, ownerName: ownerMember.name,
+      name: household.name, unit: household.contributionUnit, membershipId: membership.id,
+      members: members.filter(member => member.id !== ownerMember.id && !member.userId)
+        .map(member => ({ id: member.id, name: member.name })),
+    });
+    if (!Array.isArray(response.changes)) {
+      // The authority may have committed creation before its response was
+      // lost. Recover its ORIGINAL baseline, never the current revision (that
+      // would skip subsequent invitations/writes). Do not recurse into the
+      // public pull method, which may already be locked by the current push.
+      const recovered = await this.request<{ events: DeltaEvent[] }>('GET', `/groups/${encodeURIComponent(householdId)}/deltas?since=0`);
+      const first = recovered.events[0];
+      if (!first || first.revision !== 1) throw new Error('Base du groupe partagé introuvable');
+      this.validateDelta(householdId, first, 0);
+      response = { ...response, revision: first.revision, changes: first.changes };
+    }
+    const changes = response.changes!;
+    await repos.withTransaction(async () => {
+      for (const change of changes) {
+        const previous = await repos.syncState.getRemoteVersion(householdId, change.collection, change.id);
+        await repos.syncState.setRemoteVersion(householdId, change.collection, change.id, Math.max(previous, change.version));
+      }
+      for (const collection of BASELINE) {
+        let max = (await repos.syncState.getCursor(householdId, collection))?.lastRevision ?? 0;
+        for (const record of baseline.get(collection) ?? []) {
+          const remote = changes.find(change => change.collection === collection && change.id === record.id);
+          // Do not acknowledge offline settings, renamed members or members
+          // added after the original creation. Stop at the first unsent row so
+          // a collection cursor can never jump over a local change.
+          if (!remote || !this.sameBaselineRecord(collection, record, remote.value)
+              || await repos.syncState.getRemoteVersion(householdId, collection, record.id) !== remote.version) break;
+          max = Math.max(max, record.revision);
+          await repos.syncState.resolveConflicts(householdId, collection, record.id);
+        }
+        if (max > 0) await repos.syncState.setCursor({ householdId, collection, lastRevision: max, lastSyncedAt: new Date().toISOString() });
+      }
+      const current = await this.state(householdId);
+      await repos.syncState.setGroupState({ ...current, remoteKnown: true,
+        lastRevision: Math.max(current.lastRevision, response.revision ?? 0),
+        lastSyncedAt: new Date().toISOString(), lastError: null });
+    });
+  }
+
+  private sameBaselineRecord(collection: SyncCollection, record: SyncRecord, remote: Record<string, unknown> | null): boolean {
+    if (record.deletedAt || !record.payload || !remote) return false;
+    const local = JSON.parse(record.payload) as Record<string, unknown>;
+    const fields = collection === 'households'
+      ? ['id', 'name', 'ownerId', 'contributionUnit', 'crossLedgerCompensationEnabled', 'contributionToMoneyRate']
+      : collection === 'members' ? ['id', 'householdId', 'name', 'userId'] : ['id', 'householdId', 'userId', 'role'];
+    return fields.every(field => JSON.stringify(local[field] ?? null) === JSON.stringify(remote[field] ?? null));
   }
 
   async createInvitation(householdId: string, memberId: string): Promise<RemoteInvitation> {
@@ -563,6 +567,11 @@ export class RemoteSyncAdapter implements SyncGateway {
 
   async pullChanges(householdId: string): Promise<void> {
     if (!this.isAvailable() || this.active.has(householdId)) return;
+    if (!(await this.state(householdId)).remoteKnown) {
+      const household = await this.repos().households.getById(householdId);
+      if (household) await this.ensureRemoteGroup(householdId, household.ownerId);
+    }
+    if (this.active.has(householdId)) return;
     this.active.add(householdId);
     try {
       let state = await this.state(householdId);
