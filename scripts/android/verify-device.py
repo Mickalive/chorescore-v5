@@ -536,6 +536,15 @@ def device_time_plus(minutes=2):
     future=datetime.datetime.strptime(raw,'%Y-%m-%d %H:%M:%S')+datetime.timedelta(minutes=minutes)
     return future.strftime('%Y-%m-%d'), future.strftime('%H:%M')
 
+def notification_visible(root,title):
+    """A matching todo in the app is not proof of notification delivery."""
+    panels={'notification_stack_scroller','notification_panel','notification_container_parent'}
+    for node in root.iter('node'):
+        if node.attrib.get('package')=='com.android.systemui' and node.attrib.get('resource-id','').split('/')[-1] in panels:
+            if candidates(node,label=title,partial=True):return True
+    return any(node.attrib.get('package')=='com.android.systemui'
+               for node in candidates(root,label=title,partial=True))
+
 def wait_for_reminder(title, timeout=240):
     """Prove the native Android scheduler actually posts the reminder.
 
@@ -549,7 +558,7 @@ def wait_for_reminder(title, timeout=240):
             adb('shell','cmd','statusbar','expand-notifications')
             time.sleep(1)
             root=hierarchy()
-            if candidates(root,label=title,partial=True):
+            if notification_visible(root,title):
                 screenshot('reminder-delivered-android')
                 return
             adb('shell','cmd','statusbar','collapse')

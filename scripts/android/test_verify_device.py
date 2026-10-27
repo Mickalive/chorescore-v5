@@ -31,6 +31,19 @@ def driver():
 
 
 class SelectorBehavior(unittest.TestCase):
+    def test_a_todo_title_behind_the_shade_is_not_notification_evidence(self):
+        env = driver()
+        root = ET.fromstring('<hierarchy><node package="app.chorescore.v5" text="Rappel CI" bounds="[10,100][300,150]"/>'
+                             '<node package="com.android.systemui" text="21:30" bounds="[10,0][50,25]"/></hierarchy>')
+        self.assertFalse(env['notification_visible'](root,'Rappel CI'))
+
+    def test_notification_shade_accepts_a_real_remote_view_title(self):
+        env = driver()
+        root = ET.fromstring('<hierarchy><node package="com.android.systemui" resource-id="com.android.systemui:id/notification_stack_scroller" bounds="[0,0][412,900]">'
+                             '<node package="app.chorescore.v5" text="Rappel : Rappel CI" bounds="[20,100][390,150]"/></node></hierarchy>')
+        self.assertTrue(env['notification_visible'](root,'Rappel CI'))
+
+
     def test_localized_money_matches_only_the_exact_amount_ignoring_currency_spacing(self):
         env = driver()
         root = ET.fromstring('<hierarchy><node text="+ 1,84&#8239;CHF" '
