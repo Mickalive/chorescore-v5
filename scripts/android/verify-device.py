@@ -41,8 +41,10 @@ def candidates(root, label=None, resource=None, partial=False):
             value=attr.get('resource-id','')
             match=value==resource or value.endswith('/'+resource)
         else:
-            values=[attr.get('text',''),attr.get('content-desc','')]
-            match=any(label in v if partial else label==v for v in values)
+            normalize=lambda value:value.replace('\u00a0',' ').replace('\u202f',' ')
+            values=[normalize(attr.get('text','')),normalize(attr.get('content-desc',''))]
+            expected=normalize(label)
+            match=any(expected in v if partial else expected==v for v in values)
         if match and attr.get('enabled')!='false':
             bounds=list(map(int,re.findall(r'\d+',attr.get('bounds',''))))
             if len(bounds)==4 and bounds[2]>bounds[0] and bounds[3]>bounds[1]:
@@ -337,6 +339,11 @@ def scroll_to(label=None,resource=None,partial=False):
     hide_keyboard()
     tap_node(scroll_find(label,resource,partial))
 
+def assert_ledger_totals(task_values,money_values):
+    scroll_top()
+    for value in task_values+money_values:
+        scroll_find(value)
+
 def input_text(value):
     # `adb shell input text` feeds the device key map, which cannot emit
     # arbitrary Unicode: run 40328753105 died with exit 255 on 'â'. The Android
@@ -347,19 +354,36 @@ def input_text(value):
         raise AssertionError(f'adb input text cannot type non-ASCII value: {value!r}')
     adb('shell','input','text',value.replace(' ','%s'))
 
-def fill_node(node,value,clear=False):
+def verify_input_value(resource,value):
+    deadline=time.monotonic()+8
+    observed=None
+    while time.monotonic()<deadline:
+        fields=candidates(hierarchy(),resource=resource)
+        focused=next((field for field in fields if field.attrib.get('focused')=='true'),None)
+        field=focused if focused is not None else (fields[0] if len(fields)==1 else None)
+        if field is not None:
+            observed=field.attrib.get('text','')
+            if observed==value:return
+        time.sleep(.2)
+    raise AssertionError(f'Input value mismatch for {resource}: expected {value!r}, observed {observed!r}')
+
+def fill_node(node,value,clear=True):
     tap_node(node)
     if clear:
-        adb('shell','input','keyevent','KEYCODE_MOVE_END')
-        for _ in range(12):adb('shell','input','keyevent','KEYCODE_DEL')
+        # Android 15's documented Ctrl+A combination replaces the entire field,
+        # including defaults and long/multiline values, before typing. Appending
+        # to a maxLength=10/5 date/time field silently kept the old timestamp.
+        adb('shell','input','keycombination','113','29')
+        adb('shell','input','keyevent','KEYCODE_DEL')
     input_text(value)
+    verify_input_value(node.attrib['resource-id'],value)
     hide_keyboard()
 
-def fill(resource,value,clear=False):
+def fill(resource,value,clear=True):
     hide_keyboard()
     fill_node(scroll_find(resource=resource),value,clear)
 
-def fill_nth(resource,index,value,clear=False):
+def fill_nth(resource,index,value,clear=True):
     hide_keyboard()
     visible=lambda ns:[n for n in ns if onscreen(n,usable_bottom())]
     nodes=visible(candidates(hierarchy(),resource=resource))
@@ -774,6 +798,8 @@ try:
     scroll_find('Cuisine CI',partial=True)
     scroll_find('Todo tache CI',partial=True)
     scroll_find('Todo depense CI',partial=True)
+    assert_ledger_totals(['+ 8 pts','- 7 pts','- 1 pts'],
+                         ['+ 1,84 CHF','- 1,18 CHF','- 0,66 CHF'])
     screenshot('balances-before-restart-android')
     adb('shell','am','force-stop',PACKAGE)
     start()
@@ -800,6 +826,8 @@ try:
     tap('Supprimer')
     time.sleep(1.5)
     assert_absent('Courses CI',partial=True)
+    assert_ledger_totals(['+ 17 pts','- 16 pts','- 1 pts'],
+                         ['+ 1,33 CHF','- 0,67 CHF','- 0,66 CHF'])
 
     # Open the actual Android chooser; do not replace native sharing in this build.
     scroll_top()

@@ -3,6 +3,7 @@ import ast
 from pathlib import Path
 import re
 import unittest
+import time
 from unittest.mock import Mock
 from types import SimpleNamespace
 import xml.etree.ElementTree as ET
@@ -30,6 +31,35 @@ def driver():
 
 
 class SelectorBehavior(unittest.TestCase):
+    def test_localized_money_matches_only_the_exact_amount_ignoring_currency_spacing(self):
+        env = driver()
+        root = ET.fromstring('<hierarchy><node text="+ 1,84&#8239;CHF" '
+                             'bounds="[18,120][390,170]"/></hierarchy>')
+        env['hierarchy'].return_value = root
+        self.assertIs(env['scroll_find']('+ 1,84 CHF'), root[0])
+        self.assertEqual(env['candidates'](root, label='+ 1,85 CHF'), [])
+
+    def test_filling_a_prefilled_time_replaces_it_instead_of_appending(self):
+        env = driver()
+        root = ET.fromstring('<hierarchy><node resource-id="reminder.time" text="12:34" '
+                             'focused="true" bounds="[18,120][390,170]"/></hierarchy>')
+        field = root[0]
+        selected = False
+        def adb(*args):
+            nonlocal selected
+            if args[2:]==('keycombination','113','29'):
+                selected=True
+            elif args[2:]==('keyevent','KEYCODE_DEL'):
+                field.set('text','' if selected else field.attrib['text'][:-1])
+                selected=False
+            elif args[2]=='text':
+                field.set('text',(field.attrib['text']+args[3].replace('%s',' '))[:5])
+            return ''
+        env.update(adb=adb,time=time,hide_keyboard=Mock())
+        env['hierarchy'].return_value=root
+        env['fill_node'](field,'08:17')
+        self.assertEqual(field.attrib['text'],'08:17')
+
     def test_rewinding_stops_when_the_viewport_reaches_the_top(self):
         env = driver()
         scrolled = ET.fromstring('<hierarchy><node text="Notes" bounds="[18,120][390,170]"/></hierarchy>')
