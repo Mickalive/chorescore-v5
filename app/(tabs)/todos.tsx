@@ -1,3 +1,4 @@
+import { generateRecordId } from '../../src/infrastructure/repositories/recordIdentity';
 import { DateTimeField } from '../../src/ui/components/DateTimeField';
 import { CategoryPicker } from '../../src/features/entries/CategoryPicker';
 import { PhotoField } from '../../src/features/entries/PhotoField';
@@ -36,6 +37,7 @@ import { Card } from '../../src/ui/components/Card';
 import { colors, spacing, borderRadius } from '../../src/ui/design-system/theme';
 import { useApp } from '../../src/features/app/AppContext';
 import { useI18n } from '../../src/i18n';
+import { formatCurrencyAmount, formatQuantity } from '../../src/presentation/balanceFormat';
 import {
   Attachment,
   Category,
@@ -92,19 +94,8 @@ interface CompleteFormData {
 
 const DEFAULT_CURRENCY = 'CHF';
 
-function formatDateShort(iso: string): string {
-  const d = new Date(iso);
-  const day = d.getDate().toString().padStart(2, '0');
-  const month = (d.getMonth() + 1).toString().padStart(2, '0');
-  return `${day}/${month}`;
-}
-
-function formatDateTimeShort(d: Date): string {
-  const day = d.getDate().toString().padStart(2, '0');
-  const month = (d.getMonth() + 1).toString().padStart(2, '0');
-  const hours = d.getHours().toString().padStart(2, '0');
-  const minutes = d.getMinutes().toString().padStart(2, '0');
-  return `${day}/${month} ${hours}:${minutes}`;
+function formatDateShort(iso: string, locale: string): string {
+  return new Intl.DateTimeFormat(locale, { year: 'numeric', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(iso));
 }
 
 /** Render integer minor units back into a plain decimal string for the form. */
@@ -112,11 +103,6 @@ function amountMinorToRaw(amountMinor: number): string {
   const whole = Math.floor(amountMinor / 100);
   const cents = amountMinor % 100;
   return `${whole}.${cents.toString().padStart(2, '0')}`;
-}
-
-/** Display integer minor units with their currency, e.g. "CHF 12.50". */
-function formatAmountMinor(amountMinor: number, currency: string): string {
-  return `${currency} ${(amountMinor / 100).toFixed(2)}`;
 }
 
 /** Keep a stored currency valid without throwing on a half-typed create form. */
@@ -128,7 +114,7 @@ function safeCurrency(currency: string): string {
 // ── Component ──────────────────────────────────────────────────
 
 export default function TodosScreen() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const { currentHouseholdId, repos, currentUser, emitDataChange, subscribeToDataChanges, services } = useApp();
 
   const [categories, setCategories] = useState<Category[]>([]);
@@ -172,7 +158,6 @@ export default function TodosScreen() {
   });
 
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const attachmentSeqRef = useRef(0);
   // Synchronous guard: a rapid double-tap must never launch two completions
   // before React re-renders the disabled button.
   const submittingRef = useRef(false);
@@ -416,7 +401,7 @@ export default function TodosScreen() {
           currency: completeForm.currency,
           participantMemberIds: completeForm.beneficiaryMemberIds,
           completedByUserId: currentUser.userId,
-          categoryId: selectedTodo.categoryId ?? null,
+          categoryId: categories.find(category => category.id === selectedTodo.categoryId)?.id ?? null,
           categoryLabelSnapshot: categories.find(c => c.id === selectedTodo.categoryId)?.name,
           customShares:
             completeForm.expenseSplitMode === 'custom' ? completeExpenseShares ?? undefined : undefined,
@@ -460,7 +445,7 @@ export default function TodosScreen() {
         value: numericValue,
         beneficiaryMemberIds: completeForm.beneficiaryMemberIds,
         completedByUserId: currentUser.userId,
-        categoryId: selectedTodo.categoryId ?? null,
+        categoryId: categories.find(category => category.id === selectedTodo.categoryId)?.id ?? null,
         categoryLabelSnapshot: categories.find(c => c.id === selectedTodo.categoryId)?.name,
         category: completeForm.taskSplitChoice === 'category' ? categories.find(c => c.id === selectedTodo.categoryId) : null,
         overrideSplitWeights:
@@ -494,9 +479,11 @@ export default function TodosScreen() {
         onPress: async () => {
           try {
             await repos.withTransaction(async () => repos.todos.delete(todo.id));
-            await services.notifications.cancelNotification(todoNotificationId(todo.id));
             setTodos((prev) => prev.filter((item) => item.id !== todo.id));
             emitDataChange('todo', currentHouseholdId!);
+            // The todo deletion is already committed. A failed native cancel
+            // must not leave it visible or prevent its tombstone being sent.
+            await services.notifications.cancelNotification(todoNotificationId(todo.id)).catch(() => undefined);
           } catch {
             Alert.alert(t('state.error'), t('todos.errorDelete'));
           }
@@ -515,13 +502,12 @@ export default function TodosScreen() {
       const source = await services.attachments.pickPhoto();
       if (!source) return;
       const handle = await services.attachments.save(source, currentHouseholdId);
-      attachmentSeqRef.current += 1;
       setCompleteForm((prev) => ({
         ...prev,
         attachments: [
           ...prev.attachments,
           {
-            id: `att-${Date.now()}-${attachmentSeqRef.current}`,
+            id: generateRecordId('att'),
             kind: 'photo',
             ref: handle.ref,
             mimeType: handle.mimeType,
@@ -634,14 +620,14 @@ export default function TodosScreen() {
                             <Text variant="caption">
                               {memberName(todo.assigneeMemberId)}
                               {todo.dueAt
-                                ? ` ${t('todos.dueLabel', { date: formatDateShort(todo.dueAt) })}`
+                                ? ` ${t('todos.dueLabel', { date: formatDateShort(todo.dueAt, locale) })}`
                                 : ''}
                             </Text>
                             {kind === 'expense' && todo.expenseAmountMinor !== undefined ? (
                               <Text variant="caption" color={colors.textSecondary}>
-                                {formatAmountMinor(
+                                {formatCurrencyAmount(
                                   todo.expenseAmountMinor,
-                                  todo.expenseCurrency || DEFAULT_CURRENCY,
+                                  todo.expenseCurrency || DEFAULT_CURRENCY, locale,
                                 )}
                               </Text>
                             ) : null}
@@ -1144,8 +1130,8 @@ export default function TodosScreen() {
                   {!completeExpenseCustomValid && completeParsedAmountMinor !== null && (
                     <Text variant="caption" color={colors.balanceNegative} style={styles.hint}>
                       {t('add.customSplitMismatch', {
-                        shares: (completeExpenseTotal / 100).toFixed(2),
-                        amount: (completeParsedAmountMinor / 100).toFixed(2),
+                        shares: formatQuantity(completeExpenseTotal / 100, locale),
+                        amount: formatQuantity(completeParsedAmountMinor / 100, locale),
                       })}
                     </Text>
                   )}

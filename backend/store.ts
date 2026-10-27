@@ -260,7 +260,13 @@ export class CollaborationStore {
       requireValue(Array.isArray(values) && values.length > 0 && new Set(values).size === values.length,'Invalid participants');
       for (const value of values) member(value);
     };
-    if (value.categoryId) requireValue(lookup('categories',value.categoryId),'Unknown category');
+    if (value.categoryId) {
+      const before = previous?.value ? JSON.parse(previous.value) : null;
+      const retainedSnapshot = before?.categoryId === value.categoryId
+        && before?.categoryLabelSnapshot === value.categoryLabelSnapshot;
+      requireValue(retainedSnapshot || lookup('categories',value.categoryId)
+        || (change.collection === 'todo_items' && Boolean(this.record(groupId,'categories',value.categoryId))),'Unknown category');
+    }
     if (value.note !== undefined) requireValue(typeof value.note === 'string' && value.note.length <= 10000,'Invalid note');
     if (value.attachments !== undefined) {
       requireValue(Array.isArray(value.attachments) && value.attachments.length <= 10,'Invalid attachments');

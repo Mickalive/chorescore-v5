@@ -745,7 +745,10 @@ export class FirebaseSyncTransport {
       for (const participant of values) await member(participant);
     };
     if (value.categoryId) {
-      requireCondition(Boolean(await related('categories', String(value.categoryId))), 'Unknown category');
+      const retainedSnapshot = previous?.value?.categoryId === value.categoryId
+        && previous?.value?.categoryLabelSnapshot === value.categoryLabelSnapshot;
+      requireCondition(retainedSnapshot || Boolean(await related('categories', String(value.categoryId)))
+        || (change.collection === 'todo_items' && Boolean(await this.readRecord(transaction, groupId, 'categories', String(value.categoryId)))), 'Unknown category');
     }
     if (value.note !== undefined) {
       requireCondition(typeof value.note === 'string' && value.note.length <= 10_000, 'Invalid note');

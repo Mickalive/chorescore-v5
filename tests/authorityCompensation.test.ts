@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CollaborationStore } from '../backend/store';
 import { FirebaseSyncTransport } from '../src/infrastructure/firebase/FirebaseSyncTransport';
+import { todoCompletionEntryId } from '../src/domain/services/todoCompletionId';
 import { InMemoryFirestore } from './helpers/InMemoryFirestore';
 
 type Change = { collection: string; id: string; baseVersion: number; value: any };
@@ -76,6 +77,35 @@ describe.each(['http', 'firebase'] as const)('%s compensation authority', mode =
         assigneeMemberId: 'alice-member', beneficiaryMemberIds: ['alice-member', 'bob-member'], completedAt: new Date().toISOString(),
       } }])).rejects.toThrow('atomic completion');
       expect(await service.events()).toEqual(before);
+    } finally { service.close(); }
+  });
+
+  test('editing history retains a removed category snapshot but new entries cannot select it', async () => {
+    const service = await authority(mode);
+    try {
+      const initial: any = await service.events();
+      const task = initial.events.flatMap((event: any) => event.changes).find((change: Change) => change.collection === 'contribution_entries').value;
+      const category = { id: 'retired-category', householdId: task.householdId, name: 'Ancien nom', defaultTaskRatio: null };
+      await service.mutate([{ collection: 'categories', id: category.id, baseVersion: 0, value: category },
+        { collection: 'contribution_entries', id: task.id, baseVersion: 1, value: { ...task, categoryId: category.id, categoryLabelSnapshot: category.name } }]);
+      await service.mutate([{ collection: 'categories', id: category.id, baseVersion: 1, value: null }]);
+      await service.mutate([{ collection: 'contribution_entries', id: task.id, baseVersion: 2,
+        value: { ...task, label: 'Historique modifié', categoryId: category.id, categoryLabelSnapshot: category.name } }]);
+      const result: any = await service.events();
+      const edited = result.events.flatMap((event: any) => event.changes).filter((change: Change) => change.id === task.id).at(-1).value;
+      expect(edited).toMatchObject({ label: 'Historique modifié', categoryId: category.id, categoryLabelSnapshot: 'Ancien nom' });
+      const todoId = 'offline-retired-todo';
+      const entryId = await todoCompletionEntryId(todoId);
+      await service.mutate([
+        { collection: 'contribution_entries', id: entryId, baseVersion: 0, value: { ...task, id: entryId } },
+        { collection: 'todo_items', id: todoId, baseVersion: 0, value: {
+          id: todoId, householdId: task.householdId, title: 'Completion after category removal', categoryId: category.id,
+          kind: 'task', status: 'completed', assigneeMemberId: 'alice-member', beneficiaryMemberIds: ['alice-member', 'bob-member'], completedAt: new Date().toISOString(),
+        } },
+      ]);
+
+      await expect(service.mutate([{ collection: 'contribution_entries', id: 'new-after-removal', baseVersion: 0,
+        value: { ...task, id: 'new-after-removal', categoryId: category.id, categoryLabelSnapshot: category.name } }])).rejects.toThrow('Unknown category');
     } finally { service.close(); }
   });
 
