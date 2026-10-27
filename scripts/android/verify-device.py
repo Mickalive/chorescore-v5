@@ -618,6 +618,14 @@ try:
     fill('todos.createTitle','Todo tache CI')
     fill('todos.createNotes','Rappel CI')
     scroll_to(resource='todos.reminderDateTime')
+    time.sleep(5)
+    try:
+        locate(resource='todos.reminderDateTime.date', timeout=15)
+    except Exception:
+        # try again
+        scroll_to(resource='todos.reminderDateTime')
+        time.sleep(5)
+        locate(resource='todos.reminderDateTime.date', timeout=15)
     tomorrow=time.strftime('%Y-%m-%d',time.localtime(time.time()+86400))
     fill('todos.reminderDateTime.date',tomorrow)
     fill('todos.reminderDateTime.time','12:00')
@@ -653,6 +661,13 @@ try:
     fill('todos.createTitle','Rappel natif CI')
     fill('todos.createNotes','Notification CI')
     scroll_to(resource='todos.reminderDateTime')
+    time.sleep(5)
+    try:
+        locate(resource='todos.reminderDateTime.date', timeout=15)
+    except Exception:
+        scroll_to(resource='todos.reminderDateTime')
+        time.sleep(5)
+        locate(resource='todos.reminderDateTime.date', timeout=15)
     reminder_date,reminder_time=device_time_plus(2)
     fill('todos.reminderDateTime.date',reminder_date)
     fill('todos.reminderDateTime.time',reminder_time)
