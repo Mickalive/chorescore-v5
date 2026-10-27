@@ -55,14 +55,15 @@ jobs:
             raise SystemExit(0)
           xml=next(root.rglob('final-android.xml'),None)
           if xml is not None:
-            nodes=[{key:node.attrib.get(key,'') for key in ['resource-id','text','content-desc','bounds','package']} for node in ET.fromstring(xml.read_text()).iter('node')]
-            text=json.dumps({'run':failed,'nodes':nodes},ensure_ascii=False)[:24000]
-            print('::notice title=Native XML::'+text.replace('%','%25').replace('\r','%0D').replace('\n','%0A'))
+            nodes=[{key:node.attrib.get(key,'') for key in ['resource-id','text','content-desc','bounds','package']} for node in ET.fromstring(xml.read_text()).iter('node') if any(node.attrib.get(key) for key in ['resource-id','text','content-desc'])]
+            text=json.dumps({'run':failed,'nodes':nodes},ensure_ascii=True)
+            for index,offset in enumerate(range(0,len(text),3000)):
+              print('::notice title=Native XML::XML:'+str(index).zfill(4)+':'+text[offset:offset+3000].replace('%','%25'))
           png=next(root.rglob('final-android.png'),None)
           if png is not None and png.stat().st_size < 1024*1024:
             data=base64.b64encode(png.read_bytes()).decode()
-            for index,offset in enumerate(range(0,len(data),14000)):
-              print('::notice title=Native screenshot::PNG:'+str(index).zfill(4)+':'+data[offset:offset+14000])
+            for index,offset in enumerate(range(0,len(data),3000)):
+              print('::notice title=Native screenshot::PNG:'+str(index).zfill(4)+':'+data[offset:offset+3000])
           PY
       - uses: actions/setup-node@v4
         with:
