@@ -242,3 +242,9 @@ Candidat local du code mobile `5eefb93` également compilé avec succès (incré
 
 - Test HTTP/SQLite supplémentaire réussi : 121 catégories locales dans un nouveau groupe partagé ; premier lot de 100 reçu par l’autorité, 21 encore présentes dans l’outbox après redémarrage, second lot reçu puis matérialisé sur l’autre client SQLite ; un nouvel envoi ne duplique rien. Le parcours Firebase réel du bornage a aussi réussi dans 40444346213.
 - Le contrôle Android 40441375669 utilise encore le pilote antérieur aux corrections de remplacement des champs préremplis et de doubles soumissions. Il est arrêté au profit du dernier candidat qui relit les valeurs et vérifie les soldes exacts ; aucun succès natif n’est déduit de ce contrôle obsolète.
+
+## Cycle de vie de la synchronisation
+
+- Quatre tests reproduisaient des démarrages concurrents, un arrêt pendant le premier chargement, l’arrêt de tous les groupes et le remplacement d’une session annulée. Les quatre échouaient avant correction. Une session est maintenant enregistrée avant le premier appel réseau et son annulation empêche la création tardive d’une boucle. La suppression distante effectivement appliquée d’un groupe arrête aussi sa boucle.
+- Vérification locale : TypeScript, 26 suites / 134 tests applicatifs réussis (1 test émulateur ignoré), 3 tests serveur HTTP/SQLite réussis. Le test supplémentaire de suppression utilise le transport Firebase et une autorité en mémoire ; il ne remplace pas les règles officielles.
+- Android 40444748316 : compilation et tests préalables réussis, Firebase officiel réussi ; parcours natif échoué lors de la recherche du champ todos.reminderDateTime.time après saisie de la date. Aucune validation Android complète ni disponibilité de production revendiquée.

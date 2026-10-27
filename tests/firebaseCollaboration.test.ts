@@ -28,7 +28,7 @@ interface Client {
   sync: RemoteSyncAdapter;
 }
 
-function client(uid: string, store: InMemoryFirestore = firestore): Client {
+function client(uid: string, store: InMemoryFirestore = firestore, pollIntervalMs = 0): Client {
   const repos = createInMemoryRepositories();
   const transport = new FirebaseSyncTransport({
     client: store,
@@ -45,7 +45,7 @@ function client(uid: string, store: InMemoryFirestore = firestore): Client {
     request: (method, path, body) => transport.request(method, path, body),
     getAccessToken: async () => `token-${uid}`,
     getRepos: () => repos,
-    pollIntervalMs: 0,
+    pollIntervalMs,
   });
   return { uid, repos, sync };
 }
@@ -54,6 +54,28 @@ async function pushAndPull(source: Client, target: Client, householdId: string):
   await source.sync.pushChanges(householdId);
   await target.sync.pullChanges(householdId);
 }
+
+test('applying the authority group deletion stops future polling', async () => {
+  jest.useFakeTimers();
+  const alice = client('poll-owner', new InMemoryFirestore(), 1000);
+  try {
+    const { household } = await createGroupWithMembers(alice.repos, {
+      name: 'À supprimer', owner: { userId: alice.uid, displayName: 'Alice' }, memberNames: [], contributionUnit: 'points',
+    });
+    await alice.sync.ensureRemoteGroup(household.id, alice.uid);
+    const pull = jest.spyOn(alice.sync, 'pullChanges');
+    await alice.sync.startSync(household.id);
+    await alice.sync.deleteGroup(household.id);
+    expect(await alice.repos.households.getById(household.id)).toBeNull();
+    const calls = pull.mock.calls.length;
+    await jest.advanceTimersByTimeAsync(3000);
+    expect(pull).toHaveBeenCalledTimes(calls);
+  } finally {
+    await alice.sync.stopSync('*');
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  }
+});
 
 test('offline task and expense completions sync atomically through the ordinary mobile outbox', async () => {
   const alice = client('offline-alice', new InMemoryFirestore());

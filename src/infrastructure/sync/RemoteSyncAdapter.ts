@@ -102,10 +102,16 @@ class RemoteHttpError extends Error {
   }
 }
 
+interface SyncSession {
+  cancelled: boolean;
+  ready: Promise<void>;
+  timer?: ReturnType<typeof setInterval>;
+}
+
 export class RemoteSyncAdapter implements SyncGateway {
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
-  private readonly timers = new Map<string, ReturnType<typeof setInterval>>();
+  private readonly sessions = new Map<string, SyncSession>();
   private readonly active = new Set<string>();
   private readonly runtimeErrors = new Map<string, string | null>();
 
@@ -204,39 +210,55 @@ export class RemoteSyncAdapter implements SyncGateway {
   }
 
   async startSync(householdId: string): Promise<void> {
-    if (!this.isAvailable() || this.timers.has(householdId)) return;
+    if (!this.isAvailable()) return;
+    const existing = this.sessions.get(householdId);
+    if (existing) return existing.ready;
+    const session: SyncSession = { cancelled: false, ready: Promise.resolve() };
+    this.sessions.set(householdId, session);
     // A previous session may have left durable outbox records (offline edit,
     // process killed during a push). Pull first so conflicts are detected
     // against the current authority, then drain the outbox immediately
     // instead of waiting for an unrelated local write.
-    await this.pullChanges(householdId).catch((error) =>
-      this.setError(householdId, this.message(error)),
-    );
-    await this.pushChanges(householdId).catch((error) =>
-      this.setError(householdId, this.message(error)),
-    );
-    const interval = this.config.pollIntervalMs ?? 20_000;
-    if (interval > 0) {
-      const timer = setInterval(() => {
-        void (async () => {
-          try {
-            await this.pushChanges(householdId);
-            await this.pullChanges(householdId);
-          } catch (error) {
-            await this.setError(householdId, this.message(error));
-          }
-        })();
-      }, interval);
-      // Do not keep a Node/Jest process alive because of polling.
-      (timer as unknown as { unref?: () => void }).unref?.();
-      this.timers.set(householdId, timer);
-    }
+    session.ready = (async () => {
+      const recordError = (error: unknown) => session.cancelled
+        ? undefined : this.setError(householdId, this.message(error));
+      await this.pullChanges(householdId).catch(recordError);
+      if (session.cancelled) return;
+      await this.pushChanges(householdId).catch(recordError);
+      if (session.cancelled) return;
+      const interval = this.config.pollIntervalMs ?? 20_000;
+      if (interval > 0) {
+        session.timer = setInterval(() => {
+          if (session.cancelled) return;
+          void (async () => {
+            try {
+              await this.pushChanges(householdId);
+              if (!session.cancelled) await this.pullChanges(householdId);
+            } catch (error) {
+              if (!session.cancelled) await this.setError(householdId, this.message(error));
+            }
+          })();
+        }, interval);
+        // Do not keep a Node/Jest process alive because of polling.
+        (session.timer as unknown as { unref?: () => void }).unref?.();
+      }
+    })().finally(() => {
+      if (session.timer === undefined && this.sessions.get(householdId) === session) {
+        this.sessions.delete(householdId);
+      }
+    });
+    return session.ready;
   }
 
   async stopSync(householdId: string): Promise<void> {
-    const timer = this.timers.get(householdId);
-    if (timer) clearInterval(timer);
-    this.timers.delete(householdId);
+    const ids = householdId === '*' ? [...this.sessions.keys()] : [householdId];
+    for (const id of ids) {
+      const session = this.sessions.get(id);
+      if (!session) continue;
+      session.cancelled = true;
+      if (session.timer !== undefined) clearInterval(session.timer);
+      this.sessions.delete(id);
+    }
   }
 
   async deleteGroup(householdId: string): Promise<void> {
@@ -646,6 +668,7 @@ export class RemoteSyncAdapter implements SyncGateway {
     const repos = this.repos();
     const touched = new Set<SyncCollection>();
     let conflictDetected = false;
+    let groupDeleted = false;
 
     const openConflicts = new Map<string, SyncConflict>();
     for (const conflict of await repos.syncState.getConflicts(householdId)) {
@@ -723,6 +746,7 @@ export class RemoteSyncAdapter implements SyncGateway {
           change.version,
         );
         touched.add(change.collection);
+        if (change.collection === 'households' && change.value === null) groupDeleted = true;
       }
       await repos.syncState.setGroupState({
         ...(await this.state(householdId)),
@@ -730,6 +754,7 @@ export class RemoteSyncAdapter implements SyncGateway {
       });
     });
 
+    if (groupDeleted) await this.stopSync(householdId);
     if (touched.size > 0 && this.config.onRemoteChange) {
       this.config.onRemoteChange({
         householdId,
