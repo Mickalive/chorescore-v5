@@ -287,10 +287,16 @@ def scroll_top():
     # Recovery must not depend on scroll drags reaching the app while the IME
     # is still up; dismiss it first, then rewind with gestures in the safe band.
     hide_keyboard()
+    previous=None
     for _ in range(12):
         root=hierarchy()
         if dismiss_system_dialog(root) or dismiss_permission(root):
+            previous=None
             continue
+        current=ET.tostring(root,encoding='unicode')
+        if current==previous:
+            return
+        previous=current
         swipe(False)
 
 def _scroll_find_pass(label,resource,partial,attempts):
@@ -327,6 +333,7 @@ def scroll_find(label=None,resource=None,partial=False):
     raise AssertionError(f'Control absent after scrolling: {resource or label}')
 
 def scroll_to(label=None,resource=None,partial=False):
+    """Find and tap once; callers must not tap the submitted control again."""
     hide_keyboard()
     tap_node(scroll_find(label,resource,partial))
 
@@ -725,7 +732,6 @@ try:
     fill('todos.reminderDateTime.time','12:00')
     tap(resource='todos.reminderDateTime.confirm')
     scroll_to(resource='todos.createSubmit')
-    tap(resource='todos.createSubmit')
     # Android 13 notification permission is requested by the real scheduler.
     wait_for_permission()
     scroll_top()
@@ -740,7 +746,6 @@ try:
     scroll_to(resource='todos.createKind.expense')
     fill('todos.createAmount','2.00')
     scroll_to(resource='todos.createSubmit')
-    tap(resource='todos.createSubmit')
     scroll_top()
     double_tap(scroll_find(resource='todos.complete.0'))
     fill('todos.completeAmount','2.00',clear=True)
@@ -760,7 +765,6 @@ try:
     fill('todos.reminderDateTime.time',reminder_time)
     tap(resource='todos.reminderDateTime.confirm')
     scroll_to(resource='todos.createSubmit')
-    tap(resource='todos.createSubmit')
     scroll_top()
     locate(resource='todos.newItem')
     wait_for_reminder('Rappel natif CI')

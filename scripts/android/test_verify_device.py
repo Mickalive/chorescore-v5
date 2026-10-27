@@ -16,9 +16,10 @@ def driver():
         body=[node for node in module.body if isinstance(node, ast.FunctionDef)],
         type_ignores=[],
     )
-    env = {'re': re}
+    env = {'re': re, 'ET': ET}
     exec(compile(functions, 'verify-device.py', 'exec'), env)
     env['real_keyboard_shown'] = env['keyboard_shown']
+    env['real_scroll_top'] = env['scroll_top']
     env.update(
         hierarchy=Mock(), screen_size=lambda: (412, 915),
         usable_bottom=lambda: 900, swipe=Mock(), scroll_top=Mock(),
@@ -29,6 +30,16 @@ def driver():
 
 
 class SelectorBehavior(unittest.TestCase):
+    def test_rewinding_stops_when_the_viewport_reaches_the_top(self):
+        env = driver()
+        scrolled = ET.fromstring('<hierarchy><node text="Notes" bounds="[18,120][390,170]"/></hierarchy>')
+        top = ET.fromstring('<hierarchy><node text="Titre" bounds="[18,120][390,170]"/></hierarchy>')
+        env['hierarchy'].side_effect = [scrolled, top, top]
+        env['hide_keyboard'] = Mock()
+        env['real_scroll_top']()
+        self.assertEqual(env['swipe'].call_count, 2)
+        env['hide_keyboard'].assert_called_once()
+
     def test_visible_leaf_field_is_found_without_scrolling(self):
         env = driver()
         root = ET.fromstring('<hierarchy><node resource-id="todos.createTitle" '
