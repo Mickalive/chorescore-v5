@@ -27,10 +27,7 @@ import {
   StyleSheet,
   TextInput,
   TouchableOpacity,
-  ScrollView,
   Alert,
-  KeyboardAvoidingView,
-  Platform,
 } from 'react-native';
 import { ScreenContainer } from '../../src/ui/components/ScreenContainer';
 import { Text } from '../../src/ui/components/Text';
@@ -582,11 +579,6 @@ export default function TodosScreen() {
 
   return (
     <ScreenContainer>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
-        <ScrollView style={styles.flex} keyboardShouldPersistTaps="handled">
           {/* ── Header ────────────────────────────────────── */}
           <View style={styles.header}>
             <Text variant="screenTitle">{t('todos.title')}</Text>
@@ -1208,8 +1200,6 @@ export default function TodosScreen() {
               />
             </Card>
           )}
-        </ScrollView>
-      </KeyboardAvoidingView>
     </ScreenContainer>
   );
 }
@@ -1217,9 +1207,6 @@ export default function TodosScreen() {
 // ── Styles ─────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  flex: {
-    flex: 1,
-  },
   header: {
     marginBottom: spacing.lg,
   },

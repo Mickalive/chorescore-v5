@@ -49,7 +49,7 @@ export function ScreenContainer({
 
   return (
     <SafeAreaView style={styles.safeArea} edges={edges}>
-      <KeyboardAvoidingView style={[styles.container, style]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView style={[styles.container, style]} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         {content}
       </KeyboardAvoidingView>
     </SafeAreaView>

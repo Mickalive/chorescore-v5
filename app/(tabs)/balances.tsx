@@ -23,7 +23,6 @@ import {
   View,
   StyleSheet,
   TouchableOpacity,
-  ScrollView,
   Modal,
   Alert,
 } from 'react-native';
@@ -723,7 +722,7 @@ export default function BalancesScreen() {
 
   return (
     <ScreenContainer>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <View style={styles.scrollContent}>
         <View style={styles.header}>
           <Text variant="screenTitle">{t('balances.title')}</Text>
         </View>
@@ -976,7 +975,7 @@ export default function BalancesScreen() {
             </Text>
           )}
         </Card>
-      </ScrollView>
+      </View>
 
       {/* ── Historical entry actions (Edit / Delete / Share) ── */}
       <Modal
@@ -1065,7 +1064,7 @@ export default function BalancesScreen() {
         onRequestClose={() => setShowCompenser(false)}
       >
         <ScreenContainer>
-          <ScrollView contentContainerStyle={styles.modalContent}>
+          <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text variant="screenTitle">{t('balances.composerTitle')}</Text>
               <TouchableOpacity onPress={() => setShowCompenser(false)}>
@@ -1194,7 +1193,7 @@ export default function BalancesScreen() {
               style={{ marginTop: spacing.lg }}
               testID="balances.compenserConfirm"
             />
-          </ScrollView>
+          </View>
         </ScreenContainer>
       </Modal>
     </ScreenContainer>
