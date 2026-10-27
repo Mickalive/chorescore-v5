@@ -199,8 +199,8 @@ export interface SyncStateRepository {
   ): Promise<SyncRecord[]>;
   /** Store local dirty records WITHOUT advancing the cursor (push path). */
   storeLocalRecords(householdId: string, collection: SyncCollection, records: SyncRecord[]): Promise<void>;
-  /** Get all local records for a collection since a given revision (for push). */
-  getDirtyRecords(householdId: string, collection: SyncCollection, sinceRevision: number): Promise<SyncRecord[]>;
+  /** Read pending records in revision order; limit bounds push-batch memory. */
+  getDirtyRecords(householdId: string, collection: SyncCollection, sinceRevision: number, limit?: number): Promise<SyncRecord[]>;
 
   // ── Remote collaboration metadata (server revisions are distinct from
   // local outbox revisions; never reuse one for the other). ──────────────

@@ -220,3 +220,48 @@ test('repository pagination reads a bounded window from 50 000 entries', async (
 
   native.prepare('DELETE FROM contribution_entries WHERE householdId = ?').run(householdId);
 }, 30_000);
+
+test('50 000 pending writes are read in bounded SQLite pages without skipping a revision', async () => {
+  const repos = (await createSqliteRepositories())!;
+  const householdId = 'bulk-outbox';
+  const insert = native.prepare('INSERT INTO sync_records (id, householdId, collection, revision, updatedAt, deletedAt, payload) VALUES (?, ?, ?, ?, ?, ?, ?)');
+  native.exec('BEGIN');
+  try {
+    for (let i = 1; i <= 50_000; i++) {
+      insert.run(`outbox-${i}`, householdId, 'contribution_entries', i, '2026-01-01T00:00:00.000Z', null, '{}');
+    }
+    native.exec('COMMIT');
+  } catch (error) {
+    native.exec('ROLLBACK');
+    throw error;
+  }
+  const original = mockDatabase.getAllAsync;
+  const returnedSizes: number[] = [];
+  const query = jest.spyOn(mockDatabase, 'getAllAsync').mockImplementation(async (sql: any, ...args: any[]) => {
+    const rows = await original(sql, ...args);
+    if (sql.includes('FROM sync_records')) returnedSizes.push(rows.length);
+    return rows;
+  });
+  try {
+    let cursor = 0;
+    const seen = new Set<string>();
+    for (let pageNumber = 0; pageNumber <= 500; pageNumber++) {
+      const page = await repos.syncState.getDirtyRecords(householdId, 'contribution_entries', cursor, 100);
+      if (!page.length) break;
+      expect(page.length).toBeLessThanOrEqual(100);
+      expect(page[0].revision).toBeGreaterThan(cursor);
+      for (const record of page) {
+        if (seen.has(record.id)) throw new Error('Duplicate outbox record');
+        seen.add(record.id);
+      }
+      cursor = page[page.length - 1].revision;
+    }
+    expect(seen.size).toBe(50_000);
+    expect(cursor).toBe(50_000);
+    expect(returnedSizes).toHaveLength(501);
+    expect(Math.max(...returnedSizes)).toBe(100);
+  } finally {
+    query.mockRestore();
+    native.prepare('DELETE FROM sync_records WHERE householdId = ?').run(householdId);
+  }
+}, 30_000);

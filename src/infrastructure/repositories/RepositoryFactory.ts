@@ -337,8 +337,9 @@ export class MaterializingSyncState implements SyncStateRepository {
     householdId: string,
     collection: SyncCollection,
     sinceRevision: number,
+    limit?: number,
   ): Promise<SyncRecord[]> {
-    return this.inner.getDirtyRecords(householdId, collection, sinceRevision);
+    return this.inner.getDirtyRecords(householdId, collection, sinceRevision, limit);
   }
 
   getGroupState(householdId: string): Promise<SyncGroupState | null> {

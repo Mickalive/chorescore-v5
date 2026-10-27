@@ -1063,10 +1063,15 @@ export class InMemorySyncStateRepository implements SyncStateRepository {
     householdId: string,
     collection: SyncCollection,
     sinceRevision: number,
+    limit?: number,
   ): Promise<SyncRecord[]> {
+    if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 0)) {
+      throw new Error('Invalid outbox page limit');
+    }
     const key = `${householdId}:${collection}`;
     const existing = this.records.get(key) ?? [];
-    return existing.filter((r) => r.revision > sinceRevision);
+    const pending = existing.filter(r => r.revision > sinceRevision).sort((a, b) => a.revision - b.revision);
+    return limit === undefined ? pending : pending.slice(0, limit);
   }
 
   async getGroupState(householdId: string): Promise<SyncGroupState | null> {

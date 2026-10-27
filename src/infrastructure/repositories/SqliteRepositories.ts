@@ -1667,11 +1667,16 @@ export class SqliteSyncStateRepository extends SqliteDatabaseBound implements Sy
     householdId: string,
     collection: SyncCollection,
     sinceRevision: number,
+    limit?: number,
   ): Promise<SyncRecord[]> {
+    if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 0)) {
+      throw new Error('Invalid outbox page limit');
+    }
     const db = await this.db();
     const rows = await db.getAllAsync<SyncRecordRow>(
-      'SELECT * FROM sync_records WHERE householdId = ? AND collection = ? AND revision > ? ORDER BY revision ASC',
-      [householdId, collection, sinceRevision],
+      'SELECT * FROM sync_records WHERE householdId = ? AND collection = ? AND revision > ? ORDER BY revision ASC'
+        + (limit === undefined ? '' : ' LIMIT ?'),
+      limit === undefined ? [householdId, collection, sinceRevision] : [householdId, collection, sinceRevision, limit],
     );
     return rows.map((r) => ({
       id: r.id,

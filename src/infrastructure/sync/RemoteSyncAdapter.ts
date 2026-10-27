@@ -908,11 +908,13 @@ export class RemoteSyncAdapter implements SyncGateway {
     const conflicts: SyncConflict[] = [];
 
     for (const collection of WRITABLE) {
+      if (changes.length >= BATCH_LIMIT) break;
       const cursor = await repos.syncState.getCursor(householdId, collection);
       const records = await repos.syncState.getDirtyRecords(
         householdId,
         collection,
         cursor?.lastRevision ?? 0,
+        BATCH_LIMIT - changes.length,
       );
       for (const record of records) {
         if (changes.length >= BATCH_LIMIT) break;
