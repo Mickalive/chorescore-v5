@@ -23,7 +23,7 @@ import {
   TextInput,
   Alert,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { Redirect, useRouter } from 'expo-router';
 import { ScreenContainer } from '../src/ui/components/ScreenContainer';
 import { Text } from '../src/ui/components/Text';
 import { Button } from '../src/ui/components/Button';
@@ -216,6 +216,7 @@ export default function GroupOptionsScreen() {
     }
   };
 
+  if (!currentHouseholdId) return <Redirect href="/" />;
   if (!household) {
     return (
       <ScreenContainer edges={['top', 'bottom']}>

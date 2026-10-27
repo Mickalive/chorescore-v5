@@ -134,3 +134,122 @@ test('opt-out waits for an in-flight scheduler then cancels it, never leaving a 
   expect(Notifications.cancelScheduledNotificationAsync).toHaveBeenCalledWith(todoNotificationId('late'));
   expect(await adapter.getEnabled()).toBe(false);
 });
+
+test('a received reminder is scheduled once; a remote completion cancels it without prompting', async () => {
+  jest.mocked(Notifications.getPermissionsAsync).mockResolvedValue({ granted: true } as any);
+  const adapter = new LocalNotificationAdapter();
+  const desired = { title: 'Rappel reçu', body: 'Courses', scheduledAt: new Date(Date.now() + 3600000).toISOString(), data: { todoId: 'remote' } };
+  await adapter.reconcile(async () => [desired]);
+  expect(Notifications.scheduleNotificationAsync).toHaveBeenCalledTimes(1);
+  const request = jest.mocked(Notifications.scheduleNotificationAsync).mock.calls.at(-1)![0];
+  jest.mocked(Notifications.getAllScheduledNotificationsAsync).mockResolvedValue([{ ...request, identifier: todoNotificationId('remote') }] as any);
+  await adapter.reconcile(async () => [desired]);
+  expect(Notifications.scheduleNotificationAsync).toHaveBeenCalledTimes(1);
+  await adapter.reconcile(async () => []);
+  expect(Notifications.cancelScheduledNotificationAsync).toHaveBeenCalledWith(todoNotificationId('remote'));
+  expect(Notifications.requestPermissionsAsync).not.toHaveBeenCalled();
+});
+
+test('background reconciliation respects opt-out and never requests permission', async () => {
+  const adapter = new LocalNotificationAdapter();
+  await AsyncStorage.setItem('chorescore.reminders.enabled.v1', 'false');
+  const source = jest.fn().mockResolvedValue([]);
+  jest.mocked(Notifications.getAllScheduledNotificationsAsync).mockResolvedValue([
+    { identifier: todoNotificationId('old') }, { identifier: 'other-feature' },
+  ] as any);
+  await adapter.reconcile(source);
+  expect(source).not.toHaveBeenCalled();
+  expect(Notifications.cancelScheduledNotificationAsync).toHaveBeenCalledTimes(1);
+  expect(Notifications.cancelScheduledNotificationAsync).toHaveBeenCalledWith(todoNotificationId('old'));
+  expect(Notifications.scheduleNotificationAsync).not.toHaveBeenCalled();
+  expect(Notifications.requestPermissionsAsync).not.toHaveBeenCalled();
+});
+
+test('reconciliation reports cancellation failures but still attempts every stale reminder', async () => {
+  const adapter = new LocalNotificationAdapter();
+  jest.mocked(Notifications.getAllScheduledNotificationsAsync).mockResolvedValue([
+    { identifier: todoNotificationId('a') }, { identifier: todoNotificationId('b') },
+  ] as any);
+  jest.mocked(Notifications.cancelScheduledNotificationAsync).mockRejectedValueOnce(new Error('native cancellation failed'));
+  await expect(adapter.reconcile(async () => [])).rejects.toThrow();
+  expect(Notifications.cancelScheduledNotificationAsync).toHaveBeenCalledWith(todoNotificationId('b'));
+  expect(await adapter.getReconciliationError()).toBe(true);
+  await adapter.reconcile(async () => []);
+  expect(await adapter.getReconciliationError()).toBe(false);
+});
+
+test('the desired reminders are read inside the queue after an in-flight scheduling operation', async () => {
+  jest.mocked(Notifications.getPermissionsAsync).mockResolvedValue({ granted: true } as any);
+  const adapter = new LocalNotificationAdapter();
+  let release!: (id: string) => void;
+  jest.mocked(Notifications.scheduleNotificationAsync).mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+  const desired = { title: 'Future', body: '', scheduledAt: new Date(Date.now() + 3600000).toISOString(), data: { todoId: 'queued' } };
+  const scheduled = adapter.scheduleNotification(desired);
+  const source = jest.fn().mockResolvedValue([desired]);
+  const reconciled = adapter.reconcile(source);
+  for (let i = 0; i < 30 && !release; i++) await Promise.resolve();
+  expect(source).not.toHaveBeenCalled();
+  const request = jest.mocked(Notifications.scheduleNotificationAsync).mock.calls.at(-1)![0];
+  jest.mocked(Notifications.getAllScheduledNotificationsAsync).mockResolvedValue([{ ...request, identifier: todoNotificationId('queued') }] as any);
+  release(todoNotificationId('queued'));
+  await Promise.all([scheduled, reconciled]);
+  expect(source).toHaveBeenCalledTimes(1);
+  expect(Notifications.cancelScheduledNotificationAsync).not.toHaveBeenCalled();
+});
+
+
+test('background reconciliation never prompts after permission is denied and a later retry repairs it', async () => {
+  jest.mocked(Notifications.getPermissionsAsync).mockResolvedValue({ granted: false } as any);
+  const adapter = new LocalNotificationAdapter();
+  const source = async () => [{ title: 'Received', body: '', scheduledAt: new Date(Date.now() + 3600000).toISOString(), data: { todoId: 'denied' } }];
+  await expect(adapter.reconcile(source)).rejects.toThrow();
+  expect(Notifications.requestPermissionsAsync).not.toHaveBeenCalled();
+  expect(Notifications.scheduleNotificationAsync).not.toHaveBeenCalled();
+  expect(await adapter.getReconciliationError()).toBe(true);
+  jest.mocked(Notifications.getPermissionsAsync).mockResolvedValue({ granted: true } as any);
+  await adapter.reconcile(source);
+  expect(await adapter.getReconciliationError()).toBe(false);
+  expect(Notifications.scheduleNotificationAsync).toHaveBeenCalledTimes(1);
+});
+
+test('explicit repair removes obsolete reminders before restoring pending ones', async () => {
+  jest.mocked(Notifications.getPermissionsAsync).mockResolvedValue({ granted: true } as any);
+  jest.mocked(Notifications.getAllScheduledNotificationsAsync).mockResolvedValue([
+    { identifier: todoNotificationId('completed') }, { identifier: 'other-feature' },
+  ] as any);
+  const adapter = new LocalNotificationAdapter();
+  await adapter.setEnabled(true, [{ title: 'Pending', body: '', scheduledAt: new Date(Date.now() + 3600000).toISOString(), data: { todoId: 'pending' } }]);
+  expect(Notifications.cancelScheduledNotificationAsync).toHaveBeenCalledWith(todoNotificationId('completed'));
+  expect(Notifications.cancelScheduledNotificationAsync).not.toHaveBeenCalledWith('other-feature');
+  expect(Notifications.scheduleNotificationAsync).toHaveBeenCalledTimes(1);
+});
+
+
+test('foreground reminders are hidden after signout or switching accounts', async () => {
+  jest.mocked(Notifications.getPermissionsAsync).mockResolvedValue({ granted: true } as any);
+  let user: string | null = 'alice';
+  const adapter = new LocalNotificationAdapter(() => user);
+  await adapter.scheduleNotification({ title: 'Private task', body: '', scheduledAt: new Date(Date.now() + 3600000).toISOString(), data: { todoId: 'private' } });
+  const request = jest.mocked(Notifications.scheduleNotificationAsync).mock.calls.at(-1)![0];
+  expect(request.content.data).toMatchObject({ userId: 'alice' });
+  const handler = jest.mocked(Notifications.setNotificationHandler).mock.calls.at(-1)![0]!;
+  expect(await handler.handleNotification({ request } as any)).toMatchObject({ shouldShowBanner: true });
+  user = null;
+  expect(await handler.handleNotification({ request } as any)).toMatchObject({ shouldShowBanner: false, shouldShowList: false });
+  user = 'bob';
+  expect(await handler.handleNotification({ request } as any)).toMatchObject({ shouldShowBanner: false });
+});
+
+test('a permission response arriving after an account switch cannot schedule the old account reminder', async () => {
+  let resolvePermission!: (value: any) => void;
+  jest.mocked(Notifications.getPermissionsAsync).mockImplementationOnce(() => new Promise(resolve => { resolvePermission = resolve; }));
+  let user: string | null = 'alice';
+  const adapter = new LocalNotificationAdapter(() => user);
+  const scheduled = adapter.scheduleNotification({ title: 'Private', body: '', scheduledAt: new Date(Date.now() + 3600000).toISOString(), data: { todoId: 'changed' } });
+  for (let i = 0; i < 20 && !resolvePermission; i++) await Promise.resolve();
+  expect(resolvePermission).toBeDefined();
+  user = 'bob';
+  resolvePermission({ granted: true });
+  await expect(scheduled).rejects.toThrow('Account changed');
+  expect(Notifications.scheduleNotificationAsync).not.toHaveBeenCalled();
+});

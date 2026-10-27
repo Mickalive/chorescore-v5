@@ -16,9 +16,10 @@ jest.mock('../src/i18n', () => ({ useI18n: () => ({ t: mockTranslate, locale: 'f
 const notifications = {
   isAvailable: () => true,
   getEnabled: jest.fn(),
+  getReconciliationError: jest.fn().mockResolvedValue(false),
   setEnabled: jest.fn(),
 };
-const getByHousehold = jest.fn();
+const getFutureReminders = jest.fn();
 let tree: renderer.ReactTestRenderer;
 
 beforeEach(() => {
@@ -27,7 +28,7 @@ beforeEach(() => {
   notifications.setEnabled.mockResolvedValue(undefined);
   mockApp.mockReturnValue({
     currentUser: null, signOut: jest.fn(), households: [{ id: 'h1' }, { id: 'h2' }],
-    repos: { todos: { getByHousehold } }, services: { notifications },
+    repos: { todos: { getFutureReminders } }, services: { notifications },
   });
 });
 afterEach(async () => { if (tree) await act(async () => tree.unmount()); });
@@ -36,7 +37,7 @@ const reminderSwitch = () => tree.root.findAllByType(Switch).find(node => node.p
 
 test('enabling restores future unfinished reminders across groups and excludes completed items', async () => {
   const future = new Date(Date.now() + 3600000).toISOString();
-  getByHousehold.mockImplementation(async (id: string) => id === 'h1' ? [
+  getFutureReminders.mockImplementation(async (id: string) => id === 'h1' ? [
     { id: 'pending', title: 'Courses', notes: 'Pain', status: 'todo', reminderAt: future },
     { id: 'completed', title: 'Done', status: 'completed', reminderAt: future },
     { id: 'past', title: 'Past', status: 'todo', reminderAt: '2000-01-01T00:00:00Z' },
@@ -44,7 +45,7 @@ test('enabling restores future unfinished reminders across groups and excludes c
   await act(async () => { tree = renderer.create(<GeneralOptionsScreen />); });
   expect(reminderSwitch().props.value).toBe(false);
   await act(async () => { await reminderSwitch().props.onValueChange(true); });
-  expect(getByHousehold.mock.calls).toEqual([['h1'], ['h2']]);
+  expect(getFutureReminders.mock.calls).toEqual([['h1', expect.any(String)], ['h2', expect.any(String)]]);
   expect(notifications.setEnabled).toHaveBeenCalledWith(true, [
     { title: 'Courses', body: 'Pain', scheduledAt: future, data: { todoId: 'pending' } },
     { title: 'Ménage', body: 'todos.reminderNotificationBody', scheduledAt: future, data: { todoId: 'working' } },
@@ -57,11 +58,11 @@ test('disabling avoids loading todo history and a failed toggle shows the persis
   await act(async () => { tree = renderer.create(<GeneralOptionsScreen />); });
   await act(async () => { await reminderSwitch().props.onValueChange(false); });
   expect(notifications.setEnabled).toHaveBeenCalledWith(false, []);
-  expect(getByHousehold).not.toHaveBeenCalled();
+  expect(getFutureReminders).not.toHaveBeenCalled();
   const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
   notifications.setEnabled.mockRejectedValue(new Error('denied'));
   notifications.getEnabled.mockResolvedValue(false);
-  getByHousehold.mockResolvedValue([]);
+  getFutureReminders.mockResolvedValue([]);
   await act(async () => { await reminderSwitch().props.onValueChange(true); });
   expect(reminderSwitch().props.value).toBe(false);
   expect(alert).toHaveBeenCalledWith('state.error', 'options.notificationsError');
@@ -71,4 +72,11 @@ test('disabling avoids loading todo history and a failed toggle shows the persis
   expect(notifications.setEnabled).toHaveBeenLastCalledWith(false, []);
   expect(tree.root.findAllByType(Button).some(button => button.props.title === 'action.retry')).toBe(false);
   alert.mockRestore();
+});
+
+
+test('a persisted background reminder failure is visible when opening settings', async () => {
+  notifications.getReconciliationError.mockResolvedValueOnce(true);
+  await act(async () => { tree = renderer.create(<GeneralOptionsScreen />); });
+  expect(tree.root.findAllByType(Button).some(button => button.props.title === 'action.retry')).toBe(true);
 });

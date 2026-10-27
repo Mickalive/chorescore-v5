@@ -979,6 +979,15 @@ export class SqliteTodoRepository extends SqliteDatabaseBound implements TodoRep
     }
   }
 
+  async getFutureReminders(householdId: string, after: string): Promise<TodoItem[]> {
+    const db = await this.db();
+    const rows = await db.getAllAsync<TodoRow>(
+      "SELECT * FROM todo_items WHERE householdId = ? AND status != 'completed' AND reminderAt IS NOT NULL AND reminderAt > ? ORDER BY reminderAt, id",
+      [householdId, after],
+    );
+    return rows.map(todoFromRow);
+  }
+
   async getByHousehold(householdId: string): Promise<TodoItem[]> {
     const db = await this.db();
     const rows = await db.getAllAsync<TodoRow>(

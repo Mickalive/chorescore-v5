@@ -274,3 +274,33 @@ test('50 000 pending writes are read in bounded SQLite pages without skipping a 
     native.prepare('DELETE FROM sync_records WHERE householdId = ?').run(householdId);
   }
 }, 30_000);
+
+test('future reminder query excludes 50 000 completed rows at the SQL boundary', async () => {
+  const repos = (await createSqliteRepositories())!;
+  const householdId = 'reminder-query-audit';
+  const insert = native.prepare('INSERT INTO todo_items (id,householdId,title,beneficiaryMemberIds,status,createdAt,reminderAt) VALUES (?,?,?,?,?,?,?)');
+  native.exec('BEGIN');
+  try {
+    for (let i = 0; i < 50_000; i++) insert.run(`past-completed-${i}`, householdId, 'Completed', '[]', 'completed', '2026-01-01T00:00:00.000Z', '2099-01-01T12:00:00.000Z');
+    insert.run('future-pending', householdId, 'Future', '[]', 'todo', '2026-01-01T00:00:00.000Z', '2099-01-01T12:00:00.000Z');
+    insert.run('past-pending', householdId, 'Past', '[]', 'todo', '2026-01-01T00:00:00.000Z', '2000-01-01T12:00:00.000Z');
+    insert.run('future-another-group', 'another-household', 'Private', '[]', 'todo', '2026-01-01T00:00:00.000Z', '2099-01-01T12:00:00.000Z');
+    native.exec('COMMIT');
+  } catch (error) { native.exec('ROLLBACK'); throw error; }
+  const original = mockDatabase.getAllAsync;
+  const returned: number[] = [];
+  const query = jest.spyOn(mockDatabase, 'getAllAsync').mockImplementation(async (sql: any, ...args: any[]) => {
+    const rows = await original(sql, ...args);
+    if (sql.includes('FROM todo_items')) returned.push(rows.length);
+    return rows;
+  });
+  try {
+    expect((await repos.todos.getFutureReminders(householdId, '2026-01-01T00:00:00.000Z')).map(todo => todo.id)).toEqual(['future-pending']);
+    expect(returned).toEqual([1]);
+    const plan = native.prepare("EXPLAIN QUERY PLAN SELECT * FROM todo_items WHERE householdId=? AND status != 'completed' AND reminderAt IS NOT NULL AND reminderAt > ? ORDER BY reminderAt,id").all(householdId, '2026-01-01T00:00:00.000Z');
+    expect(JSON.stringify(plan)).toContain('idx_todos_future_reminders');
+  } finally {
+    query.mockRestore();
+    native.prepare('DELETE FROM todo_items WHERE householdId=? OR id=?').run(householdId, 'future-another-group');
+  }
+}, 30_000);

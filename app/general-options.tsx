@@ -71,6 +71,9 @@ export default function GeneralOptionsScreen() {
     }).catch(() => {
       if (active) Alert.alert(t('state.error'), t('options.notificationsError'));
     });
+    services.notifications.getReconciliationError().then(failed => {
+      if (active && failed) setReminderError(true);
+    }).catch(() => undefined);
     AsyncStorage.getItem(PRIVACY_CONSENT_KEY)
       .then((value) => setPrivacyConsent(value === 'true'))
       .catch(() => {
@@ -84,7 +87,7 @@ export default function GeneralOptionsScreen() {
     setSavingReminders(true);
     try {
       const todos = enabled
-        ? (await Promise.all(households.map(household => repos.todos.getByHousehold(household.id)))).flat()
+        ? (await Promise.all(households.map(household => repos.todos.getFutureReminders(household.id, new Date().toISOString())))).flat()
         : [];
       await services.notifications.setEnabled(enabled, todos
         .filter(todo => todo.status !== 'completed' && todo.reminderAt && Date.parse(todo.reminderAt) > Date.now())

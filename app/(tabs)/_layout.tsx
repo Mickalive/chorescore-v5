@@ -9,7 +9,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
  */
 
 import React from 'react';
-import { Tabs } from 'expo-router';
+import { Redirect, Tabs } from 'expo-router';
 import { colors } from '../../src/ui/design-system/theme';
 import { useI18n } from '../../src/i18n';
 
@@ -17,6 +17,7 @@ export default function TabsLayout() {
   const { t } = useI18n();
   const insets = useSafeAreaInsets();
   const { currentHouseholdId } = useApp();
+  if (!currentHouseholdId) return <Redirect href="/" />;
   return (
     <Tabs key={currentHouseholdId}
       screenOptions={{

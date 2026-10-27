@@ -13,6 +13,7 @@ Deliver a cohesive, attractive, installable Android app for shared household **t
 - Work on a single branch / PR across sequential vertical slices. Each slice must have demonstrable value. Run `npm ci`, `npm run typecheck`, relevant tests, and direct Android device verification where available. A build is a build, not proof that the app works.
 - Use Expo / React Native conventions, typed small components and genuine platform APIs. Delete obsolete complexity rather than piling on wrappers.
 - Do not put credentials, production keys or test-user secrets in git. Firebase project/provider enablement requires legitimate project access; implement secure integration and document exact remaining environment config, **never** fake success.
+- The owner has stopped the manual Cloud Shell troubleshooting path. Do not ask them to repeat terminal commands or debug setup scripts; continue independently and report unavailable external access honestly.
 - Never claim tests or screenshots you did not actually run or view. When cloud/emulator access is unavailable, say exactly what was and wasn't tested, then continue independent work.
 
 ## Execution

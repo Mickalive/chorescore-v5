@@ -36,6 +36,7 @@ import {
 } from '../../infrastructure/repositories/RepositoryFactory';
 import { createScopedRepositories } from '../../infrastructure/repositories/ScopedRepositoryFacade';
 import { AuthUser, AttachmentGateway, MediaGateway, SystemShareGateway, SyncGateway } from '../../application/ports';
+import { resolveString } from '../../i18n/catalog';
 import { ContributionUnit, Household, Member } from '../../domain/entities';
 import {
   addGroupMember,
@@ -125,6 +126,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const selectedGroupRef = useRef<{ userId: string | null; id: string | null }>({ userId: null, id: null });
   const selectionWritesRef = useRef<Promise<void>>(Promise.resolve());
   const discoveryJobsRef = useRef(new Map<string, Promise<void>>());
+  const reminderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [reposReady, setReposReady] = useState(false);
   const [authRestored, setAuthRestored] = useState(false);
 
@@ -188,7 +190,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // secretless E2E build gets a deterministic adapter so the share journey
     // can be driven without a SystemUI sheet the harness cannot dismiss.
     share: isE2EAuthEnabled() ? new E2EShareAdapter(true) : new LocalSystemShareAdapter(),
-    notifications: new LocalNotificationAdapter(),
+    notifications: new LocalNotificationAdapter(() => auth.getCurrentUserId()),
     calendar: new LocalCalendarAdapter(),
     secureStorage: new LocalSecureStorageAdapter(),
     sync: collaboration.sync,
@@ -203,6 +205,34 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       : new LocalAttachmentAdapter()) as AttachmentGateway,
     };
   })());
+
+  const refreshReminders = useCallback(() => {
+    if (!servicesRef.current.notifications.isAvailable()) return;
+    if (reminderTimerRef.current !== null) clearTimeout(reminderTimerRef.current);
+    reminderTimerRef.current = setTimeout(() => {
+      reminderTimerRef.current = null;
+      void servicesRef.current.notifications.reconcile(async () => {
+        const uid = servicesRef.current.auth.getCurrentUserId();
+        if (!uid) return [];
+        const repos = reposRef.current;
+        const groups = await loadHouseholdsForUser(repos, uid);
+        const now = new Date().toISOString();
+        const todos = (await Promise.all(groups.map(group => repos.todos.getFutureReminders(group.id, now)))).flat();
+        const locale = await AsyncStorage.getItem('chorescore.locale.v4');
+        if (servicesRef.current.auth.getCurrentUserId() !== uid) return [];
+        return todos.map(todo => ({
+          title: resolveString(locale === 'en' ? 'en' : 'fr', 'todos.reminderNotificationTitle', { title: todo.title }),
+          body: todo.notes || resolveString(locale === 'en' ? 'en' : 'fr', 'todos.reminderNotificationBody'),
+          scheduledAt: todo.reminderAt!, data: { todoId: todo.id, householdId: todo.householdId, userId: uid },
+        }));
+      }).catch(() => undefined); // Durable repair error is visible in Options.
+    }, 300);
+    (reminderTimerRef.current as unknown as { unref?: () => void }).unref?.();
+  }, []);
+
+  useEffect(() => () => {
+    if (reminderTimerRef.current !== null) clearTimeout(reminderTimerRef.current);
+  }, []);
 
   const setCurrentHouseholdId = useCallback((id: string | null) => {
     const userId = servicesRef.current.auth.getCurrentUserId();
@@ -250,7 +280,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       try { listener(type, householdId); } catch { /* swallow */ }
     }
     schedulePush(householdId);
-  }, [schedulePush]);
+    if (type === 'todo' || type === 'household' || type === 'member') refreshReminders();
+  }, [schedulePush, refreshReminders]);
 
   const subscribeToDataChanges = useCallback((callback: DataChangeCallback): (() => void) => {
     dataChangeListenersRef.current.add(callback);
@@ -273,6 +304,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         else if (collection === 'members' || collection === 'memberships') types.add('member');
         else if (collection === 'todo_items' || collection === 'persistent_tasks') types.add('todo');
       }
+      if (types.has('todo') || types.has('household') || types.has('member')) refreshReminders();
       for (const type of types) {
         for (const listener of dataChangeListenersRef.current) {
           try { listener(type, signal.householdId); } catch { /* swallow */ }
@@ -322,12 +354,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const remembered = await AsyncStorage.getItem(`chorescore.selectedGroup.${uid}`).catch(() => null);
       if (servicesRef.current.auth.getCurrentUserId() !== uid) return;
       const current = selectedGroupRef.current.userId === uid ? selectedGroupRef.current.id : null;
-      const selected = loaded.find(group => group.id === current)?.id
-        ?? loaded.find(group => group.id === remembered)?.id
-        ?? loaded[0]?.id ?? null;
+      const candidate = current ?? remembered;
+      // Never silently switch an open form to another household when its
+      // selected group disappears remotely. The group chooser must reopen.
+      const selected = candidate ? loaded.find(group => group.id === candidate)?.id ?? null
+        : loaded[0]?.id ?? null;
       selectedGroupRef.current = { userId: uid, id: selected };
       setHouseholds(loaded);
       setCurrentHouseholdState(selected);
+      refreshReminders();
       if (sync.isAvailable()) {
         for (const household of loaded) void sync.startSync(household.id).catch(() => undefined);
       }
@@ -425,6 +460,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     syncTimersRef.current.clear();
     setHouseholds([]);
     setCurrentHouseholdId(null);
+    if (reminderTimerRef.current !== null) clearTimeout(reminderTimerRef.current);
+    reminderTimerRef.current = null;
+    await servicesRef.current.notifications.reconcile(async () => []).catch(() => undefined);
   }, [households]);
 
   const createHousehold = useCallback(async (name: string, memberNames: string[] = [], contributionUnit: ContributionUnit = 'minutes') => {

@@ -588,6 +588,12 @@ export class InMemoryTodoRepository implements TodoRepository {
     }
   }
 
+  async getFutureReminders(householdId: string, after: string): Promise<TodoItem[]> {
+    return [...this.items.values()].filter(todo => todo.householdId === householdId && todo.status !== 'completed'
+      && todo.reminderAt && todo.reminderAt > after)
+      .sort((a, b) => a.reminderAt!.localeCompare(b.reminderAt!) || a.id.localeCompare(b.id));
+  }
+
   async getByHousehold(householdId: string): Promise<TodoItem[]> {
     return Array.from(this.items.values()).filter((t) => t.householdId === householdId);
   }
