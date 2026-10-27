@@ -1,3 +1,4 @@
+import { generateRecordId } from '../../src/infrastructure/repositories/recordIdentity';
 import { DateTimeField } from '../../src/ui/components/DateTimeField';
 import { taskUpdatePayload, expenseUpdatePayload } from '../../src/features/entries/editPayload';
 import { PhotoField } from '../../src/features/entries/PhotoField';
@@ -193,7 +194,6 @@ export default function AddScreen() {
   // Last created entry (offered for native share)
   const [lastCreated, setLastCreated] = useState<{ kind: EntryMode; message: string } | null>(null);
 
-  const attachmentSeqRef = useRef(0);
   const initialLoadDoneRef = useRef(false);
 
   // Task form
@@ -449,9 +449,8 @@ export default function AddScreen() {
       const source = await services.attachments.pickPhoto();
       if (!source) return;
       const handle = await services.attachments.save(source, currentHouseholdId);
-      attachmentSeqRef.current += 1;
       apply({
-        id: `att-${Date.now()}-${attachmentSeqRef.current}`,
+        id: generateRecordId('att'),
         kind: 'photo',
         ref: handle.ref,
         mimeType: handle.mimeType,

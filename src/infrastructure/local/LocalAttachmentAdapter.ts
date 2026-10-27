@@ -1,3 +1,4 @@
+import { generateRecordId } from '../repositories/recordIdentity';
 import { isManagedPhotoRef } from './managedPhotoRef';
 import { getDatabase } from './SqliteStorage';
 import { Platform } from 'react-native';
@@ -59,7 +60,7 @@ export class LocalAttachmentAdapter implements AttachmentGateway {
     }
     const folder = photoDirectory(householdId);
     folder.create({ idempotent: true, intermediates: true });
-    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+    const id = generateRecordId('photo');
     const destination = new File(folder, `${id}.${extension(source.mimeType)}`);
     const database = await getDatabase();
     // Register before copying: a failed/cancelled form leaves a retryable draft,

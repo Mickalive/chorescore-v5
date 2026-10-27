@@ -54,3 +54,38 @@ test('open forms receive remote todos, categories and renamed members without lo
   } finally { if (tree) await act(async () => tree.unmount()); }
   expect(listeners.size).toBe(0);
 });
+
+test('two independently mounted forms never reuse a photo id at the same clock instant', async () => {
+  const clock = jest.spyOn(Date, 'now').mockReturnValue(1800000000000);
+  const repos = createInMemoryRepositories();
+  const { household } = await createGroupWithMembers(repos, {
+    name: 'Maison', owner: { userId: 'alice', displayName: 'Alice' }, memberNames: ['Bob'], contributionUnit: 'points',
+  });
+  let image = 0;
+  mockApp.mockReturnValue({ currentHouseholdId: household.id, currentUser: { userId: 'alice' }, repos,
+    subscribeToDataChanges: () => () => undefined, emitDataChange: jest.fn(),
+    services: { media: { isAvailable: () => false }, calendar: { isAvailable: () => false },
+      attachments: { isAvailable: () => true, pickPhoto: async () => ({ localUri: 'file:///picked/photo.png' }),
+        save: async () => ({ ref: `file:///private/photo-${++image}.png`, mimeType: 'image/png', byteSize: 10 }) },
+    },
+  });
+  try {
+    for (let runtime = 0; runtime < 2; runtime++) {
+      let tree!: renderer.ReactTestRenderer;
+      try {
+        await act(async () => { tree = renderer.create(<AddScreen />); });
+        const field = (id: string) => tree.root.findAllByType(TextInput).find(node => node.props.testID === id)!;
+        const button = (id: string) => tree.root.findAllByType(Button).find(node => node.props.testID === id)!;
+        act(() => field('add.taskLabel').props.onChangeText(`Photo ${runtime}`));
+        act(() => field('add.taskValue').props.onChangeText('2'));
+        await act(async () => { await button('add.taskPhotoButton').props.onPress(); });
+        await act(async () => { await button('add.taskSubmit').props.onPress(); });
+      } finally { if (tree) await act(async () => tree.unmount()); }
+    }
+    const entries = await repos.contributions.getByHousehold(household.id);
+    expect(entries).toHaveLength(2);
+    const photos = entries.map(entry => entry.attachments![0]);
+    expect(new Set(photos.map(photo => photo.id)).size).toBe(2);
+    expect(new Set(photos.map(photo => photo.ref)).size).toBe(2);
+  } finally { clock.mockRestore(); }
+});
