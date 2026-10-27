@@ -1,0 +1,14 @@
+{
+  "package": "app.chorescore.v5",
+  "versionName": "0.5.0",
+  "architectures": ["arm64-v8a", "x86_64"],
+  "apkSha256": "9a04a392f0ab4593ea6e9fa2f7fd058b9fc6af6d8222fbc1dc26df804d705c00",
+  "signerSha1": "5e8f16062ea3cd2c4a0d547876baa6f38cabf625",
+  "device": "AOSP Android 35 x86_64, software CPU",
+  "installed": true,
+  "screenshot": "groups-empty-android.png",
+  "observed": ["normal local session", "Groups screen rendered", "unconfigured collaboration notice visible"],
+  "fullNativeJourneyPassed": false,
+  "productionFirebaseVerified": false,
+  "twoPhysicalPhonesVerified": false
+}

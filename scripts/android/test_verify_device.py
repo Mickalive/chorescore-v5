@@ -36,6 +36,27 @@ def driver():
 
 
 class SelectorBehavior(unittest.TestCase):
+    def test_persistent_input_targets_native_controls_and_rejects_failed_actions(self):
+        env = driver()
+        rpc=Mock(return_value=True)
+        env.update(os=SimpleNamespace(environ={'ANDROID_UIAUTOMATOR_RPC_URL':'local'}),native_rpc=rpc)
+        env['adb']('shell','input','tap','100','200')
+        rpc.assert_called_with('click',[100,200])
+        env['adb']('shell','input','swipe','206','320','206','140','350')
+        rpc.assert_called_with('swipe',[206,320,206,140,70])
+        env['adb']('shell','input','keycombination','113','29')
+        rpc.assert_called_with('pressKeyCode',[29,4096])
+        rpc.side_effect=['existing ',True]
+        env['adb']('shell','input','text','new%svalue')
+        method, params=rpc.call_args.args
+        self.assertEqual(method,'setText')
+        self.assertTrue(params[0]['focused'])
+        self.assertEqual(params[0]['className'],'android.widget.EditText')
+        self.assertEqual(params[1],'existing new value')
+        rpc.side_effect=None; rpc.return_value=False
+        with self.assertRaisesRegex(AssertionError,'action rejected'):
+            env['adb']('shell','input','tap','100','200')
+
     def test_persistent_native_hierarchy_is_parsed_and_rpc_failures_are_rejected(self):
         env = driver()
         xml='<hierarchy><node resource-id="groups.newButton" text="Créer un groupe" /></hierarchy>'

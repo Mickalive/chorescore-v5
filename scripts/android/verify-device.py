@@ -24,7 +24,40 @@ PHOTO_BYTES = base64.b64decode(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII='
 )
 
+def native_rpc(method, params):
+    request=urllib.request.Request(os.environ['ANDROID_UIAUTOMATOR_RPC_URL'], data=json.dumps({
+        'jsonrpc':'2.0', 'id':'chorescore', 'method':method, 'params':params,
+    }).encode(), headers={'Content-Type':'application/json'})
+    with urllib.request.urlopen(request, timeout=120) as response:
+        result=json.load(response)
+    if result.get('error') or 'result' not in result:
+        raise AssertionError('Native UIAutomator hierarchy request failed' if method=='dumpWindowHierarchy'
+                             else 'Native UIAutomator action failed: '+method)
+    return result['result']
+
 def adb(*args, binary=False, timeout=35):
+    # The optional persistent server injects real Android events / edits into
+    # the selected native widget. No repository or React state is accessed.
+    if os.environ.get('ANDROID_UIAUTOMATOR_RPC_URL') and args[:2]==('shell','input'):
+        action=args[2]
+        if action=='tap':
+            result=native_rpc('click',list(map(int,args[3:5])))
+        elif action=='swipe':
+            result=native_rpc('swipe',list(map(int,args[3:7]))+[max(2,int(args[7])//5)])
+        elif action=='keycombination' and args[3:]==('113','29'):
+            result=native_rpc('pressKeyCode',[29,4096])  # Android Ctrl+A
+        elif action=='keyevent':
+            codes={'KEYCODE_DEL':67,'KEYCODE_ENTER':66,'KEYCODE_MOVE_END':123,'KEYCODE_BACK':4}
+            result=native_rpc('pressKeyCode',[codes[args[3]]])
+        elif action=='text':
+            selector={'mask':0x020010,'focused':True,'className':'android.widget.EditText',
+                      'childOrSibling':[],'childOrSiblingSelector':[]}
+            current=native_rpc('getText',[selector])
+            result=native_rpc('setText',[selector,current+args[3].replace('%s',' ')])
+        else:
+            raise AssertionError('Unsupported native input action: '+action)
+        if result is False:raise AssertionError('Native input action rejected: '+action)
+        return b'' if binary else ''
     result = subprocess.run([ADB,*args],capture_output=True,timeout=timeout,check=True)
     return result.stdout if binary else result.stdout.decode('utf-8',errors='replace')
 
@@ -33,15 +66,9 @@ def hierarchy():
     if rpc:
         # Optional persistent native UIAutomator server. It reads the same real
         # accessibility tree, avoiding a Java VM startup for every assertion.
-        request=urllib.request.Request(rpc, data=json.dumps({
-            'jsonrpc':'2.0', 'id':'chorescore', 'method':'dumpWindowHierarchy',
-            'params':[False, 100],
-        }).encode(), headers={'Content-Type':'application/json'})
-        with urllib.request.urlopen(request, timeout=120) as response:
-            result=json.load(response)
-        if result.get('error') or not isinstance(result.get('result'),str):
+        data=native_rpc('dumpWindowHierarchy',[False,100])
+        if not isinstance(data,str):
             raise AssertionError('Native UIAutomator hierarchy request failed')
-        data=result['result']
     else:
         # Software-only Android can spend >35s starting the Java dump process.
         adb('shell','uiautomator','dump','/data/local/tmp/chorescore-window.xml',
