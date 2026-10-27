@@ -21,7 +21,6 @@ import {
   StyleSheet,
   TouchableOpacity,
   TextInput,
-  ScrollView,
   Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -34,6 +33,7 @@ import { colors, spacing, borderRadius } from '../src/ui/design-system/theme';
 import { useApp } from '../src/features/app/AppContext';
 import { useI18n } from '../src/i18n';
 import { Household, ContributionUnit, Member, isLinkedMember } from '../src/domain/entities';
+import { parsePositiveNumber, parseAmountToMinor } from '../src/domain/services/addEntryService';
 import { planUnitChange, validateUnitChange } from '../src/domain/services/unitChangeService';
 
 export default function GroupOptionsScreen() {
@@ -188,9 +188,9 @@ export default function GroupOptionsScreen() {
       };
 
       if (compensationEnabled) {
-        const contribVal = parseFloat(rateContributionValue);
-        const moneyMinor = Math.round(parseFloat(rateMoneyAmount) * 100);
-        if (isNaN(contribVal) || contribVal <= 0 || isNaN(moneyMinor) || moneyMinor <= 0) {
+        const contribVal = parsePositiveNumber(rateContributionValue);
+        const moneyMinor = parseAmountToMinor(rateMoneyAmount);
+        if (contribVal === null || moneyMinor === null || !/^[A-Z]{3}$/.test(rateCurrency)) {
           Alert.alert(t('state.error'), t('groupOptions.rateError'));
           setIsSaving(false);
           return;
@@ -228,7 +228,7 @@ export default function GroupOptionsScreen() {
 
   return (
     <ScreenContainer edges={['top', 'bottom']}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <View style={styles.scrollContent}>
         {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} testID="groupOptions.back">
@@ -491,7 +491,7 @@ export default function GroupOptionsScreen() {
           />
         </Card>
         {household ? <DeleteGroupCard household={household} /> : null}
-      </ScrollView>
+      </View>
     </ScreenContainer>
   );
 }

@@ -24,6 +24,7 @@ import {
   TouchableOpacity,
   Modal,
   Alert,
+  TextInput,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { ScreenContainer } from '../../src/ui/components/ScreenContainer';
@@ -33,6 +34,7 @@ import { Button } from '../../src/ui/components/Button';
 import { colors, spacing, borderRadius } from '../../src/ui/design-system/theme';
 import { useApp, DataChangeType } from '../../src/features/app/AppContext';
 import { useI18n } from '../../src/i18n';
+import { parsePositiveNumber } from '../../src/domain/services/addEntryService';
 import {
   ContributionEntry,
   CrossLedgerSettlement,
@@ -134,6 +136,8 @@ export default function BalancesScreen() {
   const [compenserCreditor, setCompenserCreditor] = useState<string>('');
   const [compenserValue, setCompenserValue] = useState<string>('');
   const [compenserError, setCompenserError] = useState<string | null>(null);
+  const compensatingRef = useRef(false);
+  const [isCompensating, setIsCompensating] = useState(false);
 
   // History filter state
   const [historyFilter, setHistoryFilter] = useState<ActivityFilter>('all');
@@ -484,8 +488,8 @@ export default function BalancesScreen() {
   // Build Avant/Apres preview for the Compenser modal
   const compenserPreview = useMemo(() => {
     if (!canCompensate || !compenserCreditor || !compenserValue) return null;
-    const value = parseFloat(compenserValue);
-    if (isNaN(value) || value <= 0) return null;
+    const value = parsePositiveNumber(compenserValue);
+    if (value === null) return null;
     const rate = household!.contributionToMoneyRate!;
 
     // Find a counterparty with positive money balance (creditor in money ledger)
@@ -536,10 +540,11 @@ export default function BalancesScreen() {
   ]);
 
   const handleCompenserConfirm = useCallback(async () => {
-    if (!currentHouseholdId || !household || !compenserPreview) return;
+    if (!currentHouseholdId || !household || !compenserPreview || compensatingRef.current) return;
     setCompenserError(null);
 
-    const value = parseFloat(compenserValue);
+    const value = parsePositiveNumber(compenserValue);
+    if (value === null) return;
     const rate = compenserPreview.rate;
     const moneyAmount = compenserPreview.moneyAmount;
 
@@ -574,43 +579,52 @@ export default function BalancesScreen() {
       return;
     }
 
-    // Persist the immutable settlement — use the returned entity (real id)
-    const persistedSettlement = await repos.withTransaction(async () => repos.settlements.create(settlementData));
+    compensatingRef.current = true;
+    setIsCompensating(true);
+    try {
+      // Persist the immutable settlement — use the returned entity (real id)
+      const persistedSettlement = await repos.withTransaction(async () => repos.settlements.create(settlementData));
 
-    // Update local state with the real persisted entity
-    const newSettlements = [...settlements, persistedSettlement];
-    setSettlements(newSettlements);
+      // Update local state with the real persisted entity
+      const newSettlements = [...settlements, persistedSettlement];
+      setSettlements(newSettlements);
 
-    // Apply delta to materialized snapshot — BOTH ledgers
-    if (snapshotRef.current) {
-      snapshotRef.current = {
-        contribution: deltaUpdateContributionFromSettlement(
-          snapshotRef.current.contribution, persistedSettlement, unit, 'add'
-        ),
-        moneyByCurrency: (() => {
-          const currencyMap = new Map(snapshotRef.current!.moneyByCurrency);
-          const currBalances = new Map(currencyMap.get(persistedSettlement.currency) ?? []);
-          currencyMap.set(persistedSettlement.currency, deltaUpdateMoneyFromSettlement(currBalances, persistedSettlement, 'add'));
-          return currencyMap;
-        })(),
-      };
+      // Apply delta to materialized snapshot — BOTH ledgers
+      if (snapshotRef.current) {
+        snapshotRef.current = {
+          contribution: deltaUpdateContributionFromSettlement(
+            snapshotRef.current.contribution, persistedSettlement, unit, 'add'
+          ),
+          moneyByCurrency: (() => {
+            const currencyMap = new Map(snapshotRef.current!.moneyByCurrency);
+            const currBalances = new Map(currencyMap.get(persistedSettlement.currency) ?? []);
+            currencyMap.set(persistedSettlement.currency, deltaUpdateMoneyFromSettlement(currBalances, persistedSettlement, 'add'));
+            return currencyMap;
+          })(),
+        };
+      }
+
+      // NOTE: We do NOT emit 'settlement' here. The screen already applied
+      // the delta to snapshotRef and updated local state (setSettlements).
+      // Emitting would cause handleDataChange('settlement') to re-read the
+      // repo, compute added against the stale `settlements` closure (which
+      // does NOT include the just-created entity because React state updates
+      // do not mutate the current render), and apply the delta a second time.
+      // Other screens (Ajouter, Todos) do not consume settlement signals.
+
+      // Close modal and reset
+      setShowCompenser(false);
+      setCompenserCreditor('');
+      setCompenserValue('');
+    } catch {
+      setCompenserError(t('state.error'));
+    } finally {
+      compensatingRef.current = false;
+      setIsCompensating(false);
     }
-
-    // NOTE: We do NOT emit 'settlement' here. The screen already applied
-    // the delta to snapshotRef and updated local state (setSettlements).
-    // Emitting would cause handleDataChange('settlement') to re-read the
-    // repo, compute added against the stale `settlements` closure (which
-    // does NOT include the just-created entity because React state updates
-    // do not mutate the current render), and apply the delta a second time.
-    // Other screens (Ajouter, Todos) do not consume settlement signals.
-
-    // Close modal and reset
-    setShowCompenser(false);
-    setCompenserCreditor('');
-    setCompenserValue('');
   }, [
     currentHouseholdId, currentUser, household, compenserPreview, compenserCreditor, compenserValue,
-    unit, contributions, expenses, memberIds, settlements, repos, emitDataChange,
+    unit, contributions, expenses, memberIds, settlements, repos, emitDataChange, t,
   ]);
 
   // ── History pagination ─────────────────────────────────────
@@ -1105,6 +1119,15 @@ export default function BalancesScreen() {
               ))}
             </View>
 
+            <TextInput
+              testID="balances.compenserValue"
+              value={compenserValue}
+              onChangeText={setCompenserValue}
+              keyboardType="decimal-pad"
+              accessibilityLabel={t('balances.composerValue', { unit: unitLabel })}
+              style={{ minHeight: 48, borderWidth: 1, borderColor: colors.border, borderRadius: borderRadius.sm, padding: spacing.md, color: colors.text }}
+            />
+
             {compenserPreview && (
               <Card style={styles.previewCard}>
                 <Text variant="bodyBold" style={{ marginBottom: spacing.sm }}>
@@ -1179,7 +1202,8 @@ export default function BalancesScreen() {
 
             <Button
               title={t('balances.composerConfirm')}
-              disabled={!compenserPreview}
+              disabled={!compenserPreview || isCompensating}
+              loading={isCompensating}
               onPress={handleCompenserConfirm}
               style={{ marginTop: spacing.lg }}
               testID="balances.compenserConfirm"

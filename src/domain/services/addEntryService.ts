@@ -68,10 +68,10 @@ export type AddDraftResult<T> =
 
 /** Parse a strictly positive decimal, tolerant of a comma decimal separator. */
 export function parsePositiveNumber(raw: string): number | null {
-  if (typeof raw !== 'string' || raw.includes('-')) return null;
-  const cleaned = raw.replace(/[^0-9.,]/g, '').replace(',', '.');
-  if (!cleaned) return null;
-  const value = Number(cleaned);
+  if (typeof raw !== 'string') return null;
+  const text = raw.trim();
+  if (!/^(?:\d+|\d{1,3}(?:[ \u00a0\u202f]\d{3})+)(?:[.,]\d+)?$/.test(text)) return null;
+  const value = Number(text.replace(/[ \u00a0\u202f]/g, '').replace(',', '.'));
   if (!Number.isFinite(value) || value <= 0) return null;
   return value;
 }

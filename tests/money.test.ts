@@ -1,3 +1,4 @@
+import { parsePositiveNumber } from '../src/domain/services/addEntryService';
 import { parseAmountToMinor, parseShareToMinor } from '../src/domain/services/addEntryService';
 import { allocateExpense, calculateFinancialBalances } from '../src/domain/calculations/expenseLedger';
 import { ExpenseEntry } from '../src/domain/entities';
@@ -24,4 +25,12 @@ test('unsafe amounts and aggregate overflow fail explicitly rather than corrupti
   expect(() => allocateExpense({ ...entry, amountMinor: Number.MAX_SAFE_INTEGER+1 })).toThrow();
   const huge = { ...entry, participantMemberIds: ['b'], amountMinor: Number.MAX_SAFE_INTEGER };
   expect(() => calculateFinancialBalances([huge, huge], 'EUR')).toThrow('precision');
+});
+
+
+test.each(['abc1', '1e3', '1,2,3', '-1', '1.2 pts', 'Infinity', '12 34'])('task values and compensation rates reject malformed input: %s', raw => {
+  expect(parsePositiveNumber(raw)).toBeNull();
+});
+test.each([['1,5', 1.5], ['1.5', 1.5], ['1 234,5', 1234.5]] as const)('task values and rates accept locale decimal %s', (raw, expected) => {
+  expect(parsePositiveNumber(raw)).toBe(expected);
 });
