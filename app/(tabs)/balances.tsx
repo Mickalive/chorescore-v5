@@ -13,9 +13,8 @@
  * Balances are derived views — they never mutate the underlying ledger.
  * Materialized for display efficiency; delta-based refresh on data change.
  *
- * Settlements are period-filtered: a settlement outside the period does not
- * affect the period view but remains in all-time. Materialized snapshots
- * are refreshed via delta on data change or focus, not full replay.
+ * Periods narrow paginated history, never the main perpetual balances or
+ * compensation suggestions. Settlements remain in both all-time ledgers.
  */
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
@@ -56,7 +55,7 @@ import {
   suggestMoneyTransfers,
   financialLedgerIsZeroSum,
 } from '../../src/domain/calculations/expenseLedger';
-import { filterByPeriod, Period } from '../../src/domain/calculations/periods';
+import { periodBoundary, Period } from '../../src/domain/calculations/periods';
 import { quoteCrossLedgerMoneyAmount } from '../../src/domain/calculations/crossLedgerSettlement';
 import { validateSettlementPreconditions } from '../../src/domain/calculations/settlementPreconditions';
 import {
@@ -425,33 +424,12 @@ export default function BalancesScreen() {
   const unit = household?.contributionUnit ?? 'minutes';
   const memberIds = useMemo(() => members.map((m) => m.id), [members]);
 
-  // Filter entries AND settlements by period — these are VIEW filters, never resets
-  const periodContributions = useMemo(
-    () => filterByPeriod(contributions, period),
-    [contributions, period]
-  );
-
-  const periodExpenses = useMemo(
-    () => filterByPeriod(expenses, period),
-    [expenses, period]
-  );
-
-  const periodSettlements = useMemo(
-    () => filterByPeriod(settlements, period),
-    [settlements, period]
-  );
-
-  // Contribution balances (period-filtered, including period-filtered settlements)
+  // Main balances are perpetual. Period selection narrows history only; it
+  // must never hide an old debt or change compensation suggestions.
   const contributionBalances = useMemo(
-    () => {
-      // Use materialized snapshot for all-time, recompute for period views
-      if (period === 'all-time' && snapshotRef.current) {
-        return snapshotRef.current.contribution;
-      }
-      // Period view: compute from period-filtered entries + period-filtered settlements
-      return calculateContributionBalances(periodContributions, unit, periodSettlements, memberIds);
-    },
-    [periodContributions, unit, periodSettlements, memberIds, period]
+    () => snapshotRef.current?.contribution
+      ?? calculateContributionBalances(contributions, unit, settlements, memberIds),
+    [contributions, unit, settlements, memberIds]
   );
 
   const contributionArray = useMemo(
@@ -459,15 +437,10 @@ export default function BalancesScreen() {
     [contributionBalances]
   );
 
-  // Money balances (period-filtered, including period-filtered settlements)
   const moneyBalancesByCurrency = useMemo(
-    () => {
-      if (period === 'all-time' && snapshotRef.current) {
-        return snapshotRef.current.moneyByCurrency;
-      }
-      return calculateFinancialBalancesByCurrency(periodExpenses, periodSettlements, memberIds);
-    },
-    [periodExpenses, periodSettlements, memberIds, period]
+    () => snapshotRef.current?.moneyByCurrency
+      ?? calculateFinancialBalancesByCurrency(expenses, settlements, memberIds),
+    [expenses, settlements, memberIds]
   );
 
   // Settlement suggestions
@@ -640,12 +613,13 @@ export default function BalancesScreen() {
         limit: HISTORY_PAGE_SIZE,
         filter,
         cursor: cursor ?? null,
+        after: period === 'all-time' ? undefined : periodBoundary(period),
       });
       if (request === historyRequestRef.current) setHistoryPage(page);
     } finally {
       if (request === historyRequestRef.current) setHistoryLoading(false);
     }
-  }, [currentHouseholdId, repos]);
+  }, [currentHouseholdId, repos, period]);
 
   // Reset history page on filter change and after every local ledger change.
   // The page itself comes from the repository, never from the full arrays.
@@ -733,7 +707,10 @@ export default function BalancesScreen() {
             <TouchableOpacity
               key={p}
               style={[styles.periodButton, period === p && styles.periodButtonActive]}
-              onPress={() => setPeriod(p)}
+              onPress={() => { if (period !== p) setHistoryPage(null); setPeriod(p); }}
+              testID={`balances.period.${p}`}
+              accessibilityRole="button"
+              accessibilityState={{ selected: period === p }}
             >
               <Text
                 variant="caption"
@@ -746,6 +723,7 @@ export default function BalancesScreen() {
         </View>
 
         {/* Task Ledger Block */}
+        <Text variant="caption" color={colors.textSecondary}>{t('balances.historyPeriodHint')}</Text>
         <Text variant="sectionTitle" style={styles.sectionTitle}>
           {t('balances.tasks')}
         </Text>

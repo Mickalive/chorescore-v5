@@ -182,6 +182,29 @@ const server = createServer((req, res) => {
     await expect(page.getByText(/^\+ 2,01[\s\u00a0\u202f]CHF$/)).toBeVisible();
     await screenshot('custom-splits-web');
 
+    // An old self-only task has zero net effect on the perpetual balances,
+    // but must disappear from the current history period and return in All.
+    await page.getByRole('tab', { name: 'Ajouter', exact: true }).click();
+    await page.getByText('Tâche', { exact: true }).filter({ visible: true }).click();
+    await field('add.taskLabel').fill('Historique ancien');
+    await field('add.taskValue').fill('2');
+    await field('add.taskBeneficiary.1').click();
+    await field('add.taskDateTime').click();
+    await field('add.taskDateTime.date').fill('2000-01-01');
+    await field('add.taskDateTime.time').fill('08:17');
+    await field('add.taskDateTime.confirm').click();
+    await button('Ajouter la tâche').click();
+    await expect(field('add.taskLabel')).toHaveValue('');
+    await page.getByRole('tab', { name: 'Balances', exact: true }).click();
+    await expect(page.getByText(/Historique ancien/)).toBeVisible();
+    await field('balances.period.week').click();
+    await expect(page.getByText(/Historique ancien/)).toBeHidden();
+    await expect(page.getByText('+ 22 pts', { exact: true })).toBeVisible();
+    await expect(page.getByText(/^\+ 2,01[\s\u00a0\u202f]CHF$/)).toBeVisible();
+    await field('balances.period.all-time').click();
+    await expect(page.getByText(/Historique ancien/)).toBeVisible();
+    await screenshot('history-period-perpetual-balances-web');
+
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     await button('Créer un groupe').click();
     await field('groups.nameInput').fill('À supprimer');
@@ -212,7 +235,7 @@ const server = createServer((req, res) => {
     await button('Open group Notre maison').waitFor();
     await screenshot('groups-en-small-web');
     assert.deepEqual(errors, []);
-    console.log('PASS: category defaults and historical snapshots, custom task weights and exact-cent shares, both todo kinds; owner group deletion with exact-name confirmation, cancel and reload; arbitrary local dates/times, invalid-date rejection and cancellation; points group + pending named member; exact-cent expense; task and notes; Balances edit; reload persistence; todo completion; zero-sum balances; FR/EN preference persistence and small-screen layout.');
+    console.log('PASS: history periods with perpetual balances, category defaults and historical snapshots, custom task weights and exact-cent shares, both todo kinds; owner group deletion with exact-name confirmation, cancel and reload; arbitrary local dates/times, invalid-date rejection and cancellation; points group + pending named member; exact-cent expense; task and notes; Balances edit; reload persistence; todo completion; zero-sum balances; FR/EN preference persistence and small-screen layout.');
     console.log('Screenshots:', evidence, '(web only; not Android evidence)');
   } catch (error) {
     await screenshot('failure-web').catch(() => {});
