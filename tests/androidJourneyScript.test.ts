@@ -68,7 +68,8 @@ describe('Android journey driver', () => {
     expect(find).toContain('keyboard_shown()');
     expect(find).toContain('hide_keyboard()');
     const top = functionBody('ime_top');
-    expect(top).toContain('InputMethod');
+    expect(top).toContain('ime_window_blocks');
+    expect(functionBody('ime_window_blocks')).toContain('InputMethod');
     expect(top).toContain('frame');
     const visible = functionBody('find_visible');
     expect(visible).toContain('usable_bottom()');
@@ -149,5 +150,7 @@ describe('Android journey driver', () => {
       expect(source).toContain(marker);
     }
     expect(source).toContain("raise AssertionError(\n            f'App left foreground during {context}");
+    expect(source).toContain("scroll_to(resource='add.taskBeneficiary.2')");
+    expect(source).toContain("scroll_to(resource='add.expenseParticipant.2')");
   });
 });

@@ -10,7 +10,7 @@
  */
 
 import React from 'react';
-import { View, StyleSheet, ScrollView, ViewStyle, KeyboardAvoidingView, Platform } from 'react-native';
+import { View, StyleSheet, ScrollView, ViewStyle, KeyboardAvoidingView, Keyboard, Platform } from 'react-native';
 import { SafeAreaView, Edge } from 'react-native-safe-area-context';
 import { colors, spacing } from '../design-system/theme';
 
@@ -37,6 +37,7 @@ export function ScreenContainer({
       showsVerticalScrollIndicator={false}
       keyboardShouldPersistTaps="handled"
       keyboardDismissMode="on-drag"
+      onScrollBeginDrag={Keyboard.dismiss}
     >
       {children}
     </ScrollView>

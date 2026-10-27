@@ -28,6 +28,7 @@ import {
   TextInput,
   TouchableOpacity,
   Alert,
+  Keyboard,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { ScreenContainer } from '../../src/ui/components/ScreenContainer';
@@ -775,6 +776,7 @@ export default function AddScreen() {
   };
 
   const selectTaskCategory = (categoryId: string | null) => {
+    Keyboard.dismiss();
     setTaskForm((prev) => ({ ...prev, categoryId }));
     const category = categoryId ? categories.find((c) => c.id === categoryId) : null;
     const hasRatio = !!(category?.defaultTaskRatio && category.defaultTaskRatio.length > 0);
@@ -1355,11 +1357,15 @@ export default function AddScreen() {
           <View style={styles.inputGroup}>
             <Text variant="caption">{t('add.paidBy')}</Text>
             <View style={styles.chipRow}>
-              {members.map((m) => {
+              {members.map((m, index) => {
                 const selected = expenseForm.paidByMemberId === m.id;
                 return (
                   <TouchableOpacity
                     key={m.id}
+                    testID={`add.expensePayer.${index}`}
+                    accessibilityRole="button"
+                    accessibilityLabel={m.name}
+                    accessibilityState={{ selected }}
                     style={[styles.memberChip, selected && styles.memberChipActive]}
                     onPress={() => setExpenseForm((prev) => ({ ...prev, paidByMemberId: m.id }))}
                   >
@@ -1376,11 +1382,15 @@ export default function AddScreen() {
           <View style={styles.inputGroup}>
             <Text variant="caption">{t('add.participants')}</Text>
             <View style={styles.chipRow}>
-              {members.map((m) => {
+              {members.map((m, index) => {
                 const selected = expenseForm.participantMemberIds.includes(m.id);
                 return (
                   <TouchableOpacity
                     key={m.id}
+                    testID={`add.expenseParticipant.${index}`}
+                    accessibilityRole="button"
+                    accessibilityLabel={m.name}
+                    accessibilityState={{ selected }}
                     style={[styles.memberChip, selected && styles.memberChipActive]}
                     onPress={() => toggleParticipant(m.id)}
                   >

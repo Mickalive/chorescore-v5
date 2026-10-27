@@ -18,6 +18,7 @@ def driver():
     )
     env = {'re': re}
     exec(compile(functions, 'verify-device.py', 'exec'), env)
+    env['real_keyboard_shown'] = env['keyboard_shown']
     env.update(
         hierarchy=Mock(), screen_size=lambda: (412, 915),
         usable_bottom=lambda: 900, swipe=Mock(), scroll_top=Mock(),
@@ -74,6 +75,32 @@ class SelectorBehavior(unittest.TestCase):
             env['start']()
         self.assertEqual(env['hierarchy'].call_count, 20)
         env['adb'].assert_called_once()
+
+    def test_app_mentioning_input_method_is_not_treated_as_a_keyboard(self):
+        env = driver()
+        env['adb'] = Mock(return_value='''
+  Window #0 Window{app u0 app.chorescore.v5/.MainActivity}:
+    mIsImWindow=false mViewVisibility=0x0 mHasSurface=true
+    mFrame=[0,24][412,915]
+    mInputMethodWindow=Window{ime u0 InputMethod}
+''')
+        self.assertFalse(env['real_keyboard_shown']())
+        self.assertIsNone(env['ime_top']())
+
+    def test_visible_keyboard_uses_its_own_frame_not_the_apps_or_parent_frame(self):
+        env = driver()
+        env['adb'] = Mock(return_value='''
+  Window #0 Window{app u0 app.chorescore.v5/.MainActivity}:
+    mIsImWindow=false mViewVisibility=0x0 mHasSurface=true
+    mFrame=[0,24][412,915]
+    mInputMethodWindow=Window{ime u0 InputMethod}
+  Window #1 Window{ime u0 InputMethod}:
+    mIsImWindow=true mViewVisibility=0x0 mHasSurface=true
+    mParentFrame=[0,0][412,915]
+    mFrame=[0,583][412,915]
+''')
+        self.assertTrue(env['real_keyboard_shown']())
+        self.assertEqual(env['ime_top'](), 583)
 
 
 if __name__ == '__main__':

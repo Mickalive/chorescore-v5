@@ -117,6 +117,14 @@ def dismiss_system_dialog(root):
             return True
     return False
 
+def ime_window_blocks(dump):
+    """Select actual IME windows, not app windows mentioning their IME target."""
+    for block in re.split(r'\n  Window #',dump):
+        heading=block.lstrip().splitlines()[0] if block.strip() else ''
+        if (re.search(r'Window\{[^}\n]*\bInputMethod\b',heading)
+                or re.search(r'\bmIsImWindow=true\b',block)):
+            yield block
+
 def keyboard_shown():
     """Report whether the IME window is actually visible on screen.
 
@@ -128,10 +136,7 @@ def keyboard_shown():
     InputMethod window block instead.
     """
     dump=adb('shell','dumpsys','window','windows')
-    blocks=re.split(r'\n  Window #',dump)
-    for block in blocks:
-        if 'InputMethod' not in block:
-            continue
+    for block in ime_window_blocks(dump):
         visible=re.search(r'mViewVisibility=0x0\b',block)
         concealed=re.search(r'isVisible=false|mHasSurface=false',block)
         if visible and not concealed:
@@ -147,14 +152,12 @@ def ime_top():
     scroll a field into the uncovered area before tapping it.
     """
     dump=adb('shell','dumpsys','window','windows')
-    for block in re.split(r'\n  Window #',dump):
-        if 'InputMethod' not in block:
-            continue
+    for block in ime_window_blocks(dump):
         visible=re.search(r'mViewVisibility=0x0\b',block)
         concealed=re.search(r'isVisible=false|mHasSurface=false',block)
         if not visible or concealed:
             continue
-        frame=re.search(r'[Ff]rame=\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]',block)
+        frame=re.search(r'(?<![A-Za-z])(?:mFrame|frame)=\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]',block)
         if frame:
             top=int(frame.group(2))
             if top>0:
@@ -669,7 +672,7 @@ try:
     open_group()
     locate('Valeur (pts)')
 
-    # User-created category with an explicit 1:3 default ratio.
+    # User-created category with 1:3:1 defaults for all three group members.
     scroll_to(resource='add.categoryManagerToggle')
     fill('add.categoryName','Menage CI')
     # The ratio toggle and create button are below the name field once the
@@ -678,6 +681,7 @@ try:
     scroll_to(resource='add.categoryDraftRatioToggle')
     fill('add.categoryWeight.0','1')
     fill('add.categoryWeight.1','3')
+    fill('add.categoryWeight.2','1')
     scroll_to(resource='add.categoryCreateButton')
     dismiss_alert()
     scroll_top()
@@ -688,6 +692,9 @@ try:
     fill('add.taskLabel','Cuisine CI')
     fill('add.taskValue','8')
     tap_category('Menage CI')
+    # Exactly two beneficiaries for the explicit 1:3 override; the third named
+    # member stays in the group but must not leave an unfilled custom share.
+    scroll_to(resource='add.taskBeneficiary.2')
     scroll_to(resource='add.taskSplit.custom')
     fill('add.taskWeight.0','1')
     fill('add.taskWeight.1','3')
@@ -701,6 +708,7 @@ try:
     tap('Dépense')
     fill('add.expenseTitle','Courses CI')
     fill('add.expenseAmount','1.01')
+    scroll_to(resource='add.expenseParticipant.2')
     scroll_to(resource='add.expenseSplit.custom')
     fill_nth('add.expenseShare',0,'0.50')
     fill_nth('add.expenseShare',1,'0.51')
@@ -833,7 +841,7 @@ try:
         'status':'passed','apk_sha256':hashlib.sha256(APK.read_bytes()).hexdigest(),
         'android':adb('shell','getprop','ro.build.version.release').strip(),
         'verified':['normal release startup','points group with two named members',
-                    'user category with 1:3 ratio','task with exact custom split and persisted picked photo',
+                    'user category with 1:3:1 ratio','task with 1:3 override for two beneficiaries and persisted picked photo',
                     'expense with cent-exact custom shares','task and expense todos completed by double tap',
                     'reminder permission requested through the real scheduler',
                     'real local reminder notification observed in the Android shade','both ledger entries after force-stop and relaunch',
@@ -846,6 +854,8 @@ try:
 except Exception:
     detail=traceback.format_exc()
     (EVIDENCE/'failure.txt').write_text(detail)
+    try:(EVIDENCE/'window-dump.txt').write_text(adb('shell','dumpsys','window','windows'))
+    except Exception:pass
     # Make the actual Python assertion readable through the checks API as well
     # as the downloadable evidence, without flattening it into an exit code.
     escaped=detail.replace('%','%25').replace('\r','%0D').replace('\n','%0A')
