@@ -52,8 +52,10 @@ def adb(*args, binary=False, timeout=35):
         elif action=='text':
             selector={'mask':0x020010,'focused':True,'className':'android.widget.EditText',
                       'childOrSibling':[],'childOrSiblingSelector':[]}
-            current=native_rpc('getText',[selector])
-            result=native_rpc('setText',[selector,current+args[3].replace('%s',' ')])
+            # Every text entry in this journey clears the field first. Native
+            # accessibility getText may expose its hint while it is empty;
+            # never prepend that hint to the requested input.
+            result=native_rpc('setText',[selector,args[3].replace('%s',' ')])
         else:
             raise AssertionError('Unsupported native input action: '+action)
         if result is False:raise AssertionError('Native input action rejected: '+action)

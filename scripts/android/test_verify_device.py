@@ -46,13 +46,12 @@ class SelectorBehavior(unittest.TestCase):
         rpc.assert_called_with('swipe',[206,320,206,140,70])
         env['adb']('shell','input','keycombination','113','29')
         rpc.assert_called_with('pressKeyCode',[29,4096])
-        rpc.side_effect=['existing ',True]
         env['adb']('shell','input','text','new%svalue')
         method, params=rpc.call_args.args
         self.assertEqual(method,'setText')
         self.assertTrue(params[0]['focused'])
         self.assertEqual(params[0]['className'],'android.widget.EditText')
-        self.assertEqual(params[1],'existing new value')
+        self.assertEqual(params[1],'new value')
         rpc.side_effect=None; rpc.return_value=False
         with self.assertRaisesRegex(AssertionError,'action rejected'):
             env['adb']('shell','input','tap','100','200')
