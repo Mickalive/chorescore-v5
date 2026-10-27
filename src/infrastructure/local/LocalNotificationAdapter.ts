@@ -35,10 +35,11 @@ export class LocalNotificationAdapter implements NotificationGateway {
         await AsyncStorage.setItem(ENABLED_KEY, 'false');
         if (this.isAvailable()) {
           const scheduled = await Notifications.getAllScheduledNotificationsAsync();
-          for (const item of scheduled) {
-            if (item.identifier.startsWith('chorescore-todo:')) {
-              await Notifications.cancelScheduledNotificationAsync(item.identifier);
-            }
+          const results = await Promise.allSettled(scheduled
+            .filter(item => item.identifier.startsWith('chorescore-todo:'))
+            .map(item => Notifications.cancelScheduledNotificationAsync(item.identifier)));
+          if (results.some(result => result.status === 'rejected')) {
+            throw new Error('Some native reminders could not be cancelled');
           }
         }
         return;
@@ -65,8 +66,11 @@ export class LocalNotificationAdapter implements NotificationGateway {
   initialize(): void {
     if (!this.isAvailable()) return;
     Notifications.setNotificationHandler({
-      handleNotification: async () => ({ shouldShowBanner: true, shouldShowList: true,
-        shouldPlaySound: true, shouldSetBadge: false }),
+      handleNotification: async () => {
+        const enabled = await this.getEnabled().catch(() => false);
+        return { shouldShowBanner: enabled, shouldShowList: enabled,
+          shouldPlaySound: enabled, shouldSetBadge: false };
+      },
     });
   }
 

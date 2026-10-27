@@ -62,6 +62,7 @@ export default function GeneralOptionsScreen() {
   const [privacyConsent, setPrivacyConsent] = useState(false);
   const [remindersEnabled, setRemindersEnabled] = useState<boolean | null>(null);
   const [savingReminders, setSavingReminders] = useState(false);
+  const [reminderError, setReminderError] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -94,7 +95,9 @@ export default function GeneralOptionsScreen() {
           data: { todoId: todo.id },
         })));
       setRemindersEnabled(enabled);
+      setReminderError(false);
     } catch {
+      setReminderError(true);
       setRemindersEnabled(await services.notifications.getEnabled().catch(() => false));
       Alert.alert(t('state.error'), t('options.notificationsError'));
     } finally {
@@ -189,6 +192,11 @@ export default function GeneralOptionsScreen() {
               thumbColor={remindersEnabled ? colors.primary : colors.surface} />
           </View>
           <Text variant="caption" style={styles.privacyBody}>{t('options.remindersHelp')}</Text>
+          {reminderError ? <>
+            <View accessibilityRole="alert"><Text variant="caption">{t('options.notificationsError')}</Text></View>
+            <Button title={t('action.retry')} variant="secondary" disabled={savingReminders}
+              onPress={() => { void handleRemindersChange(remindersEnabled === true); }} />
+          </> : null}
           <Button title={t('options.notificationSettings')} variant="ghost"
             onPress={() => { void Linking.openSettings().catch(() => Alert.alert(t('state.error'), t('options.notificationsError'))); }} />
         </> : <SettingRow label={t('options.notificationsUnavailable')} last />}

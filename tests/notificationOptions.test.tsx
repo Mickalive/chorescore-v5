@@ -2,6 +2,7 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { Alert, Switch } from 'react-native';
 import GeneralOptionsScreen from '../app/general-options';
+import { Button } from '../src/ui/components/Button';
 
 jest.mock('@react-native-async-storage/async-storage', () =>
   require('@react-native-async-storage/async-storage/jest/async-storage-mock'));
@@ -64,5 +65,10 @@ test('disabling avoids loading todo history and a failed toggle shows the persis
   await act(async () => { await reminderSwitch().props.onValueChange(true); });
   expect(reminderSwitch().props.value).toBe(false);
   expect(alert).toHaveBeenCalledWith('state.error', 'options.notificationsError');
+  notifications.setEnabled.mockResolvedValue(undefined);
+  const retry = tree.root.findAllByType(Button).find(button => button.props.title === 'action.retry')!;
+  await act(async () => { await retry.props.onPress(); });
+  expect(notifications.setEnabled).toHaveBeenLastCalledWith(false, []);
+  expect(tree.root.findAllByType(Button).some(button => button.props.title === 'action.retry')).toBe(false);
   alert.mockRestore();
 });

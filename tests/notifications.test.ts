@@ -95,6 +95,28 @@ test('a partial restore failure cancels restored reminders and keeps the opt-out
   expect(await adapter.getEnabled()).toBe(false);
 });
 
+test('a cancellation failure still attempts every reminder and allows a safe retry while disabled', async () => {
+  const adapter = new LocalNotificationAdapter();
+  jest.mocked(Notifications.getAllScheduledNotificationsAsync).mockResolvedValue([
+    { identifier: todoNotificationId('a') }, { identifier: todoNotificationId('b') },
+  ] as any);
+  jest.mocked(Notifications.cancelScheduledNotificationAsync).mockRejectedValueOnce(new Error('native failure'));
+  await expect(adapter.setEnabled(false)).rejects.toThrow('could not be cancelled');
+  expect(Notifications.cancelScheduledNotificationAsync).toHaveBeenCalledWith(todoNotificationId('b'));
+  expect(await adapter.getEnabled()).toBe(false);
+  await expect(adapter.setEnabled(false)).resolves.toBeUndefined();
+});
+
+test('foreground notification presentation honors the persisted opt-out', async () => {
+  const adapter = new LocalNotificationAdapter();
+  await adapter.setEnabled(false);
+  adapter.initialize();
+  const handler = jest.mocked(Notifications.setNotificationHandler).mock.calls.at(-1)![0]!;
+  expect(await handler.handleNotification({} as any)).toMatchObject({
+    shouldShowBanner: false, shouldShowList: false, shouldPlaySound: false,
+  });
+});
+
 test('opt-out waits for an in-flight scheduler then cancels it, never leaving a late reminder', async () => {
   jest.mocked(Notifications.getPermissionsAsync).mockResolvedValue({ granted: true } as any);
   let finish!: (value: string) => void;
