@@ -1,5 +1,7 @@
 """Exercise real journey selectors against UIAutomator XML without a device."""
 import ast
+import hashlib
+import tempfile
 from pathlib import Path
 import re
 import unittest
@@ -31,6 +33,20 @@ def driver():
 
 
 class SelectorBehavior(unittest.TestCase):
+    def test_reusing_an_installed_candidate_requires_the_exact_apk_digest(self):
+        env = driver()
+        with tempfile.TemporaryDirectory() as folder:
+            apk = Path(folder) / 'candidate.apk'
+            apk.write_bytes(b'actual candidate bytes')
+            digest = hashlib.sha256(apk.read_bytes()).hexdigest()
+            env.update(APK=apk, PACKAGE='app.chorescore.v5', hashlib=hashlib,
+                       adb=Mock(side_effect=['package:/data/app/base.apk\n', digest+'  /data/app/base.apk\n']))
+            self.assertEqual(env['verify_installed_candidate'](), digest)
+            env['adb'] = Mock(side_effect=['package:/data/app/base.apk\n', '0'*64+'  /data/app/base.apk\n'])
+            with self.assertRaisesRegex(AssertionError, 'digest does not match'):
+                env['verify_installed_candidate']()
+
+
     def test_a_todo_title_behind_the_shade_is_not_notification_evidence(self):
         env = driver()
         root = ET.fromstring('<hierarchy><node package="app.chorescore.v5" text="Rappel CI" bounds="[10,100][300,150]"/>'

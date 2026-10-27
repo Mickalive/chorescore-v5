@@ -536,6 +536,15 @@ def device_time_plus(minutes=2):
     future=datetime.datetime.strptime(raw,'%Y-%m-%d %H:%M:%S')+datetime.timedelta(minutes=minutes)
     return future.strftime('%Y-%m-%d'), future.strftime('%H:%M')
 
+def verify_installed_candidate():
+    """Reuse only the exact APK bytes, never an old build with the same name."""
+    paths=[line[len('package:'):] for line in adb('shell','pm','path',PACKAGE).splitlines() if line.startswith('package:')]
+    if len(paths)!=1:raise AssertionError('Exactly one installed candidate APK is required')
+    actual=adb('shell','sha256sum',paths[0],timeout=120).split()[0]
+    expected=hashlib.sha256(APK.read_bytes()).hexdigest()
+    if actual!=expected:raise AssertionError('Installed APK digest does not match candidate')
+    return actual
+
 def notification_visible(root,title):
     """A matching todo in the app is not proof of notification delivery."""
     panels={'notification_stack_scroller','notification_panel','notification_container_parent'}
@@ -681,7 +690,9 @@ try:
     adb('shell','svc','power','stayon','true')
     adb('shell','wm','size','412x915')
     adb('shell','wm','density','160')
-    adb('install','-r',str(APK),timeout=120)
+    if '--already-installed' not in sys.argv[2:]:
+        adb('install','-r',str(APK),timeout=120)
+    verified_apk_sha256=verify_installed_candidate()
     adb('logcat','-c')
     # A real private photo file on the device, selected through DocumentsUI.
     (EVIDENCE/PHOTO_NAME).write_bytes(PHOTO_BYTES)
@@ -879,7 +890,8 @@ try:
     else:raise AssertionError('Reminder opt-in failed')
     hierarchy();screenshot('notification-options-android')
     (EVIDENCE/'result.json').write_text(json.dumps({
-        'status':'passed','apk_sha256':hashlib.sha256(APK.read_bytes()).hexdigest(),
+        'status':'passed','apk_sha256':verified_apk_sha256,
+        'installation':'existing APK bytes verified' if '--already-installed' in sys.argv[2:] else 'installed and APK bytes verified',
         'android':adb('shell','getprop','ro.build.version.release').strip(),
         'verified':['normal release startup','points group with two named members',
                     'user category with 1:3:1 ratio','task with 1:3 override for two beneficiaries and persisted picked photo',
