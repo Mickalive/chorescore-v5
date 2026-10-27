@@ -333,6 +333,10 @@ export class MaterializingSyncState implements SyncStateRepository {
     return this.inner.storeLocalRecords(householdId, collection, records);
   }
 
+  countDirtyRecords(householdId: string, collection: SyncCollection, sinceRevision: number): Promise<number> {
+    return this.inner.countDirtyRecords(householdId, collection, sinceRevision);
+  }
+
   getDirtyRecords(
     householdId: string,
     collection: SyncCollection,

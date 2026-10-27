@@ -1663,6 +1663,15 @@ export class SqliteSyncStateRepository extends SqliteDatabaseBound implements Sy
     // NOTE: cursor is NOT advanced — records still need to be pushed.
   }
 
+  async countDirtyRecords(householdId: string, collection: SyncCollection, sinceRevision: number): Promise<number> {
+    const db = await this.db();
+    const row = await db.getFirstAsync<{ count: number }>(
+      'SELECT COUNT(*) AS count FROM sync_records WHERE householdId = ? AND collection = ? AND revision > ?',
+      [householdId, collection, sinceRevision],
+    );
+    return row?.count ?? 0;
+  }
+
   async getDirtyRecords(
     householdId: string,
     collection: SyncCollection,

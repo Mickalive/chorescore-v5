@@ -200,6 +200,7 @@ export interface SyncStateRepository {
   /** Store local dirty records WITHOUT advancing the cursor (push path). */
   storeLocalRecords(householdId: string, collection: SyncCollection, records: SyncRecord[]): Promise<void>;
   /** Read pending records in revision order; limit bounds push-batch memory. */
+  countDirtyRecords(householdId: string, collection: SyncCollection, sinceRevision: number): Promise<number>;
   getDirtyRecords(householdId: string, collection: SyncCollection, sinceRevision: number, limit?: number): Promise<SyncRecord[]>;
 
   // ── Remote collaboration metadata (server revisions are distinct from

@@ -1059,6 +1059,14 @@ export class InMemorySyncStateRepository implements SyncStateRepository {
     // NOTE: cursor is NOT advanced — records still need to be pushed.
   }
 
+  async countDirtyRecords(householdId: string, collection: SyncCollection, sinceRevision: number): Promise<number> {
+    let count = 0;
+    for (const record of this.records.get(`${householdId}:${collection}`) ?? []) {
+      if (record.revision > sinceRevision) count++;
+    }
+    return count;
+  }
+
   async getDirtyRecords(
     householdId: string,
     collection: SyncCollection,

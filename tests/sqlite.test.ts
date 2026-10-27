@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { getDatabase, initializeSchema, applyV4ColumnMigrations } from '../src/infrastructure/local/SqliteStorage';
 import { createSqliteRepositories } from '../src/infrastructure/repositories/RepositoryFactory';
 import { createGroupWithMembers } from '../src/application/use-cases/groupMembers';
+import { RemoteSyncAdapter } from '../src/infrastructure/sync/RemoteSyncAdapter';
 import { completeTodoAtomic } from '../src/application/use-cases/completeTodoAtomic';
 
 let mockDatabase: any;
@@ -243,6 +244,14 @@ test('50 000 pending writes are read in bounded SQLite pages without skipping a 
     return rows;
   });
   try {
+    expect(await repos.syncState.countDirtyRecords(householdId, 'contribution_entries', 40_000)).toBe(10_000);
+    expect(await repos.syncState.countDirtyRecords('another-group', 'contribution_entries', 0)).toBe(0);
+    const hydrate = jest.spyOn(repos.syncState, 'getDirtyRecords').mockRejectedValue(new Error('Status must not hydrate outbox payloads'));
+    try {
+      const sync = new RemoteSyncAdapter({ getRepos: () => repos, getAccessToken: async () => null });
+      expect((await sync.getStatus(householdId)).pendingChanges).toBe(50_000);
+      expect(hydrate).not.toHaveBeenCalled();
+    } finally { hydrate.mockRestore(); }
     let cursor = 0;
     const seen = new Set<string>();
     for (let pageNumber = 0; pageNumber <= 500; pageNumber++) {

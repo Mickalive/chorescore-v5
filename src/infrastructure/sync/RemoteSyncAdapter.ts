@@ -1071,12 +1071,11 @@ export class RemoteSyncAdapter implements SyncGateway {
     let pendingChanges = 0;
     for (const collection of WRITABLE) {
       const cursor = await repos.syncState.getCursor(householdId, collection);
-      const records = await repos.syncState.getDirtyRecords(
+      pendingChanges += await repos.syncState.countDirtyRecords(
         householdId,
         collection,
         cursor?.lastRevision ?? 0,
       );
-      pendingChanges += records.length;
     }
     const pendingMutation = await repos.syncState.getPendingMutation(householdId);
     const conflicts = await repos.syncState.getConflicts(householdId);
