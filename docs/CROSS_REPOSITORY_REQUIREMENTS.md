@@ -27,7 +27,7 @@ Les instructions actuelles du propriétaire, PRODUCT.md et CODEX_MISSION.md V5 p
 | Design | V1 turquoise/jaune ; V2 chaud ; V3 graphite ; V4 retour chaud ; demande V5 : préférence V1 | Reprendre la qualité de composition V1 avec captures réelles, sans restaurer ses fonctions abandonnées ; densité et accessibilité V2/V4 |
 | Catégories | PersistentTask facultative puis catégories libres et ratios V4 | Aucun catalogue imposé ; défauts modifiables ; snapshots de ratios ; catégories renommables/supprimables sans réécrire le passé |
 | Identité | Anciens modes démo/test et identité locale | Compte stable ; rôle fait-par distinct du compte connecté ; aucun faux OAuth ou faux multi-appareil ; sessions de test réservées aux tests |
-| Exécution | Anciennes factories Builder/Auditor/Director/finalizer | OpenCode gratuit, un seul writer, même branche/PR ; pas de reconstruction de l'ancienne usine |
+| Exécution | Anciennes factories Builder/Auditor/Director/finalizer | Développement direct dans la même branche/PR ; automatisations GitHub et OpenCode arrêtées à la demande du propriétaire |
 
 ## Exigences cumulatives à terminer et prouver
 

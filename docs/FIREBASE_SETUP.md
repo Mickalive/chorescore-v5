@@ -8,6 +8,10 @@ Cette création ne prouve pas encore l'activation du fournisseur Google, la
 configuration Android/OAuth ni une connexion réelle depuis un téléphone. Aucun
 secret de compte de service ne doit être ajouté au dépôt.
 
+## Connexion guidée sans clé privée
+
+Le parcours manuel est décrit dans [FIREBASE_CONNECT.md](FIREBASE_CONNECT.md). Il s’exécute dans Google Cloud Shell avec le consentement du propriétaire, vérifie l’absence de facturation, conserve les données existantes, prépare le package/signataire Android et publie les règles. Il ne crée aucun workflow GitHub et ne transmet aucun jeton à la conversation.
+
 ## Trois niveaux à ne pas confondre
 
 | Niveau | État réel |
@@ -18,9 +22,7 @@ secret de compte de service ne doit être ajouté au dépôt.
 
 ## Paramètres publics transmis au build
 
-Le workflow Android transmet les quatre variables de dépôt suivantes (il ne
-contient aucun secret et n'est pas modifié par le worker, qui n'a pas la
-permission GitHub `workflows`) :
+Les valeurs suivantes sont fournies au build direct via un fichier `.env.local` ignoré par Git. Les workflows GitHub ont été supprimés :
 
 - `EXPO_PUBLIC_FIREBASE_PROJECT_ID` — facultatif : le code utilise déjà
   `chorescore-a75b1` par défaut, cette variable permet de surcharger ;
@@ -85,7 +87,7 @@ intermédiaire, pas une preuve d'auditabilité serveur.
    ```
    Cette commande exige une session Firebase CLI légitime ; elle n'est pas
    exécutée par le workflow et ne doit jamais embarquer de compte de service.
-6. Renseigner les variables de dépôt (jamais dans un fichier suivi) :
+6. Renseigner `.env.local` (jamais dans un fichier suivi) :
    - `EXPO_PUBLIC_FIREBASE_API_KEY`
    - `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID`
    - facultatif : `EXPO_PUBLIC_COLLAB_URL` (seulement après un déploiement
