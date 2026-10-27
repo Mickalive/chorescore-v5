@@ -53,17 +53,65 @@ jobs:
           if result.returncode:
             print('Native evidence not yet downloadable; original run:',failed)
             raise SystemExit(0)
-          xml=next(root.rglob('final-android.xml'),None)
-          if xml is not None:
-            nodes=[{key:node.attrib.get(key,'') for key in ['resource-id','text','content-desc','bounds','package']} for node in ET.fromstring(xml.read_text()).iter('node') if any(node.attrib.get(key) for key in ['resource-id','text','content-desc'])]
-            text=json.dumps({'run':failed,'nodes':nodes},ensure_ascii=True)
-            for index,offset in enumerate(range(0,len(text),3000)):
-              print('::notice title=Native XML::XML:'+str(index).zfill(4)+':'+text[offset:offset+3000].replace('%','%25'))
+          screens={}
+          for name in ['category-with-ratio-android.xml','final-android.xml']:
+            xml=next(root.rglob(name),None)
+            if xml is not None:
+              screens[name]=[{key:node.attrib.get(key,'') for key in ['resource-id','text','content-desc','bounds','package']} for node in ET.fromstring(xml.read_text()).iter('node') if any(node.attrib.get(key) for key in ['resource-id','text','content-desc'])]
+          text=json.dumps({'run':failed,'screens':screens},ensure_ascii=True)
+          for index,offset in enumerate(range(0,len(text),3000)):
+            print('::notice title=Native XML::XML:'+str(index).zfill(4)+':'+text[offset:offset+3000].replace('%','%25'))
           png=next(root.rglob('final-android.png'),None)
-          if png is not None and png.stat().st_size < 1024*1024:
-            data=base64.b64encode(png.read_bytes()).decode()
-            for index,offset in enumerate(range(0,len(data),3000)):
-              print('::notice title=Native screenshot::PNG:'+str(index).zfill(4)+':'+data[offset:offset+3000])
+          if png is not None and png.stat().st_size < 90000:
+            (Path(os.environ['RUNNER_TEMP'])/'chorescore-native-preview.b64').write_text(base64.b64encode(png.read_bytes()).decode())
+          PY
+      - name: Native screenshot evidence 1
+        if: inputs.firebase_only
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          file=Path(os.environ['RUNNER_TEMP'])/'chorescore-native-preview.b64'
+          data=file.read_text() if file.exists() else ''
+          for index in range(0,10):
+            part=data[index*3000:(index+1)*3000]
+            if part: print('::notice title=Native screenshot::PNG:'+str(index).zfill(4)+':'+part)
+          PY
+      - name: Native screenshot evidence 2
+        if: inputs.firebase_only
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          file=Path(os.environ['RUNNER_TEMP'])/'chorescore-native-preview.b64'
+          data=file.read_text() if file.exists() else ''
+          for index in range(10,20):
+            part=data[index*3000:(index+1)*3000]
+            if part: print('::notice title=Native screenshot::PNG:'+str(index).zfill(4)+':'+part)
+          PY
+      - name: Native screenshot evidence 3
+        if: inputs.firebase_only
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          file=Path(os.environ['RUNNER_TEMP'])/'chorescore-native-preview.b64'
+          data=file.read_text() if file.exists() else ''
+          for index in range(20,30):
+            part=data[index*3000:(index+1)*3000]
+            if part: print('::notice title=Native screenshot::PNG:'+str(index).zfill(4)+':'+part)
+          PY
+      - name: Native screenshot evidence 4
+        if: inputs.firebase_only
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          file=Path(os.environ['RUNNER_TEMP'])/'chorescore-native-preview.b64'
+          data=file.read_text() if file.exists() else ''
+          for index in range(30,40):
+            part=data[index*3000:(index+1)*3000]
+            if part: print('::notice title=Native screenshot::PNG:'+str(index).zfill(4)+':'+part)
           PY
       - uses: actions/setup-node@v4
         with:
