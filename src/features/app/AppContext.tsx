@@ -15,6 +15,7 @@ import { FirebaseAuthAdapter, firebaseAuthConfig } from '../../infrastructure/cl
  * instead of performing a full re-read + full replay on every focus.
  */
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { LocalAuthAdapter } from '../../infrastructure/local/LocalAuthAdapter';
 import { LocalSystemShareAdapter } from '../../infrastructure/local/LocalSystemShareAdapter';
@@ -120,7 +121,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [persistenceDegraded, setPersistenceDegraded] = useState(false);
   const [households, setHouseholds] = useState<Household[]>([]);
-  const [currentHouseholdId, setCurrentHouseholdId] = useState<string | null>(null);
+  const [currentHouseholdId, setCurrentHouseholdState] = useState<string | null>(null);
+  const selectedGroupRef = useRef<{ userId: string | null; id: string | null }>({ userId: null, id: null });
+  const selectionWritesRef = useRef<Promise<void>>(Promise.resolve());
   const [reposReady, setReposReady] = useState(false);
   const [authRestored, setAuthRestored] = useState(false);
 
@@ -199,6 +202,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       : new LocalAttachmentAdapter()) as AttachmentGateway,
     };
   })());
+
+  const setCurrentHouseholdId = useCallback((id: string | null) => {
+    const userId = servicesRef.current.auth.getCurrentUserId();
+    selectedGroupRef.current = { userId, id };
+    setCurrentHouseholdState(id);
+    if (!userId) return;
+    const key = `chorescore.selectedGroup.${userId}`;
+    selectionWritesRef.current = selectionWritesRef.current.then(() => id
+      ? AsyncStorage.setItem(key, id) : AsyncStorage.removeItem(key)).catch(() => undefined);
+  }, []);
 
   // ── Data-change signal (pub/sub) ──────────────────────────────
   // Lightweight mechanism so screens can notify each other of writes
@@ -306,14 +319,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       await sync.discoverGroups(uid).catch(() => undefined);
     }
     const loaded = await loadHouseholdsForUser(repos, uid);
+    await selectionWritesRef.current;
+    const remembered = await AsyncStorage.getItem(`chorescore.selectedGroup.${uid}`).catch(() => null);
+    // A load finishing after sign-out/account switch must not expose old groups.
+    if (servicesRef.current.auth.getCurrentUserId() !== uid) return;
+    const current = selectedGroupRef.current.userId === uid ? selectedGroupRef.current.id : null;
+    const selected = loaded.find(group => group.id === current)?.id
+      ?? loaded.find(group => group.id === remembered)?.id
+      ?? loaded[0]?.id ?? null;
+    selectedGroupRef.current = { userId: uid, id: selected };
     setHouseholds(loaded);
-    if (loaded.length > 0 && !currentHouseholdId) {
-      setCurrentHouseholdId(loaded[0].id);
-    }
+    setCurrentHouseholdState(selected);
     if (sync.isAvailable()) {
       for (const household of loaded) void sync.startSync(household.id);
     }
-  }, [currentUser, currentHouseholdId, ensureReposReady]);
+  }, [currentUser, ensureReposReady]);
 
   useEffect(() => {
     loadHouseholdsRef.current = loadHouseholds;
@@ -327,7 +347,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // A real or deterministic session must never fabricate household data.
     // New users land on an empty Groups screen and create their own group,
     // including the member names, through the normal creation flow.
-    setCurrentHouseholdId(null);
+    selectedGroupRef.current = { userId: user.userId, id: null };
+    setCurrentHouseholdState(null);
     await loadHouseholds(user.userId);
   }, [loadHouseholds]);
 

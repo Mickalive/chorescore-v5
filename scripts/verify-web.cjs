@@ -205,6 +205,51 @@ const server = createServer((req, res) => {
     await expect(page.getByText(/Historique ancien/)).toBeVisible();
     await screenshot('history-period-perpetual-balances-web');
 
+    // Real settings + custom compensation: French decimals, agreed rate,
+    // exact cents and persisted effects in both independent ledgers.
+    await page.goto(`http://127.0.0.1:${server.address().port}/`);
+    await button('Créer un groupe').click();
+    await field('groups.nameInput').fill('Compensation');
+    await field('groups.unit.points').click();
+    await field('groups.memberInput').fill('Bob');
+    await button('Créer').click();
+    await button('Ouvrir le groupe Compensation').click();
+    await field('add.taskLabel').fill('Travail partagé');
+    await field('add.taskValue').fill('6');
+    await button('Ajouter la tâche').click();
+    await expect(field('add.taskLabel')).toHaveValue('');
+    await page.getByText('Dépense', { exact: true }).filter({ visible: true }).click();
+    await field('add.expenseTitle').fill('Achat de Bob');
+    await field('add.expenseAmount').fill('6,00');
+    await field('add.expensePayer.1').click();
+    await button('Ajouter la dépense').click();
+    await expect(field('add.expenseTitle')).toHaveValue('');
+    await page.goto(`http://127.0.0.1:${server.address().port}/`);
+    await button('Options du groupe Compensation').click();
+    await field('groupOptions.compensationToggle').click();
+    await field('groupOptions.rateContribution').fill('1,5');
+    await field('groupOptions.rateMoney').fill('1,01');
+    await field('groupOptions.save').click();
+    await expect(field('groupOptions.save')).toBeEnabled();
+    await page.reload();
+    await expect(field('groupOptions.rateContribution')).toHaveValue('1.5');
+    await expect(field('groupOptions.rateMoney')).toHaveValue('1.01');
+    await page.goto(`http://127.0.0.1:${server.address().port}/`);
+    await button('Ouvrir le groupe Compensation').click();
+    await page.getByRole('tab', { name: 'Balances', exact: true }).click();
+    await field('balances.compensateButton').click();
+    await page.locator('[data-testid^="balances.compenserCreditor."]:visible').first().click();
+    await field('balances.compenserValue').fill('1,5');
+    await screenshot('compensation-preview-web');
+    await field('balances.compenserConfirm').click();
+    await expect(field('balances.compenserValue')).toBeHidden();
+    await expect(page.getByText('+ 1,5 pts', { exact: true })).toBeVisible();
+    await expect(page.getByText(/^- 1,99[\s\u00a0\u202f]CHF$/)).toBeVisible();
+    await page.reload();
+    await expect(page.getByText('+ 1,5 pts', { exact: true })).toBeVisible();
+    await expect(page.getByText(/^- 1,99[\s\u00a0\u202f]CHF$/)).toBeVisible();
+    await screenshot('compensation-persisted-web');
+
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     await button('Créer un groupe').click();
     await field('groups.nameInput').fill('À supprimer');
@@ -235,7 +280,7 @@ const server = createServer((req, res) => {
     await button('Open group Notre maison').waitFor();
     await screenshot('groups-en-small-web');
     assert.deepEqual(errors, []);
-    console.log('PASS: history periods with perpetual balances, category defaults and historical snapshots, custom task weights and exact-cent shares, both todo kinds; owner group deletion with exact-name confirmation, cancel and reload; arbitrary local dates/times, invalid-date rejection and cancellation; points group + pending named member; exact-cent expense; task and notes; Balances edit; reload persistence; todo completion; zero-sum balances; FR/EN preference persistence and small-screen layout.');
+    console.log('PASS: custom compensation and agreed French decimal rate with exact persisted cents; history periods with perpetual balances, category defaults and historical snapshots, custom task weights and exact-cent shares, both todo kinds; owner group deletion with exact-name confirmation, cancel and reload; arbitrary local dates/times, invalid-date rejection and cancellation; points group + pending named member; exact-cent expense; task and notes; Balances edit; reload persistence; todo completion; zero-sum balances; FR/EN preference persistence and small-screen layout.');
     console.log('Screenshots:', evidence, '(web only; not Android evidence)');
   } catch (error) {
     await screenshot('failure-web').catch(() => {});

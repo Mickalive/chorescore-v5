@@ -7,12 +7,12 @@
 - **Base transférée** : code applicatif V4, règles de partage des charges, doubles soldes, SQLite local, groupes, membres, catégories et À faire.
 - **Vérifié sur cette branche** : tests de domaine et repositories sur SQLite sur disque ; parcours dans le navigateur (groupe en points, tâche, dépense, édition depuis Balances, rechargement, complétion et langue). Voir [VERIFICATION.md](VERIFICATION.md) pour les limites exactes.
 - **Non validé** : synchronisation entre téléphones, invitations réelles, OAuth, photos, rappels, qualité visuelle finale. La présence d'un écran ou d'un adaptateur ne vaut pas fonctionnement.
-- **Mode de construction** : un APK de test Android ARM64 + x86_64 sur chaque PR et changement de main. Une compilation réussie n'est pas une validation produit.
+- **Mode de construction** : compilation et vérification directes. Les automatisations GitHub sont désactivées à la demande du propriétaire. Une compilation réussie n’est pas une validation produit.
 - **Attention aux données** : V5 est une application Android distincte (package `app.chorescore.v5`). Les données locales de V4 ne sont pas transférées automatiquement.
 
 ## Mission sur GitHub
 
-Suivre [l’issue nº 1](https://github.com/Mickalive/chorescore-v5/issues/1) et poursuivre la [PR unique nº 2](https://github.com/Mickalive/chorescore-v5/pull/2). [GITHUB_DELIVERY.md](GITHUB_DELIVERY.md) décrit le worker **OpenCode gratuit**, son lancement dans GitHub, les contrôles et les limites de gratuité. Aucun environnement Codex à publier. Une consigne publiée ne constitue pas à elle seule une exécution autonome.
+Suivre [l’issue nº 1](https://github.com/Mickalive/chorescore-v5/issues/1) et poursuivre la [PR unique nº 2](https://github.com/Mickalive/chorescore-v5/pull/2). [GITHUB_DELIVERY.md](GITHUB_DELIVERY.md) décrit les vérifications directes. Aucun worker GitHub ne poursuit le code en arrière-plan.
 
 ## Lire avant de coder
 
@@ -22,7 +22,7 @@ Suivre [l’issue nº 1](https://github.com/Mickalive/chorescore-v5/issues/1) et
 
 ## APK
 
-GitHub → Actions → **Android candidate APK** → dernier run réussi → télécharger `ChoreScore-V5-APK`. Signature de développement uniquement, pas de publication Play Store.
+Construire directement avec Java 17 et le SDK Android : `npm run prebuild`, puis `cd android && ./gradlew :app:assembleRelease`. Résultat : `android/app/build/outputs/apk/release/app-release.apk`. Signature de développement uniquement, pas de publication Play Store. Les anciens artefacts Actions restent des preuves historiques.
 
 ## Règle de construction
 
@@ -41,4 +41,4 @@ npm start
 
 Avec Chromium installé : `EXPO_NO_TELEMETRY=1 EXPO_OFFLINE=1 npm run test:web`. Ce scénario utilise la vraie base SQLite du navigateur ; il ne remplace pas les essais Android. `CHROME_BIN` et `EVIDENCE_DIR` sont facultatifs.
 
-La connexion Google peut être configurée selon [FIREBASE_SETUP.md](docs/FIREBASE_SETUP.md). Aucun projet Firebase n'est actuellement configuré. Le serveur de collaboration est implémenté et testé séparément, mais son déploiement et son raccordement au client restent à faire ; activer Google ne synchronise pas les groupes.
+La connexion Google peut être configurée selon [FIREBASE_SETUP.md](docs/FIREBASE_SETUP.md). Le projet confirmé est `chorescore-a75b1`. Les transports Firebase et HTTP et les reprises SQLite sont implémentés et testés, notamment avec les règles Firestore sur émulateur officiel. Les identifiants publics OAuth/Firebase et l’activation du projet de production ne sont pas disponibles dans cet environnement ; aucun essai entre deux vrais téléphones n’est revendiqué.

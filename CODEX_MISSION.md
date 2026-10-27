@@ -34,7 +34,7 @@ A. Read V3/V4 original requirements, inspect current code; compile a succinct re
 B. Redesign navigation and all main screens as coherent V1-inspired polished UI; create and inspect screenshots where tooling permits. Keep new design tokens and components modest/simple.
 C. Make every single-device core feature complete and reliable. Focus on actual SQLite transactions, splits, category defaults, editing balances, todo completion, FR/EN, proper native photos/sharing/reminders. Run runtime/manual or emulator tests. Do not advance a broken critical journey.
 D. Implement real authenticated multi-device collaboration behind properly configured cloud backend: cloud data model, security rules, robust invitation token/identity linking, sync revisions/conflict policies, private media storage. Use emulator and separate user tests; where account credentials are unavailable, complete independently implementable code, tests/rules and document *precisely* the external step needed to activate it.
-E. Test integrated Android app (and iOS if available), fix UX and regressions, produce release candidate APK from single workflow, and provide reproducible evidence by flow. Stop adding features only after all required flows meet acceptance.
+E. Test integrated Android app (and iOS if available), fix UX and regressions, build the release candidate APK directly without GitHub workflows, and provide reproducible evidence by flow. Stop adding features only after all required flows meet acceptance.
 
 ## Acceptance / proof
 - Build passes `npm ci`, `npm run typecheck`, Android Gradle APK, and relevant domain + integration tests.
