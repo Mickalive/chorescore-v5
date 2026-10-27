@@ -7,6 +7,7 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { Image, Text } from 'react-native';
 import { PhotoField } from '../src/features/entries/PhotoField';
+import { Button } from '../src/ui/components/Button';
 import type { Attachment } from '../src/domain/entities';
 
 const download = jest.fn();
@@ -92,4 +93,63 @@ test('a local photo keeps its own file reference and a failed download is shown 
     { uri: 'file:///local/photo.jpg' },
   ]);
   expect(tree.root.findAllByType(Text).some((node) => node.props.children === 'add.photoMissing')).toBe(true);
+});
+
+test('an uploaded photo keeps its private local file available offline without downloading it again', async () => {
+  download.mockRejectedValue(new Error('offline'));
+  let tree!: renderer.ReactTestRenderer;
+  await act(async () => {
+    tree = renderer.create(<PhotoField attachments={[{ ...remotePhoto(), ref: 'file:///private/photo.jpg' }]}
+      available onAdd={() => undefined} onRemove={() => undefined} />);
+  });
+  expect(download).not.toHaveBeenCalled();
+  expect(tree.root.findByType(Image).props.source).toEqual({ uri: 'file:///private/photo.jpg' });
+  await act(async () => tree.unmount());
+});
+
+test('a missing local copy falls back to its authorized cloud photo', async () => {
+  download.mockResolvedValue('file:///cache/restored.jpg');
+  let tree!: renderer.ReactTestRenderer;
+  await act(async () => {
+    tree = renderer.create(<PhotoField attachments={[{ ...remotePhoto(), ref: 'file:///missing.jpg' }]}
+      available onAdd={() => undefined} onRemove={() => undefined} />);
+  });
+  await act(async () => { tree.root.findByType(Image).props.onError(); });
+  expect(download).toHaveBeenCalledWith('household-1', 'att-remote');
+  expect(tree.root.findByType(Image).props.source).toEqual({ uri: 'file:///cache/restored.jpg' });
+  await act(async () => tree.unmount());
+});
+
+test('a received photo can be retried after reconnecting without reopening the entry', async () => {
+  download.mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce('file:///cache/online.jpg');
+  let tree!: renderer.ReactTestRenderer;
+  await act(async () => {
+    tree = renderer.create(<PhotoField attachments={[remotePhoto()]} available onAdd={() => undefined} onRemove={() => undefined} />);
+  });
+  const retry = tree.root.findAllByType(Button).find(button => button.props.title === 'action.retry')!;
+  expect(retry).toBeDefined();
+  await act(async () => retry.props.onPress());
+  expect(download).toHaveBeenCalledTimes(2);
+  expect(tree.root.findByType(Image).props.source).toEqual({ uri: 'file:///cache/online.jpg' });
+  await act(async () => tree.unmount());
+});
+
+test('several remote photos download once each, and resolved files never cross group boundaries', async () => {
+  download.mockImplementation(async (group, ref) => `file:///cache/${group}/${ref}.jpg`);
+  const attachments = [remotePhoto(), { ...remotePhoto(), id: 'second', remoteRef: 'second', ref: 'media:second' }];
+  let tree!: renderer.ReactTestRenderer;
+  await act(async () => {
+    tree = renderer.create(<PhotoField attachments={attachments} available onAdd={() => undefined} onRemove={() => undefined} />);
+  });
+  expect(download).toHaveBeenCalledTimes(2);
+  const app = mockUseApp();
+  mockUseApp.mockReturnValue({ ...app, currentHouseholdId: 'household-2' });
+  await act(async () => {
+    tree.update(<PhotoField attachments={attachments} available onAdd={() => undefined} onRemove={() => undefined} />);
+  });
+  expect(download).toHaveBeenCalledTimes(4);
+  expect(tree.root.findAllByType(Image).map(image => image.props.source.uri)).toEqual([
+    'file:///cache/household-2/att-remote.jpg', 'file:///cache/household-2/second.jpg',
+  ]);
+  await act(async () => tree.unmount());
 });

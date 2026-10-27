@@ -16,39 +16,56 @@ export function PhotoField({ attachments, available, onAdd, onRemove, testID }: 
   const { services, currentHouseholdId } = useApp();
   const [preview, setPreview] = useState<Attachment | null>(null);
   const [failedIds, setFailedIds] = useState<Set<string>>(new Set());
+  const [failedLocalRefs, setFailedLocalRefs] = useState<Set<string>>(new Set());
   const [resolvedRefs, setResolvedRefs] = useState<Record<string, string>>({});
+  const keyOf = (photo: Attachment): string =>
+    JSON.stringify([currentHouseholdId, photo.id, photo.remoteRef ?? photo.ref]);
+  const localSource = (photo: Attachment): string | null =>
+    !failedLocalRefs.has(keyOf(photo)) && (!photo.remoteRef || /^(file|content):/.test(photo.ref))
+      ? photo.ref : null;
   // A received photo only has a `media:` reference until the private file is
   // downloaded. Never hand that opaque reference to Image: on Android it fails
   // immediately and would strand the photo as "missing" even after download.
   const sourceOf = (photo: Attachment): string | null =>
-    resolvedRefs[photo.id] ?? (photo.remoteRef ? null : photo.ref);
+    localSource(photo) ?? resolvedRefs[keyOf(photo)] ?? null;
+
+  useEffect(() => { setPreview(null); }, [currentHouseholdId]);
 
   useEffect(() => {
     let cancelled = false;
     const remote = attachments.filter(
-      (photo) => photo.remoteRef && !resolvedRefs[photo.id] && !failedIds.has(photo.id),
+      (photo) => photo.remoteRef && !localSource(photo) && !resolvedRefs[keyOf(photo)] && !failedIds.has(keyOf(photo)),
     );
     if (!remote.length || !currentHouseholdId || !services.media.isAvailable()) return;
     void (async () => {
+      const loaded: Record<string, string> = {};
+      const failed: string[] = [];
       for (const photo of remote) {
         try {
           const uri = await services.media.download(currentHouseholdId, photo.remoteRef!);
-          if (!cancelled) setResolvedRefs((prev) => ({ ...prev, [photo.id]: uri }));
+          loaded[keyOf(photo)] = uri;
         } catch {
-          if (!cancelled) setFailedIds((prev) => new Set([...prev, photo.id]));
+          failed.push(keyOf(photo));
         }
+      }
+      // Publish once per batch: publishing each photo used to cancel this
+      // effect and start the remaining downloads again on every render.
+      if (!cancelled) {
+        if (Object.keys(loaded).length) setResolvedRefs(prev => ({ ...prev, ...loaded }));
+        if (failed.length) setFailedIds(prev => new Set([...prev, ...failed]));
       }
     })();
     return () => { cancelled = true; };
-  }, [attachments, currentHouseholdId, resolvedRefs, failedIds, services.media]);
+  }, [attachments, currentHouseholdId, resolvedRefs, failedIds, failedLocalRefs, services.media]);
 
   return (
     <View style={styles.field}>
       <Text variant="caption">{t('add.photoOptional')}</Text>
       {attachments.map(photo => {
         const uri = sourceOf(photo);
-        const remotePending = Boolean(photo.remoteRef) && !resolvedRefs[photo.id];
-        const failed = failedIds.has(photo.id) || (remotePending && !services.media.isAvailable());
+        const key = keyOf(photo);
+        const remotePending = Boolean(photo.remoteRef) && !uri;
+        const failed = failedIds.has(key) || (remotePending && !services.media.isAvailable());
         return (
         <View key={photo.id} style={styles.row}>
           <TouchableOpacity onPress={() => setPreview(photo)} accessibilityRole="button"
@@ -56,10 +73,19 @@ export function PhotoField({ attachments, available, onAdd, onRemove, testID }: 
             disabled={failed} accessibilityState={{ disabled: failed }}>
             {failed ? <Text variant="caption">{t('add.photoMissing')}</Text>
               : uri ? <Image source={{ uri }} style={styles.thumbnail}
-                resizeMode="cover" onError={() => setFailedIds(prev => new Set([...prev, photo.id]))} />
+                resizeMode="cover" onError={() => {
+                  if (localSource(photo) && photo.remoteRef) {
+                    setFailedLocalRefs(prev => new Set([...prev, key]));
+                  } else setFailedIds(prev => new Set([...prev, key]));
+                }} />
               : <Text variant="caption" color={colors.textMuted}>{t('state.loading')}</Text>}
           </TouchableOpacity>
           <Text variant="caption" style={styles.label}>{t('add.photoAttached')}</Text>
+          {failed && photo.remoteRef && services.media.isAvailable() ?
+            <Button title={t('action.retry')} variant="secondary" size="small" onPress={() => {
+              setFailedIds(prev => { const next = new Set(prev); next.delete(key); return next; });
+              setResolvedRefs(prev => { const next = { ...prev }; delete next[key]; return next; });
+            }} /> : null}
           <Button title={t('add.photoRemove')} variant="ghost" size="small" onPress={() => onRemove(photo.id)} />
         </View>
         );
