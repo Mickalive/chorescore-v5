@@ -110,7 +110,7 @@ function nodeFetch(url: URL, init: RequestInit = {}): Promise<Response> {
   });
 }
 
-function emulatorFetch(fail: { next: boolean }): typeof fetch {
+function emulatorFetch(fail: { next: boolean; loseCommitResponse: boolean }): typeof fetch {
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
     if (fail.next) {
       fail.next = false;
@@ -127,7 +127,12 @@ function emulatorFetch(fail: { next: boolean }): typeof fetch {
       url.protocol = 'http:';
       url.host = emulatorHost!;
     }
-    return nodeFetch(url, init);
+    const response = await nodeFetch(url, init);
+    if (response.ok && url.pathname.endsWith(':commit') && fail.loseCommitResponse) {
+      fail.loseCommitResponse = false;
+      throw new Error('commit response lost');
+    }
+    return response;
   }) as typeof fetch;
 }
 
@@ -140,11 +145,11 @@ interface Client {
   transport: FirebaseSyncTransport;
   firestore: FirestoreRestClient;
   cache: Map<string, Uint8Array>;
-  fail: { next: boolean };
+  fail: { next: boolean; loseCommitResponse: boolean };
 }
 
 async function client(uid: string): Promise<Client> {
-  const fail = { next: false };
+  const fail = { next: false, loseCommitResponse: false };
   const fetchImpl = emulatorFetch(fail);
   const getAccessToken = async () => token(uid);
   const firestore = new FirestoreRestClient({
@@ -315,7 +320,14 @@ describeEmulator('real Firestore rules and collaboration journey', () => {
     expect(pending).not.toBeNull();
     await restart(bob);
     expect(await bob.repos.syncState.getPendingMutation(hid)).toEqual(pending);
+    // The authority commits, but the phone never receives the acknowledgement.
+    // Restart again before retrying: only the durable operation id may dedupe it.
+    bob.fail.loseCommitResponse = true;
+    await expect(bob.sync.pushChanges(hid)).rejects.toThrow('commit response lost');
+    const committedRevision = await householdRevision(alice, hid);
+    await restart(bob);
     await bob.sync.pushChanges(hid);
+    expect(await householdRevision(alice, hid)).toBe(committedRevision);
     await alice.sync.pullChanges(hid);
     expect(await alice.repos.categories.getById(bobCategory.id)).toMatchObject({
       name: `Bob ${suffix}`,
