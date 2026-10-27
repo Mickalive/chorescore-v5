@@ -70,7 +70,7 @@ export function PhotoField({ attachments, available, onAdd, onRemove, testID }: 
         <View key={photo.id} style={styles.row}>
           <TouchableOpacity onPress={() => setPreview(photo)} accessibilityRole="button"
             accessibilityLabel={t('photo.openPreview')} style={styles.thumbnailButton}
-            disabled={failed} accessibilityState={{ disabled: failed }}>
+            disabled={failed || !uri} accessibilityState={{ disabled: failed || !uri }}>
             {failed ? <Text variant="caption">{t('add.photoMissing')}</Text>
               : uri ? <Image source={{ uri }} style={styles.thumbnail}
                 resizeMode="cover" onError={() => {
