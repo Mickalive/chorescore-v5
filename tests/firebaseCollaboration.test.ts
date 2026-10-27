@@ -15,6 +15,8 @@ import { calculateContributionBalances } from '../src/domain/calculations/contri
 import { calculateFinancialBalances } from '../src/domain/calculations/expenseLedger';
 import { InMemoryFirestore } from './helpers/InMemoryFirestore';
 import type { FirestoreValue } from '../src/infrastructure/firebase/FirestorePort';
+import { completeTodoAtomic } from '../src/application/use-cases/completeTodoAtomic';
+import { todoCompletionEntryId } from '../src/domain/services/todoCompletionId';
 
 const firestore = new InMemoryFirestore();
 let clock = Date.parse('2026-10-26T10:00:00.000Z');
@@ -52,6 +54,34 @@ async function pushAndPull(source: Client, target: Client, householdId: string):
   await source.sync.pushChanges(householdId);
   await target.sync.pullChanges(householdId);
 }
+
+test('offline task and expense completions sync atomically through the ordinary mobile outbox', async () => {
+  const alice = client('offline-alice', new InMemoryFirestore());
+  const { household, ownerMember } = await createGroupWithMembers(alice.repos, {
+    name: 'Offline completions', owner: { userId: alice.uid, displayName: 'Alice' },
+    memberNames: [], contributionUnit: 'points',
+  });
+  await alice.sync.ensureRemoteGroup(household.id, alice.uid);
+  for (const kind of ['task', 'expense'] as const) {
+    const todo = await alice.repos.todos.create({
+      householdId: household.id, title: kind, kind, status: 'todo',
+      assigneeMemberId: ownerMember.id, beneficiaryMemberIds: [ownerMember.id],
+      dueAt: null, reminderAt: null, notes: '', persistentTaskId: null,
+    });
+    await alice.sync.pushChanges(household.id);
+    await completeTodoAtomic(alice.repos, kind === 'task'
+      ? { todo, household, completedByUserId: alice.uid, performerMemberId: ownerMember.id,
+          beneficiaryMemberIds: [ownerMember.id], value: 6 }
+      : { todo, household, completedByUserId: alice.uid, paidByMemberId: ownerMember.id,
+          participantMemberIds: [ownerMember.id], amountMinor: 101, currency: 'CHF' });
+    await expect(alice.sync.pushChanges(household.id)).resolves.toBeUndefined();
+    await alice.sync.pullChanges(household.id);
+    expect(await alice.repos.todos.getById(todo.id)).toMatchObject({ status: 'completed' });
+    const ledger = kind === 'task' ? alice.repos.contributions : alice.repos.expenses;
+    expect(await ledger.getById(await todoCompletionEntryId(todo.id))).not.toBeNull();
+    expect((await alice.sync.getStatus(household.id)).error).toBeNull();
+  }
+});
 
 test('Firebase authority shares exact ledgers, links invited members and isolates tenants', async () => {
   const alice = client('alice');

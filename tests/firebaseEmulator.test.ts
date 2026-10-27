@@ -26,6 +26,8 @@ import { FirebaseSyncTransport } from '../src/infrastructure/firebase/FirebaseSy
 import { FirebaseMediaGateway } from '../src/infrastructure/firebase/FirebaseMediaGateway';
 import { FirestoreRestClient } from '../src/infrastructure/firebase/FirestoreRestClient';
 import { createGroupWithMembers } from '../src/application/use-cases/groupMembers';
+import { completeTodoAtomic } from '../src/application/use-cases/completeTodoAtomic';
+import { todoCompletionEntryId } from '../src/domain/services/todoCompletionId';
 
 let mockDirectory: string;
 const databases = new Set<string>();
@@ -332,6 +334,37 @@ describeEmulator('real Firestore rules and collaboration journey', () => {
     expect(await alice.repos.categories.getById(bobCategory.id)).toMatchObject({
       name: `Bob ${suffix}`,
     });
+
+    for (const kind of ['task', 'expense'] as const) {
+      const todo = await alice.repos.todos.create({
+        householdId: hid, title: `Offline ${kind}`, kind, status: 'todo',
+        assigneeMemberId: bobMember.id, beneficiaryMemberIds: [ownerMember.id, bobMember.id],
+        dueAt: null, reminderAt: null, notes: '', persistentTaskId: null,
+      });
+      await alice.sync.pushChanges(hid);
+      // A completed status without its deterministic ledger row stays invalid.
+      await expect(alice.transport.request('POST', `/groups/${hid}/mutations`, {
+        operationId: `bad-complete-${kind}-${suffix}`,
+        changes: [{ collection: 'todo_items', id: todo.id, baseVersion: 1,
+          value: { ...todo, status: 'completed', completedAt: new Date(clock).toISOString() } }],
+      })).rejects.toThrow('atomic completion');
+      await bob.sync.pullChanges(hid);
+      const received = (await bob.repos.todos.getById(todo.id))!;
+      await completeTodoAtomic(bob.repos, kind === 'task'
+        ? { todo: received, household, completedByUserId: bob.uid,
+            performerMemberId: bobMember.id, beneficiaryMemberIds: [ownerMember.id, bobMember.id], value: 6 }
+        : { todo: received, household, completedByUserId: bob.uid,
+            paidByMemberId: bobMember.id, participantMemberIds: [ownerMember.id, bobMember.id], amountMinor: 101, currency: 'CHF' });
+      await restart(bob);
+      await bob.sync.pushChanges(hid);
+      await alice.sync.pullChanges(hid);
+      expect(await alice.repos.todos.getById(todo.id)).toMatchObject({ status: 'completed' });
+      const ledger = kind === 'task' ? alice.repos.contributions : alice.repos.expenses;
+      expect(await ledger.getById(await todoCompletionEntryId(todo.id))).not.toBeNull();
+      const revision = await householdRevision(alice, hid);
+      await bob.sync.pushChanges(hid);
+      expect(await householdRevision(alice, hid)).toBe(revision);
+    }
 
     const remoteRef = `photo-${suffix}`;
     const withPhoto = await alice.repos.contributions.create({

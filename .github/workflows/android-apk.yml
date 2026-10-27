@@ -25,6 +25,9 @@ jobs:
     name: Firebase collaboration on persistent SQLite clients
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
     env:
       FIREBASE_PROJECT_ID: demo-chorescore-audit
       EXPO_PUBLIC_FIREBASE_PROJECT_ID: demo-chorescore-audit
@@ -32,6 +35,35 @@ jobs:
       CI: 'true'
     steps:
       - uses: actions/checkout@v4
+      - name: Inspect latest failed installed APK
+        if: inputs.firebase_only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import base64,json,os,subprocess,tempfile
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          repo=os.environ['GITHUB_REPOSITORY']
+          runs=json.loads(subprocess.check_output(['gh','run','list','--repo',repo,'--workflow','android-apk.yml','--event','workflow_dispatch','--limit','12','--json','databaseId,conclusion']))
+          failed=next((row['databaseId'] for row in runs if row['conclusion']=='failure'),None)
+          if failed is None: raise SystemExit(0)
+          root=Path(tempfile.mkdtemp(prefix='chorescore-native-review-'))
+          result=subprocess.run(['gh','run','download',str(failed),'--repo',repo,'--name','ChoreScore-Android-evidence','--dir',str(root)],capture_output=True,text=True)
+          if result.returncode:
+            print('Native evidence not yet downloadable; original run:',failed)
+            raise SystemExit(0)
+          xml=next(root.rglob('final-android.xml'),None)
+          if xml is not None:
+            nodes=[{key:node.attrib.get(key,'') for key in ['resource-id','text','content-desc','bounds','package']} for node in ET.fromstring(xml.read_text()).iter('node')]
+            text=json.dumps({'run':failed,'nodes':nodes},ensure_ascii=False)[:24000]
+            print('::notice title=Native XML::'+text.replace('%','%25').replace('\r','%0D').replace('\n','%0A'))
+          png=next(root.rglob('final-android.png'),None)
+          if png is not None and png.stat().st_size < 1024*1024:
+            data=base64.b64encode(png.read_bytes()).decode()
+            for index,offset in enumerate(range(0,len(data),14000)):
+              print('::notice title=Native screenshot::PNG:'+str(index).zfill(4)+':'+data[offset:offset+14000])
+          PY
       - uses: actions/setup-node@v4
         with:
           node-version: '24'

@@ -673,7 +673,7 @@ export class FirebaseSyncTransport {
         return previous.fields.response as unknown as MutationDoc['response'];
       }
       for (const change of changes) {
-        await this.validateChange(transaction, group, uid, change);
+        await this.validateChange(transaction, group, uid, change, changes);
       }
       const result = await this.append(transaction, group, changes, this.now());
       transaction.set(mutationPath, {
@@ -691,6 +691,7 @@ export class FirebaseSyncTransport {
     group: GroupDoc,
     uid: string,
     change: ClientChange,
+    pending: ClientChange[] = [],
   ): Promise<void> {
     requireId(change.id);
     requireCondition(WRITABLE.has(change.collection), 'Collection is not client-writable');
@@ -719,9 +720,16 @@ export class FirebaseSyncTransport {
     );
     requireCondition(JSON.stringify(value).length <= MAX_RECORD_BYTES, 'Record too large');
     const membership = group.access[uid];
+    // Validate references against the final atomic batch. Every staged record
+    // still passes its own validation and optimistic-version check before any
+    // write is appended; reading old versions above must remain authoritative.
+    const related = async (collection: string, id: string): Promise<Record<string, unknown> | null> => {
+      const staged = pending.find(item => item.collection === collection && item.id === id);
+      return staged ? staged.value : (await this.readRecord(transaction, groupId, collection, id))?.value ?? null;
+    };
     const member = async (memberId: unknown) => {
       requireId(memberId);
-      requireCondition(Boolean(await this.readRecord(transaction, groupId, 'members', memberId)), 'Unknown group member');
+      requireCondition(Boolean(await related('members', memberId)), 'Unknown group member');
     };
     const participants = async (values: unknown) => {
       requireCondition(
@@ -731,7 +739,7 @@ export class FirebaseSyncTransport {
       for (const participant of values) await member(participant);
     };
     if (value.categoryId) {
-      requireCondition(Boolean(await this.readRecord(transaction, groupId, 'categories', String(value.categoryId))), 'Unknown category');
+      requireCondition(Boolean(await related('categories', String(value.categoryId))), 'Unknown category');
     }
     if (value.note !== undefined) {
       requireCondition(typeof value.note === 'string' && value.note.length <= 10_000, 'Invalid note');
@@ -885,12 +893,12 @@ export class FirebaseSyncTransport {
       requireCondition(value.kind === 'task' || value.kind === 'expense', 'Invalid todo kind');
       if (value.status === 'completed') {
         const expected = `todo-${await sha256(change.id)}`;
-        const contribution = await this.readRecord(transaction, groupId, 'contribution_entries', expected);
-        const expense = await this.readRecord(transaction, groupId, 'expense_entries', expected);
-        requireCondition(Boolean(contribution?.value || expense?.value), 'Use atomic completion endpoint');
+        const contribution = await related('contribution_entries', expected);
+        const expense = await related('expense_entries', expected);
+        requireCondition(Boolean(contribution || expense), 'Use atomic completion endpoint');
         requireCondition(
-          (value.kind === 'task' && Boolean(contribution?.value)) ||
-            (value.kind === 'expense' && Boolean(expense?.value)),
+          (value.kind === 'task' && Boolean(contribution)) ||
+            (value.kind === 'expense' && Boolean(expense)),
           'Completion ledger mismatch',
         );
         requireCondition(Number.isFinite(Date.parse(String(value.completedAt))), 'Invalid completion date');
