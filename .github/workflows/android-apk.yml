@@ -16,7 +16,9 @@ permissions:
 
 concurrency:
   group: chorescore-v5-apk-${{ github.event.pull_request.number || github.ref }}${{ inputs.firebase_only && '-firebase' || '' }}
-  cancel-in-progress: true
+  # Keep an explicitly requested device acceptance running; a later candidate
+  # waits its turn. Superseded PR checks can still be cancelled automatically.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   firebase:
