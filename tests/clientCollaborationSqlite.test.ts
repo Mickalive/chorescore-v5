@@ -410,3 +410,36 @@ test('a revoked targeted invitation cannot link, and a fresh one keeps the same 
   await dave.sync.stopSync('*');
   await carol.sync.stopSync('*');
 });
+
+test('a batch boundary keeps unsent changes durable across restart and reaches the other SQLite client', async () => {
+  const alice = await openClient('alice', 'alice.db');
+  const bob = await openClient('bob', 'bob.db');
+  const { household, namedMembers } = await createGroupWithMembers(alice.repos, {
+    name: 'Deux lots persistants', owner: { userId: 'alice', displayName: 'Alice' },
+    memberNames: ['Bob'], contributionUnit: 'points',
+  });
+  const hid = household.id;
+  await alice.sync.ensureRemoteGroup(hid, alice.uid);
+  const invitation = await alice.sync.createInvitation(hid, namedMembers[0].id);
+  await bob.sync.acceptInvitation(invitation.token);
+  await alice.sync.pushChanges(hid);
+  expect((await alice.sync.getStatus(hid)).pendingChanges).toBe(0);
+  for (let index = 0; index < 121; index++) {
+    await alice.repos.categories.create({ householdId: hid, name: `Lot ${index}`, defaultTaskRatio: null });
+  }
+  await alice.sync.pushChanges(hid);
+  const remoteCount = () => serverCount("SELECT COUNT(*) AS n FROM records WHERE groupId=? AND collection='categories'", hid);
+  expect(remoteCount()).toBe(100);
+  expect((await alice.sync.getStatus(hid)).pendingChanges).toBe(21);
+  await restart(alice);
+  expect((await alice.sync.getStatus(hid)).pendingChanges).toBe(21);
+  await alice.sync.pushChanges(hid);
+  expect(remoteCount()).toBe(121);
+  expect((await alice.sync.getStatus(hid)).pendingChanges).toBe(0);
+  await bob.sync.pullChanges(hid);
+  const received = await bob.repos.categories.getByHousehold(hid);
+  expect(received).toHaveLength(121);
+  expect(new Set(received.map(category => category.name)).size).toBe(121);
+  await alice.sync.pushChanges(hid);
+  expect(remoteCount()).toBe(121);
+});
