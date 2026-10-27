@@ -162,6 +162,14 @@ def ime_top():
         frame=re.search(r'(?<![A-Za-z])(?:mFrame|frame)=\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]',block)
         if frame:
             top=int(frame.group(2))
+            # LatinIME on AOSP 35 owns a full-height transparent window.
+            # Its visible inset is relative to that window (24 + 548 = 572
+            # in the actual device dump), not a screen coordinate itself.
+            inset=re.search(r'mGivenVisibleInsets=\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]',block)
+            if inset:
+                visible_top=top+int(inset.group(2))
+                if top<=visible_top<int(frame.group(4)):
+                    top=visible_top
             if top>0:
                 return top
         # Visible IME without a parseable frame: keep a conservative boundary

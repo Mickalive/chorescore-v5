@@ -18,6 +18,7 @@ import { FirebaseAuthAdapter, firebaseAuthConfig } from '../../infrastructure/cl
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { LocalAuthAdapter } from '../../infrastructure/local/LocalAuthAdapter';
+import { adoptLocalGroups } from '../../application/use-cases/adoptLocalGroups';
 import { LocalSystemShareAdapter } from '../../infrastructure/local/LocalSystemShareAdapter';
 import { E2EShareAdapter } from '../../infrastructure/local/E2EShareAdapter';
 import { LocalNotificationAdapter } from '../../infrastructure/local/LocalNotificationAdapter';
@@ -384,6 +385,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [loadHouseholds]);
 
   const applySignedInUser = useCallback(async (user: AuthUser) => {
+    await ensureReposReady();
+    if (servicesRef.current.auth instanceof FirebaseAuthAdapter) {
+      await adoptLocalGroups(rawReposRef.current, servicesRef.current.secureStorage, user.userId,
+        () => servicesRef.current.auth.getCurrentUserId());
+    }
+    if (servicesRef.current.auth.getCurrentUserId() !== user.userId) return;
     // V3-06 REPAIR: Always wrap from the RAW repos, never from an
     // already-scoped set. This prevents stale callerUserId from a
     // previous session leaking into the new session's scope.
@@ -394,7 +401,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     selectedGroupRef.current = { userId: user.userId, id: null };
     setCurrentHouseholdState(null);
     await loadHouseholds(user.userId);
-  }, [loadHouseholds]);
+  }, [loadHouseholds, ensureReposReady]);
 
   // Keep the latest session-activation callback reachable from the one-shot
   // restore effect without making that effect re-run on every render.

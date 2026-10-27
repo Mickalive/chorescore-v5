@@ -10,6 +10,8 @@ import { createSqliteRepositories } from '../src/infrastructure/repositories/Rep
 import { createGroupWithMembers } from '../src/application/use-cases/groupMembers';
 import { RemoteSyncAdapter } from '../src/infrastructure/sync/RemoteSyncAdapter';
 import { completeTodoAtomic } from '../src/application/use-cases/completeTodoAtomic';
+import { adoptLocalGroups } from '../src/application/use-cases/adoptLocalGroups';
+
 
 let mockDatabase: any;
 jest.mock('expo-sqlite', () => ({ openDatabaseAsync: async () => mockDatabase }));
@@ -304,3 +306,65 @@ test('future reminder query excludes 50 000 completed rows at the SQL boundary',
     native.prepare('DELETE FROM todo_items WHERE householdId=? OR id=?').run(householdId, 'future-another-group');
   }
 }, 30_000);
+
+test('local groups survive first Google sign-in without replaying history or adopting other accounts', async () => {
+  const repos = (await createSqliteRepositories())!;
+  const local = 'local-device-migration';
+  const storage = { getItem: async () => local, setItem: async () => {}, deleteItem: async () => {}, clear: async () => {} };
+  const original = await createGroupWithMembers(repos, { name: 'Avant Google',
+    owner: { userId: local, displayName: 'Moi' }, memberNames: ['Camille'], contributionUnit: 'points' });
+  const published = await createGroupWithMembers(repos, { name: 'Déjà publié',
+    owner: { userId: local, displayName: 'Moi' }, memberNames: [], contributionUnit: 'points' });
+  await repos.syncState.setGroupState({ householdId: published.household.id, remoteKnown: true,
+    lastRevision: 1, lastSyncedAt: null, lastError: null });
+  const stranger = await createGroupWithMembers(repos, { name: 'Autre compte',
+    owner: { userId: 'local-another-device', displayName: 'Autre' }, memberNames: [], contributionUnit: 'points' });
+  const todo = await repos.todos.create({ householdId: original.household.id, title: 'Ancienne dépense',
+    kind: 'expense', status: 'todo', assigneeMemberId: original.ownerMember.id,
+    beneficiaryMemberIds: [original.ownerMember.id, original.namedMembers[0].id],
+    dueAt: null, reminderAt: null, notes: 'Conserver', persistentTaskId: null });
+  await completeTodoAtomic(repos, { todo, household: original.household, completedByUserId: local,
+    paidByMemberId: original.ownerMember.id, participantMemberIds: todo.beneficiaryMemberIds,
+    amountMinor: 101, currency: 'CHF' });
+  const history = await repos.expenses.getByHousehold(original.household.id);
+  const members = await repos.members.getByHousehold(original.household.id);
+  const oldMembership = await repos.memberships.getByUserAndHousehold(local, original.household.id);
+  expect(await repos.memberships.getByUserAndHousehold('google-real', original.household.id)).toBeNull();
+
+  const broken = jest.spyOn(repos.syncState, 'storeLocalRecords').mockRejectedValueOnce(new Error('disk full'));
+  await expect(adoptLocalGroups(repos, storage, 'google-real', () => 'google-real')).rejects.toThrow('disk full');
+  broken.mockRestore();
+  expect((await repos.households.getById(original.household.id))?.ownerId).toBe(local);
+  expect(await repos.members.getByHousehold(original.household.id)).toEqual(members);
+
+  let activeAccount: string | null = 'google-real';
+  const updateMember = repos.members.update.bind(repos.members);
+  const changedAccount = jest.spyOn(repos.members, 'update').mockImplementationOnce(async (id, data) => {
+    const result = await updateMember(id, data);
+    activeAccount = null;
+    return result;
+  });
+  await expect(adoptLocalGroups(repos, storage, 'google-real', () => activeAccount)).rejects.toThrow('Account changed');
+  changedAccount.mockRestore();
+  expect((await repos.households.getById(original.household.id))?.ownerId).toBe(local);
+  expect(await repos.members.getByHousehold(original.household.id)).toEqual(members);
+  expect(await repos.memberships.getByUserAndHousehold(local, original.household.id)).toEqual(oldMembership);
+
+  await adoptLocalGroups(repos, storage, 'google-real', () => 'google-real');
+  native.close(); native = new sqlite.DatabaseSync(path);
+  expect((await repos.households.getById(original.household.id))?.ownerId).toBe('google-real');
+  expect(await repos.memberships.getByUserAndHousehold('google-real', original.household.id))
+    .toEqual({ ...oldMembership, userId: 'google-real' });
+  expect(await repos.members.getByHousehold(original.household.id)).toEqual(members.map(member =>
+    member.id === original.ownerMember.id ? { ...member, userId: 'google-real' } : member));
+  expect(await repos.expenses.getByHousehold(original.household.id)).toEqual(history);
+  expect((await repos.todos.getById(todo.id))?.status).toBe('completed');
+  expect((await repos.households.getById(published.household.id))?.ownerId).toBe(local);
+  expect((await repos.households.getById(stranger.household.id))?.ownerId).toBe('local-another-device');
+  const dirty = await repos.syncState.getDirtyRecords(original.household.id, 'memberships', 0);
+  expect(JSON.parse(dirty.find(record => record.id === oldMembership!.id)!.payload!))
+    .toMatchObject({ id: oldMembership!.id, userId: 'google-real' });
+  await adoptLocalGroups(repos, storage, 'second-google', () => 'second-google');
+  expect((await repos.households.getById(original.household.id))?.ownerId).toBe('google-real');
+  await expect(adoptLocalGroups(repos, storage, 'signed-out', () => null)).rejects.toThrow('Account changed');
+});

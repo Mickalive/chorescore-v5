@@ -33,6 +33,21 @@ def driver():
 
 
 class SelectorBehavior(unittest.TestCase):
+    def test_aosp_full_height_ime_uses_visible_content_insets(self):
+        env = driver()
+        # Actual AOSP 35 window dump: transparent IME window starts at y=24,
+        # while LatinIME's visible/touchable keyboard starts at y=572.
+        env['adb'] = Mock(return_value='''
+  Window #6 Window{c612ce6 u0 InputMethod}:
+    mIsImWindow=true
+    mViewVisibility=0x0 mHaveFrame=true
+    mGivenContentInsets=[0,548][0,0] mGivenVisibleInsets=[0,548][0,0]
+    mHasSurface=true
+    Frames: parent=[0,24][412,915] display=[0,24][412,915] frame=[0,24][412,915]
+    isVisible=true
+''')
+        self.assertEqual(env['ime_top'](), 572)
+
     def test_reusing_an_installed_candidate_requires_the_exact_apk_digest(self):
         env = driver()
         with tempfile.TemporaryDirectory() as folder:
