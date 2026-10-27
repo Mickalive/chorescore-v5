@@ -27,6 +27,7 @@ import { closeDatabase } from '../src/infrastructure/local/SqliteStorage';
 import { RemoteSyncAdapter } from '../src/infrastructure/sync/RemoteSyncAdapter';
 import { completeTodoAtomic } from '../src/application/use-cases/completeTodoAtomic';
 import { createGroupWithMembers } from '../src/application/use-cases/groupMembers';
+import { adoptLocalGroups } from '../src/application/use-cases/adoptLocalGroups';
 import { calculateContributionBalances } from '../src/domain/calculations/contributionLedger';
 
 // Two real SQLite files, RSA token signing and a server restart are slower on
@@ -148,6 +149,8 @@ afterAll(async () => {
   await closeDatabase('completion-a.db').catch(() => undefined);
   await closeDatabase('completion-b.db').catch(() => undefined);
   await closeDatabase('recovery.db').catch(() => undefined);
+  await closeDatabase('adopt-a.db').catch(() => undefined);
+  await closeDatabase('adopt-b.db').catch(() => undefined);
   rmSync(directory, { recursive: true, force: true });
 });
 
@@ -448,6 +451,41 @@ test('a batch boundary keeps unsent changes durable across restart and reaches t
   expect(remoteCount()).toBe(121);
 });
 
+
+test('offline group adopted by Google reaches a second SQLite client without recreating members or ledgers', async () => {
+  const a = await openClient('adopt-a', 'adopt-a.db');
+  const b = await openClient('adopt-b', 'adopt-b.db');
+  const localId = 'local-before-google';
+  const { household, ownerMember, namedMembers } = await createGroupWithMembers(a.repos, {
+    name: 'Créé sans compte', owner: { userId: localId, displayName: 'Moi' },
+    memberNames: ['Bob'], contributionUnit: 'points',
+  });
+  const hid = household.id;
+  const ids = [ownerMember.id, namedMembers[0].id];
+  const todo = await a.repos.todos.create({ householdId: hid, title: 'Payé avant Google', kind: 'expense',
+    status: 'todo', assigneeMemberId: ids[0], beneficiaryMemberIds: ids,
+    dueAt: null, reminderAt: null, notes: 'Origine locale', persistentTaskId: null });
+  await completeTodoAtomic(a.repos, { todo, household, paidByMemberId: ids[0], amountMinor: 101,
+    currency: 'CHF', participantMemberIds: ids, completedByUserId: localId });
+  const oldEntry = (await a.repos.expenses.getByHousehold(hid))[0];
+  await adoptLocalGroups(a.repos, { getItem: async () => localId, setItem: async () => {},
+    deleteItem: async () => {}, clear: async () => {} }, a.uid, () => a.uid);
+  await restart(a);
+  await a.sync.pushChanges(hid);
+  const invitation = await a.sync.createInvitation(hid, ids[1]);
+  await b.sync.acceptInvitation(invitation.token);
+  await b.sync.pullChanges(hid);
+  expect(await b.repos.members.getByHousehold(hid)).toEqual(expect.arrayContaining([
+    expect.objectContaining({ id: ids[0], userId: a.uid }), expect.objectContaining({ id: ids[1], userId: b.uid }),
+  ]));
+  expect(await b.repos.members.getByHousehold(hid)).toHaveLength(2);
+  expect(await b.repos.expenses.getByHousehold(hid)).toEqual([expect.objectContaining({
+    id: oldEntry.id, amountMinor: 101, currency: 'CHF', paidByMemberId: ids[0],
+    participantMemberIds: ids, createdBy: a.uid,
+  })]);
+  expect(await b.repos.todos.getById(todo.id)).toMatchObject({ status: 'completed' });
+  expect((await a.sync.getStatus(hid)).conflicts).toBe(0);
+});
 
 test('ordinary HTTP outbox synchronizes both local todo completions with their new category', async () => {
   const a = await openClient('completion-a', 'completion-a.db');
