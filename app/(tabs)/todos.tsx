@@ -1,7 +1,7 @@
 import { DateTimeField } from '../../src/ui/components/DateTimeField';
 import { CategoryPicker } from '../../src/features/entries/CategoryPicker';
 import { PhotoField } from '../../src/features/entries/PhotoField';
-import { todoNotificationId } from '../../src/infrastructure/local/LocalNotificationAdapter';
+import { todoNotificationId, RemindersDisabledError } from '../../src/infrastructure/local/LocalNotificationAdapter';
 /**
  * ChoreScore V4 — À faire Tab
  *
@@ -286,8 +286,8 @@ export default function TodosScreen() {
       setView('list');
       await loadData();
       emitDataChange('todo', currentHouseholdId);
-    } catch {
-      Alert.alert(t('state.error'), t('todos.errorCreate'));
+    } catch (error) {
+      Alert.alert(t('state.error'), t(error instanceof RemindersDisabledError ? 'options.remindersDisabled' : 'todos.errorCreate'));
     } finally {
       submittingRef.current = false;
       setIsSubmitting(false);

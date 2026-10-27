@@ -132,7 +132,7 @@ const server = createServer((req, res) => {
     await button('Ajouter la tâche').click();
     await expect(field('add.taskLabel')).toHaveValue('');
     await page.getByRole('tab', { name: 'Balances', exact: true }).click();
-    await expect(page.getByText('+ 19 points', { exact: true })).toBeVisible();
+    await expect(page.getByText('+ 19 pts', { exact: true })).toBeVisible();
     await page.getByRole('tab', { name: 'Ajouter', exact: true }).click();
     await page.getByText('Ratio par défaut', { exact: true }).last().click();
     weights = page.getByPlaceholder('1', { exact: true }).filter({visible:true});
@@ -140,7 +140,7 @@ const server = createServer((req, res) => {
     await button('Enregistrer').click();
     await page.getByRole('tab', { name: 'Balances', exact: true }).click();
     // Changing today's default must not rewrite the previous entry's split.
-    await expect(page.getByText('+ 19 points', { exact: true })).toBeVisible();
+    await expect(page.getByText('+ 19 pts', { exact: true })).toBeVisible();
     await page.getByRole('tab', { name: 'Ajouter', exact: true }).click();
     await field('add.taskLabel').fill('Tâche personnalisée');
     await field('add.taskValue').fill('4');
@@ -175,11 +175,11 @@ const server = createServer((req, res) => {
     await button('Confirmer').click();
     await button('Nouvel élément').waitFor();
     await page.getByRole('tab', { name: 'Balances', exact: true }).click();
-    await expect(page.getByText('+ 22 points', { exact: true })).toBeVisible();
-    await expect(page.getByText('+ CHF 2.01', { exact: true })).toBeVisible();
+    await expect(page.getByText('+ 22 pts', { exact: true })).toBeVisible();
+    await expect(page.getByText(/^\+ 2,01[\s\u00a0\u202f]CHF$/)).toBeVisible();
     await page.reload();
-    await expect(page.getByText('+ 22 points', { exact: true })).toBeVisible();
-    await expect(page.getByText('+ CHF 2.01', { exact: true })).toBeVisible();
+    await expect(page.getByText('+ 22 pts', { exact: true })).toBeVisible();
+    await expect(page.getByText(/^\+ 2,01[\s\u00a0\u202f]CHF$/)).toBeVisible();
     await screenshot('custom-splits-web');
 
     await page.goto(`http://127.0.0.1:${server.address().port}/`);

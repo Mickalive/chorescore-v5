@@ -7,7 +7,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, TouchableOpacity, Switch } from 'react-native';
+import { View, StyleSheet, TouchableOpacity, Switch, Alert, Linking } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import { ScreenContainer } from '../src/ui/components/ScreenContainer';
@@ -57,17 +57,50 @@ function SettingRow({
 
 export default function GeneralOptionsScreen() {
   const router = useRouter();
-  const { currentUser, signOut, services } = useApp();
+  const { currentUser, signOut, services, households, repos } = useApp();
   const { t, locale, setLocale } = useI18n();
   const [privacyConsent, setPrivacyConsent] = useState(false);
+  const [remindersEnabled, setRemindersEnabled] = useState<boolean | null>(null);
+  const [savingReminders, setSavingReminders] = useState(false);
 
   useEffect(() => {
+    let active = true;
+    services.notifications.getEnabled().then(enabled => {
+      if (active) setRemindersEnabled(enabled);
+    }).catch(() => {
+      if (active) Alert.alert(t('state.error'), t('options.notificationsError'));
+    });
     AsyncStorage.getItem(PRIVACY_CONSENT_KEY)
       .then((value) => setPrivacyConsent(value === 'true'))
       .catch(() => {
         // Preference is best-effort.
       });
-  }, []);
+    return () => { active = false; };
+  }, [services.notifications, t]);
+
+  const handleRemindersChange = async (enabled: boolean) => {
+    if (savingReminders) return;
+    setSavingReminders(true);
+    try {
+      const todos = enabled
+        ? (await Promise.all(households.map(household => repos.todos.getByHousehold(household.id)))).flat()
+        : [];
+      await services.notifications.setEnabled(enabled, todos
+        .filter(todo => todo.status !== 'completed' && todo.reminderAt && Date.parse(todo.reminderAt) > Date.now())
+        .map(todo => ({
+          title: t('todos.reminderNotificationTitle', { title: todo.title }),
+          body: todo.notes || t('todos.reminderNotificationBody'),
+          scheduledAt: todo.reminderAt!,
+          data: { todoId: todo.id },
+        })));
+      setRemindersEnabled(enabled);
+    } catch {
+      setRemindersEnabled(await services.notifications.getEnabled().catch(() => false));
+      Alert.alert(t('state.error'), t('options.notificationsError'));
+    } finally {
+      setSavingReminders(false);
+    }
+  };
 
   const handleLocale = (next: SupportedLocale) => {
     setLocale(next);
@@ -144,14 +177,21 @@ export default function GeneralOptionsScreen() {
         {t('options.notifications')}
       </Text>
       <Card style={styles.card}>
-        <SettingRow
-          label={
-            services.notifications.isAvailable()
-              ? t('options.notificationsAvailable')
-              : t('options.notificationsUnavailable')
-          }
-          last
-        />
+        {services.notifications.isAvailable() ? <>
+          <View style={[styles.row, styles.rowLast]}>
+            <Text variant="body" style={styles.consentLabel}>{t('options.remindersEnabled')}</Text>
+            <Switch testID="options.remindersEnabled"
+              accessibilityLabel={t('options.remindersEnabled')}
+              value={remindersEnabled === true}
+              disabled={savingReminders || remindersEnabled === null}
+              onValueChange={handleRemindersChange}
+              trackColor={{ false: colors.border, true: colors.primaryLight }}
+              thumbColor={remindersEnabled ? colors.primary : colors.surface} />
+          </View>
+          <Text variant="caption" style={styles.privacyBody}>{t('options.remindersHelp')}</Text>
+          <Button title={t('options.notificationSettings')} variant="ghost"
+            onPress={() => { void Linking.openSettings().catch(() => Alert.alert(t('state.error'), t('options.notificationsError'))); }} />
+        </> : <SettingRow label={t('options.notificationsUnavailable')} last />}
       </Card>
 
       <Text variant="caption" style={styles.sectionLabel}>

@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 const source = readFileSync(
   join(__dirname, '..', 'scripts', 'android', 'verify-device.py'),
@@ -14,6 +15,12 @@ function functionBody(name: string): string {
 }
 
 describe('Android journey driver', () => {
+  it('finds and taps real XML leaf controls instead of treating them as absent', () => {
+    execFileSync('python3', [join(__dirname, '..', 'scripts', 'android', 'test_verify_device.py')], {
+      timeout: 10_000,
+      stdio: 'pipe',
+    });
+  });
   it('never dismisses the keyboard with BACK or ESCAPE', () => {
     const hide = functionBody('hide_keyboard');
     expect(hide).not.toMatch(/KEYCODE_(BACK|ESCAPE)/);

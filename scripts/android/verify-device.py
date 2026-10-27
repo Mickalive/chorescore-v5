@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 import time
+import traceback
 import xml.etree.ElementTree as ET
 
 APK = Path(sys.argv[1]).resolve()
@@ -294,7 +295,7 @@ def _scroll_find_pass(label,resource,partial,attempts):
     for _ in range(attempts):
         root=hierarchy()
         node=find_visible(root,label,resource,partial)
-        if node:return node
+        if node is not None:return node
         # The control exists but is covered by the IME: dismiss the keyboard
         # first instead of tapping Gboard. Swiping while it is visible cannot
         # move the form and may swipe-type into the focused field.
@@ -312,14 +313,14 @@ def scroll_find(label=None,resource=None,partial=False):
     # window hierarchy while the app is still running. Dismiss only the known
     # system processes, never a ChoreScore ANR, and keep the product assertion.
     node=_scroll_find_pass(label,resource,partial,12)
-    if node:return node
+    if node is not None:return node
     # A keyboard-dismiss drag or an earlier form action can leave the target
     # just above the viewport. Swiping only downwards would then never find it
     # (run 40328753105: add.taskValue was missed after add.taskLabel). Rewind
     # to the start of the form and search in the other direction before failing.
     scroll_top()
     node=_scroll_find_pass(label,resource,partial,16)
-    if node:return node
+    if node is not None:return node
     raise AssertionError(f'Control absent after scrolling: {resource or label}')
 
 def scroll_to(label=None,resource=None,partial=False):
@@ -409,7 +410,7 @@ def category_chip(name):
 def tap_category(name):
     for _ in range(10):
         node=category_chip(name)
-        if node:
+        if node is not None:
             tap_node(node)
             return
         swipe()
@@ -417,7 +418,7 @@ def tap_category(name):
     scroll_top()
     for _ in range(16):
         node=category_chip(name)
-        if node:
+        if node is not None:
             tap_node(node)
             return
         swipe()
@@ -579,7 +580,7 @@ def select_photo():
                 time.sleep(.8)
                 continue
             node=picker_file_node(PHOTO_NAME)
-            if node:
+            if node is not None:
                 tap_node(node)
                 # Wait until the picker closes and the form exposes the chip.
                 # A second tap on the corner preview icon used to leave the
@@ -612,6 +613,7 @@ def select_photo():
 def start():
     adb('shell','am','start','-W','-n',PACKAGE+'/.MainActivity',timeout=55)
     time.sleep(2)
+    last_error=None
     for _ in range(20):
         try:
             root=hierarchy()
@@ -620,15 +622,10 @@ def start():
             # If we're back on launcher, relaunch the app.
             if candidates(root,label='Créer un groupe') or candidates(root,resource='groups.newButton'):
                 return
-            if any('ChoreScore'==n.attrib.get('text') and '/MainActivity' in adb('shell','dumpsys','window','windows') for _ in [0]):
-                pass
-        except Exception:
-            pass
+        except Exception as error:
+            last_error=error
         time.sleep(1)
-    try:
-        start()
-    except Exception:
-        pass
+    raise AssertionError(f'Groups screen did not open after launch: {last_error or "not visible"}')
 
 def open_group():
     tap('Ouvrir le groupe Maison CI')
@@ -804,6 +801,34 @@ try:
     else:raise AssertionError('Native Android share chooser did not open')
     hierarchy();screenshot('native-share-android')
     adb('shell','input','keyevent','KEYCODE_BACK')
+
+    # General preferences must actually control native scheduling and survive
+    # process death; a label saying "available" is not a preference.
+    adb('shell','am','force-stop',PACKAGE)
+    start()
+    scroll_to('Options générales')
+    switch=locate(resource='options.remindersEnabled')
+    assert switch.attrib.get('checked')=='true','Reminders should start enabled'
+    tap_node(switch)
+    deadline=time.monotonic()+20
+    while time.monotonic()<deadline:
+        switch=locate(resource='options.remindersEnabled')
+        if switch.attrib.get('checked')=='false':break
+        time.sleep(.3)
+    else:raise AssertionError('Reminder opt-out was not applied')
+    adb('shell','am','force-stop',PACKAGE)
+    start()
+    scroll_to('Options générales')
+    switch=locate(resource='options.remindersEnabled')
+    assert switch.attrib.get('checked')=='false','Reminder opt-out lost after restart'
+    tap_node(switch)
+    deadline=time.monotonic()+20
+    while time.monotonic()<deadline:
+        switch=locate(resource='options.remindersEnabled')
+        if switch.attrib.get('checked')=='true':break
+        time.sleep(.3)
+    else:raise AssertionError('Reminder opt-in failed')
+    hierarchy();screenshot('notification-options-android')
     (EVIDENCE/'result.json').write_text(json.dumps({
         'status':'passed','apk_sha256':hashlib.sha256(APK.read_bytes()).hexdigest(),
         'android':adb('shell','getprop','ro.build.version.release').strip(),
@@ -812,11 +837,20 @@ try:
                     'expense with cent-exact custom shares','task and expense todos completed by double tap',
                     'reminder permission requested through the real scheduler',
                     'real local reminder notification observed in the Android shade','both ledger entries after force-stop and relaunch',
-                    'native edit and delete from Balances','actual Android share chooser'],
+                    'native edit and delete from Balances','actual Android share chooser',
+                    'reminder preference disabled, persisted after restart and enabled again'],
         'partially_verified':['reminder scheduled through the native API; delivery timing is controlled by Android'],
         'not_verified':['real Firebase sign-in','two-phone collaboration','custom compensation on device'],
     },ensure_ascii=False,indent=2))
     print('PASS: installed release APK: category/ratio, custom splits, photo, two todos, edit/delete, restart, share',flush=True)
+except Exception:
+    detail=traceback.format_exc()
+    (EVIDENCE/'failure.txt').write_text(detail)
+    # Make the actual Python assertion readable through the checks API as well
+    # as the downloadable evidence, without flattening it into an exit code.
+    escaped=detail.replace('%','%25').replace('\r','%0D').replace('\n','%0A')
+    print('::error title=Android acceptance failure::'+escaped,flush=True)
+    raise
 finally:
     try:(EVIDENCE/'logcat.txt').write_text(adb('logcat','-d','-t','1500',timeout=20))
     except Exception:pass

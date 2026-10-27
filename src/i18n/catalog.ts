@@ -407,12 +407,17 @@ export const CATALOG: Record<SupportedLocale, LocaleCatalog> = {
     'options.languageFrench': 'Français',
     'options.languageEnglish': 'English',
     'options.notifications': 'Notifications',
+    'options.remindersEnabled': 'Rappels des éléments à faire',
+    'options.remindersHelp': 'Désactiver annule les rappels programmés sur cet appareil. Réactiver rétablit les rappels futurs des éléments non terminés.',
+    'options.remindersDisabled': 'Les rappels sont désactivés. Activez-les dans Options générales → Notifications, ou retirez le rappel de cet élément.',
+    'options.notificationSettings': 'Autorisations de cet appareil',
+    'options.notificationsError': 'Impossible de modifier les rappels. Vérifiez les autorisations de notification de cet appareil, puis réessayez.',
     'options.notificationsAvailable': 'Disponibles sur cet appareil',
     'options.notificationsUnavailable': 'Non configurées sur ce build',
     'options.privacy': 'Confidentialité',
     'options.privacyDataTitle': 'Données et recherche',
     'options.privacyBody':
-      'Les données nécessaires au fonctionnement restent sur votre appareil. Aucun texte libre, note ou photo ne quitte l’appareil vers un produit de recherche.',
+      'Vos données sont conservées sur cet appareil. Si vous activez la collaboration, les données du groupe et ses photos sont aussi synchronisées avec le service configuré pour les membres autorisés. La recherche est désactivée dans cette version ; aucun texte libre, note ou photo ne lui est transmis.',
     'options.privacyConsent': 'Contribuer aux statistiques anonymisées',
     'options.legal': 'Légal',
     'options.legalTerms': 'Conditions d’utilisation',
@@ -446,7 +451,7 @@ export const CATALOG: Record<SupportedLocale, LocaleCatalog> = {
     'legal.termsBody':
       'ChoreScore est une application gratuite pour équilibrer les dépenses et les tâches d’un groupe.\n\nL’application est fournie en l’état. Vous restez responsable de l’exactitude des montants, des valeurs et des répartitions que vous saisissez.\n\nLes soldes affichés proviennent uniquement des écritures enregistrées. Une modification ou une suppression recalcule les soldes concernés sans réinterpréter l’historique.\n\nAucune donnée n’est vendue. Les fonctions de recherche respectent les choix de confidentialité exprimés dans l’application.',
     'legal.privacyBody':
-      'Vos données de fonctionnement restent sur votre appareil. Elles ne sont transmises à un produit de recherche qu’après agrégation et retrait des identifiants, des noms, des notes, des photos et du texte libre.\n\nVous pouvez refuser ou retirer votre participation aux statistiques anonymisées dans Options générales → Confidentialité.\n\nSelon la juridiction applicable, vous pouvez demander l’accès, la correction ou la suppression de vos données de fonctionnement.',
+      'Vos données de fonctionnement sont conservées localement. Lorsque vous activez la collaboration, les données et photos du groupe sont également transmises au service de synchronisation configuré et accessibles aux membres autorisés. En mode local, aucune synchronisation distante n’est effectuée. La recherche est désactivée dans cette version ; aucune donnée ne lui est transmise.\n\nVous pouvez refuser ou retirer votre participation aux statistiques anonymisées dans Options générales → Confidentialité.\n\nSelon la juridiction applicable, vous pouvez demander l’accès, la correction ou la suppression de vos données de fonctionnement.',
     'legal.noticeBody':
       'Éditeur : ChoreScore.\n\nApplication mobile distribuée sans frais.\n\nHébergement et traitement technique : infrastructure locale de l’appareil et, lorsque configurée, synchronisation du groupe.\n\nContact : support@chorescore.app.',
 
@@ -850,12 +855,17 @@ export const CATALOG: Record<SupportedLocale, LocaleCatalog> = {
     'options.languageFrench': 'Français',
     'options.languageEnglish': 'English',
     'options.notifications': 'Notifications',
+    'options.remindersEnabled': 'To-do reminders',
+    'options.remindersHelp': 'Turning off cancels scheduled reminders on this device. Turning on restores future reminders for unfinished items.',
+    'options.remindersDisabled': 'Reminders are turned off. Enable them in General options → Notifications, or remove this item’s reminder.',
+    'options.notificationSettings': 'Device permissions',
+    'options.notificationsError': 'Could not update reminders. Check this device’s notification permissions, then try again.',
     'options.notificationsAvailable': 'Available on this device',
     'options.notificationsUnavailable': 'Not configured in this build',
     'options.privacy': 'Privacy',
     'options.privacyDataTitle': 'Data and research',
     'options.privacyBody':
-      'Data required for the app to run stays on your device. No free text, note or photo leaves the device for a research product.',
+      'Your data is stored on this device. If you enable collaboration, group data and photos are also synchronized with the configured service for authorized members. Research is disabled in this version; no free text, notes or photos are sent to it.',
     'options.privacyConsent': 'Contribute to anonymized statistics',
     'options.legal': 'Legal',
     'options.legalTerms': 'Terms of use',
@@ -889,7 +899,7 @@ export const CATALOG: Record<SupportedLocale, LocaleCatalog> = {
     'legal.termsBody':
       'ChoreScore is a free app for balancing a group’s expenses and tasks.\n\nThe app is provided as is. You remain responsible for the accuracy of the amounts, values and splits you enter.\n\nDisplayed balances come only from recorded entries. Editing or deleting recalculates the affected balances without reinterpreting history.\n\nNo data is sold. Research features follow the privacy choices made in the app.',
     'legal.privacyBody':
-      'Your operational data stays on your device. It is only sent to a research product after aggregation and removal of identifiers, names, notes, photos and free text.\n\nYou can decline or withdraw your participation in anonymized statistics in General options → Privacy.\n\nDepending on applicable law, you can request access, correction or deletion of your operational data.',
+      'Your operational data is stored locally. When you enable collaboration, group data and photos are also sent to the configured synchronization service and available to authorized members. Local mode does not synchronize data remotely. Research is disabled in this version; no data is sent to it.\n\nYou can decline or withdraw your participation in anonymized statistics in General options → Privacy.\n\nDepending on applicable law, you can request access, correction or deletion of your operational data.',
     'legal.noticeBody':
       'Publisher: ChoreScore.\n\nMobile app distributed at no cost.\n\nHosting and technical processing: the device’s local infrastructure and, when configured, group synchronization.\n\nContact: support@chorescore.app.',
 
