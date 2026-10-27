@@ -45,7 +45,7 @@ import {
 import { loadHouseholdsForUser } from './demoFixture';
 
 /** Types of data-change events that screens can emit. */
-export type DataChangeType = 'contribution' | 'expense' | 'settlement' | 'household' | 'member' | 'todo';
+export type DataChangeType = 'contribution' | 'expense' | 'settlement' | 'household' | 'member' | 'todo' | 'category';
 
 /** Callback signature for data-change subscribers. */
 export type DataChangeCallback = (type: DataChangeType, householdId: string) => void;
@@ -124,6 +124,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [currentHouseholdId, setCurrentHouseholdState] = useState<string | null>(null);
   const selectedGroupRef = useRef<{ userId: string | null; id: string | null }>({ userId: null, id: null });
   const selectionWritesRef = useRef<Promise<void>>(Promise.resolve());
+  const discoveryJobsRef = useRef(new Map<string, Promise<void>>());
   const [reposReady, setReposReady] = useState(false);
   const [authRestored, setAuthRestored] = useState(false);
 
@@ -267,6 +268,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (collection === 'contribution_entries') types.add('contribution');
         else if (collection === 'expense_entries') types.add('expense');
         else if (collection === 'settlements') types.add('settlement');
+        else if (collection === 'categories') types.add('category');
         else if (collection === 'households') types.add('household');
         else if (collection === 'members' || collection === 'memberships') types.add('member');
         else if (collection === 'todo_items' || collection === 'persistent_tasks') types.add('todo');
@@ -309,29 +311,36 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, [reposReady, authRestored]);
 
   const loadHouseholds = useCallback(async (userId?: string) => {
-    // Gate on repository readiness so the local store is always available.
     await ensureReposReady();
     const repos = reposRef.current;
     const uid = userId ?? currentUser?.userId;
     if (!uid || !repos) return;
     const sync = servicesRef.current.sync;
-    if (sync.isAvailable() && sync.discoverGroups) {
-      await sync.discoverGroups(uid).catch(() => undefined);
-    }
-    const loaded = await loadHouseholdsForUser(repos, uid);
-    await selectionWritesRef.current;
-    const remembered = await AsyncStorage.getItem(`chorescore.selectedGroup.${uid}`).catch(() => null);
-    // A load finishing after sign-out/account switch must not expose old groups.
-    if (servicesRef.current.auth.getCurrentUserId() !== uid) return;
-    const current = selectedGroupRef.current.userId === uid ? selectedGroupRef.current.id : null;
-    const selected = loaded.find(group => group.id === current)?.id
-      ?? loaded.find(group => group.id === remembered)?.id
-      ?? loaded[0]?.id ?? null;
-    selectedGroupRef.current = { userId: uid, id: selected };
-    setHouseholds(loaded);
-    setCurrentHouseholdState(selected);
-    if (sync.isAvailable()) {
-      for (const household of loaded) void sync.startSync(household.id);
+    const refreshLocal = async () => {
+      const loaded = await loadHouseholdsForUser(repos, uid);
+      await selectionWritesRef.current;
+      const remembered = await AsyncStorage.getItem(`chorescore.selectedGroup.${uid}`).catch(() => null);
+      if (servicesRef.current.auth.getCurrentUserId() !== uid) return;
+      const current = selectedGroupRef.current.userId === uid ? selectedGroupRef.current.id : null;
+      const selected = loaded.find(group => group.id === current)?.id
+        ?? loaded.find(group => group.id === remembered)?.id
+        ?? loaded[0]?.id ?? null;
+      selectedGroupRef.current = { userId: uid, id: selected };
+      setHouseholds(loaded);
+      setCurrentHouseholdState(selected);
+      if (sync.isAvailable()) {
+        for (const household of loaded) void sync.startSync(household.id).catch(() => undefined);
+      }
+    };
+    // SQLite is usable immediately. An offline refresh/token request must not
+    // keep the loading screen open or delay the creation of a local group.
+    await refreshLocal();
+    if (sync.isAvailable() && sync.discoverGroups && !discoveryJobsRef.current.has(uid)) {
+      const job = Promise.resolve().then(() => sync.discoverGroups!(uid))
+        .then(refreshLocal).catch(() => undefined).finally(() => {
+          if (discoveryJobsRef.current.get(uid) === job) discoveryJobsRef.current.delete(uid);
+        });
+      discoveryJobsRef.current.set(uid, job);
     }
   }, [currentUser, ensureReposReady]);
 
@@ -427,8 +436,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       memberNames,
       contributionUnit,
     });
-    await servicesRef.current.sync.ensureRemoteGroup?.(result.household.id, currentUser.userId)
-      .catch(() => undefined);
     emitDataChange('household', result.household.id);
     emitDataChange('member', result.household.id);
     await loadHouseholds(currentUser.userId);

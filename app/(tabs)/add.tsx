@@ -146,7 +146,7 @@ interface CategoryOption {
 export default function AddScreen() {
   const { t } = useI18n();
   const router = useRouter();
-  const { currentHouseholdId, repos, currentUser, emitDataChange, addMember, services } = useApp();
+  const { currentHouseholdId, repos, currentUser, emitDataChange, subscribeToDataChanges, addMember, services } = useApp();
 
   // Edit mode: Balances pushes `/edit-entry` with an entry id + kind, which
   // renders this same screen so the create and edit forms stay in lockstep.
@@ -228,8 +228,13 @@ export default function AddScreen() {
 
   const loadCategories = useCallback(async () => {
     if (!currentHouseholdId) return;
-    setCategories(await repos.categories.getByHousehold(currentHouseholdId));
-  }, [currentHouseholdId, repos]);
+    const received = await repos.categories.getByHousehold(currentHouseholdId);
+    setCategories(received);
+    if (!isEditing) {
+      setTaskForm(prev => prev.categoryId && !received.some(category => category.id === prev.categoryId) ? { ...prev, categoryId: null } : prev);
+      setExpenseForm(prev => prev.categoryId && !received.some(category => category.id === prev.categoryId) ? { ...prev, categoryId: null } : prev);
+    }
+  }, [currentHouseholdId, repos, isEditing]);
 
   const loadHousehold = useCallback(async () => {
     if (!currentHouseholdId) return;
@@ -268,6 +273,14 @@ export default function AddScreen() {
     initialLoadDoneRef.current = true;
     loadHousehold().then(() => setLoadedGroupId(currentHouseholdId)).catch(() => setLoadError(true));
   }, [loadHousehold]);
+
+  useEffect(() => subscribeToDataChanges(async (type, groupId) => {
+    if (groupId !== currentHouseholdId) return;
+    try {
+      if (type === 'member' || type === 'household') await loadHousehold();
+      else if (type === 'category') await loadCategories();
+    } catch { setLoadError(true); }
+  }), [subscribeToDataChanges, currentHouseholdId, loadHousehold, loadCategories]);
 
   // ── Pre-fill the form when editing an existing entry ───────
   useEffect(() => {
@@ -489,6 +502,7 @@ export default function AddScreen() {
       }));
       resetCategoryDraft();
       await loadCategories();
+      emitDataChange('category', draft.householdId);
     } catch {
       Alert.alert(t('state.error'), t('add.categoryError'));
     } finally { categorySubmittingRef.current = false; setCategoryBusy(false); }
@@ -504,6 +518,7 @@ export default function AddScreen() {
       await repos.withTransaction(async () => repos.categories.update(category.id, renameCategory(editingCategoryName)));
       setEditingCategoryId(null);
       await loadCategories();
+      emitDataChange('category', category.householdId);
     } catch {
       Alert.alert(t('state.error'), t('add.categoryError'));
     }
@@ -528,6 +543,7 @@ export default function AddScreen() {
                 prev.categoryId === category.id ? { ...prev, categoryId: null } : prev,
               );
               await loadCategories();
+              emitDataChange('category', category.householdId);
             } catch {
               Alert.alert(t('state.error'), t('add.categoryError'));
             }
@@ -566,6 +582,7 @@ export default function AddScreen() {
       await repos.withTransaction(async () => repos.categories.update(category.id, setCategoryDefaultTaskRatio(weights)));
       setRatioCategoryId(null);
       await loadCategories();
+      emitDataChange('category', category.householdId);
       Alert.alert(t('add.categoryRatio'), t('add.categoryRatioSaved'));
     } catch {
       Alert.alert(t('state.error'), t('add.categoryError'));
@@ -577,6 +594,7 @@ export default function AddScreen() {
       await repos.withTransaction(async () => repos.categories.update(category.id, { defaultTaskRatio: null }));
       setRatioCategoryId(null);
       await loadCategories();
+      emitDataChange('category', category.householdId);
     } catch {
       Alert.alert(t('state.error'), t('add.categoryError'));
     }

@@ -129,10 +129,11 @@ function safeCurrency(currency: string): string {
 
 export default function TodosScreen() {
   const { t } = useI18n();
-  const { currentHouseholdId, repos, currentUser, emitDataChange, services } = useApp();
+  const { currentHouseholdId, repos, currentUser, emitDataChange, subscribeToDataChanges, services } = useApp();
 
   const [categories, setCategories] = useState<Category[]>([]);
   const [todos, setTodos] = useState<TodoItem[]>([]);
+  const [loadError, setLoadError] = useState(false);
   const [members, setMembers] = useState<Member[]>([]);
   const [household, setHousehold] = useState<Household | null>(null);
   const [persistentTasks, setPersistentTasks] = useState<PersistentTask[]>([]);
@@ -187,6 +188,7 @@ export default function TodosScreen() {
       repos.tasks.getByHousehold(currentHouseholdId),
       repos.categories.getByHousehold(currentHouseholdId),
     ]);
+    setLoadError(false);
     setMembers(householdMembers);
     setTodos(householdTodos.filter((todo) => todo.status !== 'completed'));
     setHousehold(householdData);
@@ -207,8 +209,13 @@ export default function TodosScreen() {
   }, [currentHouseholdId, repos]);
 
   useEffect(() => {
-    loadData();
+    void loadData().catch(() => setLoadError(true));
   }, [loadData]);
+
+  useEffect(() => subscribeToDataChanges(async (type, groupId) => {
+    if (groupId !== currentHouseholdId || !['todo', 'member', 'household', 'category'].includes(type)) return;
+    try { await loadData(); } catch { setLoadError(true); }
+  }), [subscribeToDataChanges, currentHouseholdId, loadData]);
 
   // ── Create todo (task or expense) ──────────────────────────
 
@@ -579,6 +586,10 @@ export default function TodosScreen() {
 
   return (
     <ScreenContainer>
+          {loadError ? <Card>
+            <Text color={colors.error}>{t('state.error')}</Text>
+            <Button title={t('action.retry')} onPress={() => { void loadData().catch(() => setLoadError(true)); }} />
+          </Card> : null}
           {/* ── Header ────────────────────────────────────── */}
           <View style={styles.header}>
             <Text variant="screenTitle">{t('todos.title')}</Text>

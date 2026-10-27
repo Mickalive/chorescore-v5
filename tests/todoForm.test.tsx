@@ -25,7 +25,7 @@ test('todo notes persist in a single scrolling form that dismisses the keyboard'
   });
   mockApp.mockReturnValue({
     currentHouseholdId: household.id, currentUser: { userId: 'a' }, repos,
-    emitDataChange: jest.fn(), services: {
+    emitDataChange: jest.fn(), subscribeToDataChanges: () => () => undefined, services: {
       attachments: { isAvailable: () => false }, media: { isAvailable: () => false },
       calendar: { isAvailable: () => false }, notifications: {},
     },
