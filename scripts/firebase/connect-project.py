@@ -19,7 +19,11 @@ PACKAGE = 'app.chorescore.v5'
 
 
 class SetupError(RuntimeError):
-    pass
+    def __init__(self, message, status=None, reason=None, service=None):
+        super().__init__(message)
+        self.status = status
+        self.reason = reason
+        self.service = service
 
 
 class GoogleAPI:
@@ -40,8 +44,21 @@ class GoogleAPI:
         except urllib.error.HTTPError as error:
             if allow_missing and error.code == 404:
                 return None
-            # Never print request headers, bearer tokens or full API responses.
-            raise SetupError(f'Google refuse {method} {urllib.parse.urlsplit(url).path} (HTTP {error.code}). Vérifie le compte et les droits sur {PROJECT}.') from None
+            # Read only Google's structured reason/service. Never print tokens,
+            # headers or full responses, and do not treat every 403 as IAM.
+            try:
+                details = json.load(error).get('error', {}).get('details', [])
+            except (ValueError, AttributeError):
+                details = []
+            info = next((item for item in details if isinstance(item, dict)
+                         and str(item.get('@type', '')).endswith('google.rpc.ErrorInfo')), {})
+            reason = info.get('reason')
+            service = info.get('metadata', {}).get('service')
+            diagnosis = ('API Google désactivée' if reason == 'SERVICE_DISABLED'
+                         else 'Autorisation Google refusée' if reason in ('IAM_PERMISSION_DENIED', 'ACCESS_DENIED')
+                         else 'Accès Google refusé')
+            raise SetupError(f'{diagnosis} : {method} {urllib.parse.urlsplit(url).path} (HTTP {error.code}, raison {reason or "non précisée"}).',
+                             error.code, reason, service) from None
 
     def operation(self, origin, result):
         deadline = time.monotonic() + 180
@@ -65,7 +82,19 @@ def connect(api, apply=False, interactive=True, output=None):
     project = api.call('GET', f'https://firebase.googleapis.com/v1beta1/projects/{PROJECT}')
     if project.get('projectId') != PROJECT:
         raise SetupError('Le projet retourné ne correspond pas à ChoreScore.')
-    billing = api.call('GET', f'https://cloudbilling.googleapis.com/v1/projects/{PROJECT}/billingInfo')
+    try:
+        billing = api.call('GET', f'https://cloudbilling.googleapis.com/v1/projects/{PROJECT}/billingInfo')
+    except SetupError as error:
+        # Enabling this management API does NOT attach a billing account,
+        # upgrade Firebase to Blaze, or enable a paid product. Keep the actual
+        # no-billing check mandatory before any product setup is attempted.
+        if not (apply and error.status == 403 and error.reason == 'SERVICE_DISABLED'
+                and error.service == 'cloudbilling.googleapis.com'):
+            raise
+        print('Activation de l’API de lecture du statut du projet, sans ajout de facturation.')
+        operation = api.call('POST', f'https://serviceusage.googleapis.com/v1/projects/{PROJECT}/services/cloudbilling.googleapis.com:enable', {})
+        api.operation('https://serviceusage.googleapis.com/v1', operation)
+        billing = api.call('GET', f'https://cloudbilling.googleapis.com/v1/projects/{PROJECT}/billingInfo')
     if billing.get('billingEnabled') is not False:
         raise SetupError('Arrêt : impossible de confirmer l’absence de facturation. Aucun changement effectué.')
     print('Projet confirmé ; facturation désactivée. Aucun service payant ne sera activé.')

@@ -9,6 +9,8 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
+import urllib.error
 
 spec = importlib.util.spec_from_file_location('connect_project', Path(__file__).with_name('connect-project.py'))
 setup = importlib.util.module_from_spec(spec)
@@ -77,6 +79,52 @@ class FakeGoogle:
 
 
 class ManualSetup(unittest.TestCase):
+    def test_real_http_error_preserves_service_reason_without_exporting_response(self):
+        body = {'error': {'message': 'DO-NOT-PRINT-THIS', 'details': [{
+            '@type': 'type.googleapis.com/google.rpc.ErrorInfo', 'reason': 'SERVICE_DISABLED',
+            'metadata': {'service': 'cloudbilling.googleapis.com'},
+        }]}}
+        error = urllib.error.HTTPError('https://cloudbilling.googleapis.com/v1/test', 403, 'Forbidden', {}, io.BytesIO(json.dumps(body).encode()))
+        with patch('urllib.request.urlopen', side_effect=error):
+            with self.assertRaises(setup.SetupError) as captured:
+                setup.GoogleAPI('NEVER-PRINT-TOKEN').call('GET', 'https://cloudbilling.googleapis.com/v1/test')
+        self.assertEqual(captured.exception.reason, 'SERVICE_DISABLED')
+        self.assertEqual(captured.exception.service, 'cloudbilling.googleapis.com')
+        self.assertNotIn('DO-NOT-PRINT-THIS', str(captured.exception))
+        self.assertNotIn('NEVER-PRINT-TOKEN', str(captured.exception))
+
+    def test_disabled_billing_read_api_is_enabled_then_billing_is_checked(self):
+        api = FakeGoogle()
+        original = api.call
+        attempts = []
+        def call(method, url, body=None, allow_missing=False):
+            if url.endswith('/billingInfo'):
+                attempts.append(url)
+                if len(attempts) == 1:
+                    raise setup.SetupError('API disabled', 403, 'SERVICE_DISABLED', 'cloudbilling.googleapis.com')
+            if url.endswith('/services/cloudbilling.googleapis.com:enable'):
+                api.calls.append((method, url, body))
+                return {'done': True, 'response': {}}
+            return original(method, url, body, allow_missing)
+        api.call = call
+        with tempfile.TemporaryDirectory() as folder, contextlib.redirect_stdout(io.StringIO()):
+            setup.connect(api, apply=True, interactive=False, output=Path(folder))
+        self.assertEqual(len(attempts), 2)
+        self.assertEqual(len([url for method, url, _ in api.calls if method == 'POST' and 'cloudbilling' in url]), 1)
+        self.assertFalse(any('billingAccounts' in url for _, url, _ in api.calls))
+
+    def test_permission_denial_does_not_enable_services_or_bypass_billing(self):
+        api = FakeGoogle()
+        original = api.call
+        def call(method, url, body=None, allow_missing=False):
+            if url.endswith('/billingInfo'):
+                raise setup.SetupError('Permission denied', 403, 'IAM_PERMISSION_DENIED', 'cloudbilling.googleapis.com')
+            return original(method, url, body, allow_missing)
+        api.call = call
+        with self.assertRaisesRegex(setup.SetupError, 'Permission denied'):
+            setup.connect(api, apply=True, interactive=False)
+        self.assertTrue(all(method == 'GET' for method, _, _ in api.calls))
+
     def test_billing_enabled_refuses_every_write(self):
         api = FakeGoogle(billing=True)
         with self.assertRaisesRegex(setup.SetupError, 'facturation'):
