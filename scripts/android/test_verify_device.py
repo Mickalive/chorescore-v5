@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import tempfile
+import zlib
 from pathlib import Path
 import re
 import unittest
@@ -36,6 +37,24 @@ def driver():
 
 
 class SelectorBehavior(unittest.TestCase):
+    def test_native_picker_fixture_is_a_complete_png_with_valid_checksums(self):
+        path=Path(__file__).with_name('verify-device.py')
+        source=ast.parse(path.read_text())
+        assignment=next(node for node in source.body if isinstance(node,ast.Assign)
+                        and any(isinstance(target,ast.Name) and target.id=='PHOTO_BYTES' for target in node.targets))
+        data=eval(compile(ast.Expression(assignment.value),str(path),'eval'),{'Path':Path,'__file__':str(path)})
+        self.assertEqual(data[:8],b'\x89PNG\r\n\x1a\n')
+        offset=8; chunks=[]
+        while offset<len(data):
+            length=int.from_bytes(data[offset:offset+4],'big')
+            payload=data[offset+4:offset+8+length]
+            expected=int.from_bytes(data[offset+8+length:offset+12+length],'big')
+            self.assertEqual(zlib.crc32(payload)&0xffffffff,expected)
+            chunks.append(payload[:4]); offset+=12+length
+        self.assertEqual(offset,len(data))
+        self.assertIn(b'IDAT',chunks)
+        self.assertEqual(chunks[-1],b'IEND')
+
     def test_persistent_input_targets_native_controls_and_rejects_failed_actions(self):
         env = driver()
         rpc=Mock(return_value=True)

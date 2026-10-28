@@ -5,7 +5,7 @@
  */
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { Image, Text } from 'react-native';
+import { ActivityIndicator, Image, Text, TouchableOpacity } from 'react-native';
 import { PhotoField } from '../src/features/entries/PhotoField';
 import { Button } from '../src/ui/components/Button';
 import type { Attachment } from '../src/domain/entities';
@@ -48,6 +48,49 @@ beforeEach(() => {
       },
     },
   });
+});
+
+test('preview is ready only after its own image loads and ignores an older preview callback', async () => {
+  const photos = ['first','second'].map(id => ({ ...remotePhoto(), id, ref: `file:///private/${id}.png`, remoteRef: undefined }));
+  let tree!: renderer.ReactTestRenderer;
+  await act(async () => { tree=renderer.create(<PhotoField attachments={photos} available onAdd={() => {}} onRemove={() => {}} />); });
+  const open = (index: number) => tree.root.findAllByType(TouchableOpacity).filter(node => node.props.accessibilityLabel==='photo.openPreview')[index].props.onPress();
+  await act(async () => open(0));
+  const oldLoad=tree.root.findByProps({ testID:'photo.preview.loading' }).props.onLoad;
+  expect(tree.root.findAllByProps({ testID:'photo.preview.loaded' })).toHaveLength(0);
+  await act(async () => tree.root.findAllByType(Button).find(node => node.props.title==='action.close')!.props.onPress());
+  await act(async () => open(1));
+  await act(async () => oldLoad());
+  expect(tree.root.findAllByProps({ testID:'photo.preview.loaded' })).toHaveLength(0);
+  const image=tree.root.findByProps({ testID:'photo.preview.loading' });
+  await act(async () => image.props.onLoad());
+  expect(tree.root.findByProps({ testID:'photo.preview.loaded' }).props.source.uri).toBe('file:///private/second.png');
+  await act(async () => tree.unmount());
+});
+
+test('a preview decoding failure displays an error and never reports a loaded photo', async () => {
+  let tree!: renderer.ReactTestRenderer;
+  await act(async () => { tree=renderer.create(<PhotoField attachments={[{ ...remotePhoto(), ref:'file:///private/broken.png', remoteRef:undefined }]}
+    available onAdd={() => {}} onRemove={() => {}} />); });
+  await act(async () => tree.root.findAllByType(TouchableOpacity).find(node => node.props.accessibilityLabel==='photo.openPreview')!.props.onPress());
+  const image=tree.root.findByProps({ testID:'photo.preview.loading' });
+  await act(async () => image.props.onError());
+  expect(tree.root.findAllByType(Text).some(node => node.props.children==='add.photoMissing')).toBe(true);
+  expect(tree.root.findAllByProps({ testID:'photo.preview.loaded' })).toHaveLength(0);
+  await act(async () => tree.unmount());
+});
+
+test('a failed cloud recovery ends preview loading with an error', async () => {
+  download.mockRejectedValue(new Error('offline'));
+  let tree!: renderer.ReactTestRenderer;
+  await act(async () => { tree=renderer.create(<PhotoField attachments={[{ ...remotePhoto(), ref:'file:///private/missing.png' }]}
+    available onAdd={() => {}} onRemove={() => {}} />); });
+  await act(async () => tree.root.findAllByType(TouchableOpacity).find(node => node.props.accessibilityLabel==='photo.openPreview')!.props.onPress());
+  await act(async () => tree.root.findByProps({ testID:'photo.preview.loading' }).props.onError());
+  expect(download).toHaveBeenCalledWith('household-1','att-remote');
+  expect(tree.root.findAllByType(ActivityIndicator)).toHaveLength(0);
+  expect(tree.root.findAllByType(Text).filter(node => node.props.children==='add.photoMissing')).toHaveLength(2);
+  await act(async () => tree.unmount());
 });
 
 test('received photo is not handed to Image before the private file exists', async () => {

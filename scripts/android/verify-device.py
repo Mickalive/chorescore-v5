@@ -1,7 +1,6 @@
 """Real installed release APK smoke journey. Standard adb + Python stdlib only.
 No E2E auth, seeded repository, native API mock or fake backend is used.
 """
-import base64
 import hashlib
 import json
 import os
@@ -20,9 +19,7 @@ EVIDENCE.mkdir(parents=True,exist_ok=True)
 PACKAGE = 'app.chorescore.v5'
 ADB = os.environ.get('ADB_BIN','adb')
 PHOTO_NAME = 'chorescore-photo.png'
-PHOTO_BYTES = base64.b64decode(
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII='
-)
+PHOTO_BYTES = (Path(__file__).resolve().parents[2] / 'assets' / 'icon.png').read_bytes()
 
 def native_rpc(method, params):
     request=urllib.request.Request(os.environ['ANDROID_UIAUTOMATOR_RPC_URL'], data=json.dumps({
@@ -889,7 +886,10 @@ try:
     scroll_to('Cuisine CI',partial=True)
     tap(resource='balances.editEntry')
     scroll_find('Photo jointe',partial=True)
+    scroll_to('Ouvrir la photo')
+    locate(resource='photo.preview.loaded',timeout=35)
     screenshot('photo-after-restart-android')
+    tap('Fermer')
     scroll_top()
     fill('add.taskValue','20',clear=True)
     scroll_to('Mettre à jour')

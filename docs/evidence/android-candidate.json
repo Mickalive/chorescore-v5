@@ -9,6 +9,8 @@
   "screenshot": "groups-empty-android.png",
   "observed": ["normal local session", "Groups screen rendered", "unconfigured collaboration notice visible", "created Maison CI with points and two named members", "opened Add with Moi, Camille and Dominique"],
   "filledGroupScreenshot": "groups-filled-android.png",
+  "categoryScreenshot": "category-with-ratio-android.png",
+  "supersededBy": "android-preview-candidate.json",
   "fullNativeJourneyPassed": false,
   "productionFirebaseVerified": false,
   "twoPhysicalPhonesVerified": false

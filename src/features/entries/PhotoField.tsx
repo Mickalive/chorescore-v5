@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { Image, Modal, StyleSheet, TouchableOpacity, View } from 'react-native';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Image, Modal, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Attachment } from '../../domain/entities';
 import { Text } from '../../ui/components/Text';
@@ -14,7 +14,9 @@ export function PhotoField({ attachments, available, onAdd, onRemove, testID }: 
 }) {
   const { t } = useI18n();
   const { services, currentHouseholdId } = useApp();
-  const [preview, setPreview] = useState<Attachment | null>(null);
+  const [preview, setPreview] = useState<{ photo: Attachment; householdId: string | null } | null>(null);
+  const [previewResult, setPreviewResult] = useState<{ identity: string; status: 'loaded' | 'error' } | null>(null);
+  const activePreview = preview?.householdId === currentHouseholdId ? preview.photo : null;
   const [failedIds, setFailedIds] = useState<Set<string>>(new Set());
   const [failedLocalRefs, setFailedLocalRefs] = useState<Set<string>>(new Set());
   const [resolvedRefs, setResolvedRefs] = useState<Record<string, string>>({});
@@ -28,6 +30,14 @@ export function PhotoField({ attachments, available, onAdd, onRemove, testID }: 
   // immediately and would strand the photo as "missing" even after download.
   const sourceOf = (photo: Attachment): string | null =>
     localSource(photo) ?? resolvedRefs[keyOf(photo)] ?? null;
+  const previewUri = activePreview ? sourceOf(activePreview) : null;
+  const previewIdentity = activePreview ? JSON.stringify([keyOf(activePreview), previewUri]) : null;
+  const activePreviewRef = useRef(previewIdentity);
+  useLayoutEffect(() => { activePreviewRef.current = previewIdentity; }, [previewIdentity]);
+  const previewUnavailable = activePreview && !previewUri &&
+    (failedIds.has(keyOf(activePreview)) || !services.media.isAvailable());
+  const previewStatus = previewUnavailable ? 'error'
+    : previewResult?.identity === previewIdentity ? previewResult.status : 'loading';
 
   useEffect(() => { setPreview(null); }, [currentHouseholdId]);
 
@@ -68,7 +78,10 @@ export function PhotoField({ attachments, available, onAdd, onRemove, testID }: 
         const failed = failedIds.has(key) || (remotePending && !services.media.isAvailable());
         return (
         <View key={photo.id} style={styles.row}>
-          <TouchableOpacity onPress={() => setPreview(photo)} accessibilityRole="button"
+          <TouchableOpacity onPress={() => {
+            setPreviewResult(null);
+            setPreview({ photo, householdId: currentHouseholdId });
+          }} accessibilityRole="button"
             accessibilityLabel={t('photo.openPreview')} style={styles.thumbnailButton}
             disabled={failed || !uri} accessibilityState={{ disabled: failed || !uri }}>
             {failed ? <Text variant="caption">{t('add.photoMissing')}</Text>
@@ -92,12 +105,35 @@ export function PhotoField({ attachments, available, onAdd, onRemove, testID }: 
       })}
       {available ? <Button title={t('add.photoAdd')} variant="secondary" size="small" onPress={onAdd} testID={testID} />
         : <Text variant="caption" color={colors.textMuted}>{t('add.photoUnavailable')}</Text>}
-      <Modal visible={!!preview} animationType="fade" onRequestClose={() => setPreview(null)}>
+      <Modal visible={!!activePreview} animationType="fade" onRequestClose={() => setPreview(null)}>
         <SafeAreaView style={styles.preview}>
           <View style={styles.close}><Button title={t('action.close')} variant="secondary" onPress={() => setPreview(null)} /></View>
-          {preview && sourceOf(preview) && (
-            <Image source={{ uri: sourceOf(preview)! }} style={styles.fullImage} resizeMode="contain" accessibilityLabel={t('add.photoAttached')} />
-          )}
+          <View style={styles.previewContent}>
+            {activePreview && previewUri && previewIdentity && previewStatus !== 'error' && (
+              <Image key={previewIdentity} source={{ uri: previewUri }} style={styles.fullImage} resizeMode="contain"
+                accessibilityLabel={t('add.photoAttached')}
+                testID={previewStatus === 'loaded' ? 'photo.preview.loaded' : 'photo.preview.loading'}
+                onLoad={() => {
+                  if (activePreviewRef.current === previewIdentity) setPreviewResult({ identity: previewIdentity, status: 'loaded' });
+                }}
+                onError={() => {
+                  if (activePreviewRef.current !== previewIdentity) return;
+                  setPreviewResult({ identity: previewIdentity, status: 'error' });
+                  const key = keyOf(activePreview);
+                  if (localSource(activePreview) && activePreview.remoteRef) {
+                    setFailedLocalRefs(prev => new Set([...prev, key]));
+                  } else setFailedIds(prev => new Set([...prev, key]));
+                }} />
+            )}
+            {activePreview && previewStatus === 'loading' && (
+              <ActivityIndicator style={styles.previewLoading} color={colors.textOnPrimary} accessibilityLabel={t('state.loading')} />
+            )}
+            {activePreview && previewStatus === 'error' && (
+              <Text variant="body" color={colors.textOnPrimary} style={styles.previewError} accessibilityLiveRegion="polite">
+                {t('add.photoMissing')}
+              </Text>
+            )}
+          </View>
         </SafeAreaView>
       </Modal>
     </View>
@@ -111,5 +147,8 @@ const styles = StyleSheet.create({
   thumbnail: { width: 72, height: 72, borderRadius: borderRadius.sm },
   preview: { flex: 1, backgroundColor: colors.text },
   close: { alignItems: 'flex-end', padding: spacing.lg },
+  previewContent: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  previewLoading: { position: 'absolute' },
+  previewError: { padding: spacing.xl, textAlign: 'center' },
   fullImage: { flex: 1, width: '100%' },
 });
