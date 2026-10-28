@@ -166,6 +166,7 @@ export class SyncRecordingTodoRepository implements TodoRepository {
 
   async seed(items: TodoItem[]): Promise<void> { await this.inner.seed(items); }
   getFutureReminders(householdId: string, after: string): Promise<TodoItem[]> { return this.inner.getFutureReminders(householdId, after); }
+  getOpenByHousehold(householdId: string): Promise<TodoItem[]> { return this.inner.getOpenByHousehold(householdId); }
   getByHousehold(householdId: string): Promise<TodoItem[]> { return this.inner.getByHousehold(householdId); }
   getByHouseholdPaginated(householdId: string, query?: PaginatedQuery): Promise<PaginatedResult<TodoItem>> { return this.inner.getByHouseholdPaginated(householdId, query); }
   getById(id: string): Promise<TodoItem | null> { return this.inner.getById(id); }

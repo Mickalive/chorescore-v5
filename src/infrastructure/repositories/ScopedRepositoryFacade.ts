@@ -310,6 +310,11 @@ export class ScopedTodoRepository implements TodoRepository {
     return this.inner.getFutureReminders(householdId, after);
   }
 
+  async getOpenByHousehold(householdId: string): Promise<TodoItem[]> {
+    await this.checkMembership(householdId);
+    return this.inner.getOpenByHousehold(householdId);
+  }
+
   async getByHousehold(householdId: string): Promise<TodoItem[]> {
     await this.checkMembership(householdId);
     return this.inner.getByHousehold(householdId);

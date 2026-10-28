@@ -168,14 +168,14 @@ export default function TodosScreen() {
     if (!currentHouseholdId) return;
     const [householdMembers, householdTodos, householdData, tasks, groupCategories] = await Promise.all([
       repos.members.getByHousehold(currentHouseholdId),
-      repos.todos.getByHousehold(currentHouseholdId),
+      repos.todos.getOpenByHousehold(currentHouseholdId),
       repos.households.getById(currentHouseholdId),
       repos.tasks.getByHousehold(currentHouseholdId),
       repos.categories.getByHousehold(currentHouseholdId),
     ]);
     setLoadError(false);
     setMembers(householdMembers);
-    setTodos(householdTodos.filter((todo) => todo.status !== 'completed'));
+    setTodos(householdTodos);
     setHousehold(householdData);
     setPersistentTasks(tasks);
     setCategories(groupCategories);

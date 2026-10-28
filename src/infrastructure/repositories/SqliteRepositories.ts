@@ -983,6 +983,13 @@ function todoParams(todo: TodoItem): (string | number | null)[] {
 }
 
 export class SqliteTodoRepository extends SqliteDatabaseBound implements TodoRepository {
+  async getOpenByHousehold(householdId: string): Promise<TodoItem[]> {
+    const db=await this.db();
+    const rows=await db.getAllAsync<TodoRow>(
+      "SELECT * FROM todo_items WHERE householdId=? AND status != 'completed' ORDER BY createdAt DESC,id DESC",[householdId]);
+    return rows.map(todoFromRow);
+  }
+
   async seed(todos: TodoItem[]): Promise<void> {
     const db = await this.db();
     for (const todo of todos) {

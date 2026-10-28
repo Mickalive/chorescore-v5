@@ -228,6 +228,8 @@ export async function initializeSchema(database: SQLite.SQLiteDatabase): Promise
     CREATE INDEX IF NOT EXISTS idx_todos_status ON todo_items(householdId, status);
     CREATE INDEX IF NOT EXISTS idx_todos_future_reminders ON todo_items(householdId, reminderAt)
       WHERE status != 'completed' AND reminderAt IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_todos_open ON todo_items(householdId,createdAt DESC,id DESC)
+      WHERE status != 'completed';
     CREATE INDEX IF NOT EXISTS idx_expenses_household ON expense_entries(householdId);
     CREATE INDEX IF NOT EXISTS idx_expenses_occurred ON expense_entries(householdId, occurredAt);
     CREATE INDEX IF NOT EXISTS idx_settlements_household ON settlements(householdId);

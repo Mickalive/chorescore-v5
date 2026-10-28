@@ -594,6 +594,14 @@ export class InMemoryTodoRepository implements TodoRepository {
       .sort((a, b) => a.reminderAt!.localeCompare(b.reminderAt!) || a.id.localeCompare(b.id));
   }
 
+  async getOpenByHousehold(householdId: string): Promise<TodoItem[]> {
+    const open: TodoItem[]=[];
+    for (const todo of this.items.values()) {
+      if (todo.householdId===householdId && todo.status!=='completed') open.push(todo);
+    }
+    return open;
+  }
+
   async getByHousehold(householdId: string): Promise<TodoItem[]> {
     return Array.from(this.items.values()).filter((t) => t.householdId === householdId);
   }

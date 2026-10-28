@@ -280,7 +280,7 @@ test('50 000 pending writes are read in bounded SQLite pages without skipping a 
   }
 }, 30_000);
 
-test('future reminder query excludes 50 000 completed rows at the SQL boundary', async () => {
+test('reminder and open todo queries exclude 50 000 completed rows at the SQL boundary', async () => {
   const repos = (await createSqliteRepositories())!;
   const householdId = 'reminder-query-audit';
   const insert = native.prepare('INSERT INTO todo_items (id,householdId,title,beneficiaryMemberIds,status,createdAt,reminderAt) VALUES (?,?,?,?,?,?,?)');
@@ -304,6 +304,10 @@ test('future reminder query excludes 50 000 completed rows at the SQL boundary',
     expect(returned).toEqual([1]);
     const plan = native.prepare("EXPLAIN QUERY PLAN SELECT * FROM todo_items WHERE householdId=? AND status != 'completed' AND reminderAt IS NOT NULL AND reminderAt > ? ORDER BY reminderAt,id").all(householdId, '2026-01-01T00:00:00.000Z');
     expect(JSON.stringify(plan)).toContain('idx_todos_future_reminders');
+    expect((await repos.todos.getOpenByHousehold(householdId)).map(todo => todo.id).sort()).toEqual(['future-pending','past-pending']);
+    expect(returned).toEqual([1,2]);
+    const openPlan=native.prepare("EXPLAIN QUERY PLAN SELECT * FROM todo_items WHERE householdId=? AND status != 'completed' ORDER BY createdAt DESC,id DESC").all(householdId);
+    expect(JSON.stringify(openPlan)).toContain('idx_todos_open');
   } finally {
     query.mockRestore();
     native.prepare('DELETE FROM todo_items WHERE householdId=? OR id=?').run(householdId, 'future-another-group');
@@ -449,15 +453,18 @@ test('50 000 legacy rows backfill once in bounded pages and restart reads only s
   } finally { query.mockRestore(); }
 },30_000);
 
-test('balance projection reads enforce current household membership', async () => {
+test('balance projection and open todo reads enforce current household membership', async () => {
   const repos=(await createSqliteRepositories())!;
   const {household,ownerMember}=await createGroupWithMembers(repos,{name:'Privé',owner:{userId:'private-projection',displayName:'Alice'},memberNames:[],contributionUnit:'points'});
   const scoped=createScopedRepositories(repos,'private-projection');
   await expect(createScopedRepositories(repos,'intruder').balanceProjections.getByHousehold(household.id,'points',[ownerMember.id])).rejects.toThrow();
+  await expect(createScopedRepositories(repos,'intruder').todos.getOpenByHousehold(household.id)).rejects.toThrow();
+  expect(await scoped.todos.getOpenByHousehold(household.id)).toEqual([]);
   expect((await scoped.balanceProjections.getByHousehold(household.id,'points',[ownerMember.id])).contribution.get(ownerMember.id)).toBe(0);
   const membership=await repos.memberships.getByUserAndHousehold('private-projection',household.id);
   await repos.memberships.delete(membership!.id);
   await expect(scoped.balanceProjections.getByHousehold(household.id,'points',[ownerMember.id])).rejects.toThrow();
+  await expect(scoped.todos.getOpenByHousehold(household.id)).rejects.toThrow();
 });
 
 test('concurrent compensation confirms against the current projection and rejects changed settings', async () => {

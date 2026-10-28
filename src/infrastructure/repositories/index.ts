@@ -147,6 +147,7 @@ export interface PersistentTaskRepository extends SeedableRepository<PersistentT
 }
 
 export interface TodoRepository extends SeedableRepository<TodoItem> {
+  getOpenByHousehold(householdId: string): Promise<TodoItem[]>;
   getFutureReminders(householdId: string, after: string): Promise<TodoItem[]>;
   getByHousehold(householdId: string): Promise<TodoItem[]>;
   getByHouseholdPaginated(householdId: string, query?: PaginatedQuery): Promise<PaginatedResult<TodoItem>>;
