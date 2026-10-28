@@ -518,6 +518,9 @@ test('ordinary HTTP outbox synchronizes both local todo completions with their n
   expect((await b.repos.todos.getByHousehold(hid)).map(todo => todo.status)).toEqual(['completed', 'completed']);
   expect(await b.repos.contributions.getByHousehold(hid)).toEqual([expect.objectContaining({ value: 3, categoryId: category.id })]);
   expect(await b.repos.expenses.getByHousehold(hid)).toEqual([expect.objectContaining({ amountMinor: 201, categoryId: category.id })]);
+  const projection=await b.repos.balanceProjections.getByHousehold(hid,'points',ids);
+  expect(projection.contribution).toEqual(new Map([[ids[0],1.5],[ids[1],-1.5]]));
+  expect(projection.moneyByCurrency.get('CHF')).toEqual(new Map([[ids[0],100],[ids[1],-100]]));
   await a.sync.pushChanges(hid);
   expect(await b.repos.categories.getByHousehold(hid)).toHaveLength(1);
   expect(serverCount('SELECT COUNT(*) AS n FROM records WHERE groupId=? AND collection IN (?,?)', hid, 'contribution_entries', 'expense_entries')).toBe(2);

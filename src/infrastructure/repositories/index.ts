@@ -6,6 +6,7 @@
  */
 
 import {
+  ContributionUnit,
   User,
   Membership,
   Household,
@@ -24,6 +25,15 @@ import {
   SyncConflict,
   PendingSyncMutation,
 } from '../../domain/entities';
+import type { BalanceSnapshot } from '../../domain/calculations/materializedBalances';
+
+export interface BalanceProjectionRepository {
+  /** Caller uses its repository transaction when combining this with writes.
+   * SQLite reads stored member totals; legacy rows are backfilled in bounded
+   * batches once. Later reads transfer only member totals, never the history.
+   */
+  getByHousehold(householdId: string, unit: ContributionUnit, memberIds: string[]): Promise<BalanceSnapshot>;
+}
 
 /**
  * Idempotent upsert of full entities with known ids.

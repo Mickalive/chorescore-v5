@@ -37,6 +37,7 @@ import {
   PendingSyncMutation,
 } from '../../domain/entities';
 import {
+  BalanceProjectionRepository,
   UserRepository,
   MembershipRepository,
   HouseholdRepository,
@@ -52,6 +53,7 @@ import {
   PaginatedResult,
   PaginatedQuery,
 } from './index';
+import { createBalanceSnapshot } from '../../domain/calculations/materializedBalances';
 import {
   InMemoryUserRepository,
   InMemoryMembershipRepository,
@@ -82,6 +84,7 @@ import {
 import { materializeDeltas, getEntityTimestamp, didRemoteWin } from '../sync/SyncMaterializer';
 
 export interface AllRepositories {
+  balanceProjections: BalanceProjectionRepository;
   users: UserRepository;
   memberships: MembershipRepository;
   households: HouseholdRepository;
@@ -499,7 +502,14 @@ function createInMemoryRepositories(): AllRepositories {
   };
 
   let raw!: AllRepositories;
+  const balanceProjections: BalanceProjectionRepository = {
+    async getByHousehold(householdId, unit, memberIds) {
+      return createBalanceSnapshot(await contributionRepo.getByHousehold(householdId),
+        await expenseRepo.getByHousehold(householdId), await settlementRepo.getByHousehold(householdId), unit, memberIds);
+    },
+  };
   raw = {
+    balanceProjections,
     users: userRepo,
     memberships: membershipRepo,
     households: householdRepo,
@@ -517,6 +527,7 @@ function createInMemoryRepositories(): AllRepositories {
   };
 
   repos = {
+    balanceProjections,
     users: userRepo,
     memberships: syncMemberships,
     households: syncHouseholds,
@@ -559,6 +570,7 @@ export async function createSqliteRepositories(
       SqliteSettlementRepository,
       SqliteInvitationRepository,
       SqliteSyncStateRepository,
+      SqliteBalanceProjectionRepository,
     } = await import('./SqliteRepositories');
 
     // Force database initialization to verify expo-sqlite works. The provider
@@ -580,6 +592,7 @@ export async function createSqliteRepositories(
     const rawCategories = new SqliteCategoryRepository(databaseProvider);
     const rawInvitations = new SqliteInvitationRepository(databaseProvider);
     const baseSyncState = new SqliteSyncStateRepository(databaseProvider);
+    const balanceProjections = new SqliteBalanceProjectionRepository(databaseProvider);
 
     // Wrap ALL 10 business repos to record dirty sync records after writes
     const syncMemberships = new SyncRecordingMembershipRepository(rawMemberships, baseSyncState);
@@ -611,6 +624,7 @@ export async function createSqliteRepositories(
 
     let raw!: AllRepositories;
     raw = {
+      balanceProjections,
       users: new SqliteUserRepository(databaseProvider),
       memberships: rawMemberships,
       households: rawHouseholds,
@@ -628,6 +642,7 @@ export async function createSqliteRepositories(
     };
 
     repos = {
+      balanceProjections,
       users: raw.users,
       memberships: syncMemberships,
       households: syncHouseholds,

@@ -11,6 +11,9 @@ import { createGroupWithMembers } from '../src/application/use-cases/groupMember
 import { RemoteSyncAdapter } from '../src/infrastructure/sync/RemoteSyncAdapter';
 import { completeTodoAtomic } from '../src/application/use-cases/completeTodoAtomic';
 import { adoptLocalGroups } from '../src/application/use-cases/adoptLocalGroups';
+import { createBalanceSnapshot } from '../src/domain/calculations/materializedBalances';
+import { createScopedRepositories } from '../src/infrastructure/repositories/ScopedRepositoryFacade';
+import { createProjectedSettlement } from '../src/application/use-cases/groupBalances';
 
 
 let mockDatabase: any;
@@ -367,4 +370,119 @@ test('local groups survive first Google sign-in without replaying history or ado
   await adoptLocalGroups(repos, storage, 'second-google', () => 'second-google');
   expect((await repos.households.getById(original.household.id))?.ownerId).toBe('google-real');
   await expect(adoptLocalGroups(repos, storage, 'signed-out', () => null)).rejects.toThrow('Account changed');
+});
+
+test('stored balance projections match history across edits, remote replacements, deletions and rollback', async () => {
+  const repos=(await createSqliteRepositories())!;
+  const { household, ownerMember, namedMembers }=await createGroupWithMembers(repos, {
+    name:'Projection',owner:{userId:'projection-owner',displayName:'Alice'},memberNames:['Bob','Charlie'],contributionUnit:'points',
+  });
+  const hid=household.id; const ids=[ownerMember.id,...namedMembers.map(member => member.id)];
+  const assertSnapshot=async () => {
+    const expected=createBalanceSnapshot(await repos.contributions.getByHousehold(hid),await repos.expenses.getByHousehold(hid),
+      await repos.settlements.getByHousehold(hid),'points',ids);
+    expect(await repos.balanceProjections.getByHousehold(hid,'points',ids)).toEqual(expected);
+  };
+  const task=await repos.contributions.create({householdId:hid,label:'Poids',performedByMemberId:ids[0],
+    beneficiaryMemberIds:ids.slice(0,2),value:8,unit:'points',persistentTaskId:null,occurredAt:new Date().toISOString(),createdBy:'projection-owner',
+    splitMode:'custom',splitWeights:[{memberId:ids[0],weight:1},{memberId:ids[1],weight:3}],splitSource:'custom'});
+  const expense=await repos.expenses.create({householdId:hid,title:'Centimes',amountMinor:101,currency:'CHF',paidByMemberId:ids[1],
+    participantMemberIds:ids.slice(0,2),splitMode:'custom',customShares:[{memberId:ids[0],amountMinor:50},{memberId:ids[1],amountMinor:51}],
+    occurredAt:new Date().toISOString(),createdBy:'projection-owner'});
+  const settlement=await repos.settlements.create({householdId:hid,contributionCreditorMemberId:ids[0],counterpartyMemberId:ids[1],
+    contributionValue:1,contributionUnit:'points',moneyAmountMinor:50,currency:'CHF',
+    rateSnapshot:{contributionValue:1,contributionUnit:'points',moneyAmountMinor:50,currency:'CHF'},
+    occurredAt:new Date().toISOString(),createdBy:'projection-owner'});
+  const selfExpense=await repos.expenses.create({householdId:hid,title:'Pour soi',amountMinor:1,currency:'eur',paidByMemberId:ids[0],
+    participantMemberIds:[ids[0]],splitMode:'equal',occurredAt:new Date().toISOString(),createdBy:'projection-owner'});
+  await assertSnapshot();
+  await repos.contributions.update(task.id,{value:20});
+  await repos.expenses.update(expense.id,{amountMinor:105,customShares:[{memberId:ids[0],amountMinor:52},{memberId:ids[1],amountMinor:53}]});
+  await assertSnapshot();
+  await repos.raw.contributions.seed([{...task,value:4}]);
+  await repos.raw.contributions.seed([{...task,value:4}]); // replay must not double totals
+  await repos.raw.expenses.seed([expense]);
+  await repos.raw.expenses.seed([expense]);
+  await assertSnapshot();
+  const before=await repos.balanceProjections.getByHousehold(hid,'points',ids);
+  await expect(repos.withTransaction(async () => {
+    await repos.contributions.update(task.id,{value:100});
+    await repos.expenses.delete(expense.id);
+    throw new Error('disk failure');
+  })).rejects.toThrow('disk failure');
+  expect(await repos.balanceProjections.getByHousehold(hid,'points',ids)).toEqual(before);
+  await repos.expenses.delete(expense.id); await assertSnapshot();
+  await repos.settlements.delete(settlement.id); await assertSnapshot();
+  expect((await repos.balanceProjections.getByHousehold(hid,'points',ids)).moneyByCurrency.get('EUR')).toEqual(new Map(ids.map(id => [id,0])));
+  await repos.expenses.delete(selfExpense.id); await assertSnapshot();
+  expect((await repos.balanceProjections.getByHousehold(hid,'points',ids)).moneyByCurrency.size).toBe(0);
+  await repos.contributions.delete(task.id); await assertSnapshot();
+  await repos.households.delete(hid);
+  expect(native.prepare('SELECT COUNT(*) AS n FROM balance_totals WHERE householdId=?').get(hid).n).toBe(0);
+});
+
+test('50 000 legacy rows backfill once in bounded pages and restart reads only stored member totals', async () => {
+  const repos=(await createSqliteRepositories())!;
+  const {household,ownerMember,namedMembers}=await createGroupWithMembers(repos,{name:'Long historique',
+    owner:{userId:'large-projection',displayName:'Alice'},memberNames:['Bob'],contributionUnit:'points'});
+  const hid=household.id; const ids=[ownerMember.id,namedMembers[0].id];
+  const insert=native.prepare("INSERT INTO contribution_entries(id,householdId,label,performedByMemberId,beneficiaryMemberIds,value,unit,occurredAt,createdBy) VALUES (?,?,'Ancienne',?,?,1,'points','2000-01-01T00:00:00.000Z','large-projection')");
+  native.exec('BEGIN');
+  for(let index=0;index<50_000;index++) insert.run(`projection-legacy-${index}`,hid,ids[0],JSON.stringify(ids));
+  native.exec('COMMIT');
+  const returned:number[]=[];
+  const original=mockDatabase.getAllAsync;
+  const query=jest.spyOn(mockDatabase,'getAllAsync').mockImplementation(async (...args:any[]) => {
+    const rows=await original(...args); returned.push(rows.length); return rows;
+  });
+  try {
+    const snapshot=await repos.balanceProjections.getByHousehold(hid,'points',ids);
+    expect(snapshot.contribution).toEqual(new Map([[ids[0],25_000],[ids[1],-25_000]]));
+    expect(Math.max(...returned)).toBeLessThanOrEqual(100);
+    expect(native.prepare('SELECT COUNT(*) AS n FROM contribution_entries WHERE householdId=? AND balanceImpactJson IS NULL').get(hid).n).toBe(0);
+    expect(await repos.syncState.countDirtyRecords(hid,'contribution_entries',0)).toBe(0);
+    native.close(); native=new sqlite.DatabaseSync(path); returned.length=0;
+    expect(await repos.balanceProjections.getByHousehold(hid,'points',ids)).toEqual(snapshot);
+    expect(returned.reduce((a,b) => a+b,0)).toBe(2);
+    const plan=native.prepare('EXPLAIN QUERY PLAN SELECT * FROM contribution_entries WHERE householdId=? AND balanceImpactJson IS NULL ORDER BY id LIMIT 100').all(hid);
+    expect(JSON.stringify(plan)).toContain('idx_contribution_entries_balance_backfill');
+  } finally { query.mockRestore(); }
+},30_000);
+
+test('balance projection reads enforce current household membership', async () => {
+  const repos=(await createSqliteRepositories())!;
+  const {household,ownerMember}=await createGroupWithMembers(repos,{name:'Privé',owner:{userId:'private-projection',displayName:'Alice'},memberNames:[],contributionUnit:'points'});
+  const scoped=createScopedRepositories(repos,'private-projection');
+  await expect(createScopedRepositories(repos,'intruder').balanceProjections.getByHousehold(household.id,'points',[ownerMember.id])).rejects.toThrow();
+  expect((await scoped.balanceProjections.getByHousehold(household.id,'points',[ownerMember.id])).contribution.get(ownerMember.id)).toBe(0);
+  const membership=await repos.memberships.getByUserAndHousehold('private-projection',household.id);
+  await repos.memberships.delete(membership!.id);
+  await expect(scoped.balanceProjections.getByHousehold(household.id,'points',[ownerMember.id])).rejects.toThrow();
+});
+
+test('concurrent compensation confirms against the current projection and rejects changed settings', async () => {
+  const repos=(await createSqliteRepositories())!;
+  const {household,ownerMember,namedMembers}=await createGroupWithMembers(repos,{name:'Compensation atomique',
+    owner:{userId:'projected-settlement',displayName:'Alice'},memberNames:['Bob'],contributionUnit:'points'});
+  const ids=[ownerMember.id,namedMembers[0].id];
+  const rate={contributionValue:1,contributionUnit:'points' as const,moneyAmountMinor:100,currency:'CHF'};
+  await repos.households.update(household.id,{crossLedgerCompensationEnabled:true,contributionToMoneyRate:rate});
+  await repos.contributions.create({householdId:household.id,label:'Crédit',performedByMemberId:ids[0],beneficiaryMemberIds:ids,
+    value:10,unit:'points',persistentTaskId:null,occurredAt:new Date().toISOString(),createdBy:'projected-settlement'});
+  await repos.expenses.create({householdId:household.id,title:'Avance',amountMinor:1000,currency:'CHF',paidByMemberId:ids[1],
+    participantMemberIds:ids,splitMode:'equal',occurredAt:new Date().toISOString(),createdBy:'projected-settlement'});
+  const input={householdId:household.id,contributionCreditorMemberId:ids[0],counterpartyMemberId:ids[1],
+    contributionValue:3,contributionUnit:'points' as const,moneyAmountMinor:300,currency:'CHF',rateSnapshot:rate,
+    occurredAt:new Date().toISOString(),createdBy:'projected-settlement'};
+  const results=await Promise.allSettled([createProjectedSettlement(repos,input),createProjectedSettlement(repos,input)]);
+  expect(results.filter(result => result.status==='fulfilled')).toHaveLength(1);
+  expect(await repos.settlements.getByHousehold(household.id)).toHaveLength(1);
+  const snapshot=await repos.balanceProjections.getByHousehold(household.id,'points',ids);
+  expect(snapshot.contribution).toEqual(new Map([[ids[0],2],[ids[1],-2]]));
+  expect(snapshot.moneyByCurrency.get('CHF')).toEqual(new Map([[ids[0],-200],[ids[1],200]]));
+  await repos.households.update(household.id,{crossLedgerCompensationEnabled:false});
+  await expect(createProjectedSettlement(repos,input)).rejects.toThrow('disabled');
+  await repos.households.update(household.id,{crossLedgerCompensationEnabled:true,contributionToMoneyRate:{...rate,moneyAmountMinor:101}});
+  await expect(createProjectedSettlement(repos,input)).rejects.toThrow('rate changed');
+  expect(await repos.settlements.getByHousehold(household.id)).toHaveLength(1);
 });

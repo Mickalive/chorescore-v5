@@ -73,6 +73,12 @@ export function createScopedRepositories(
 ): AllRepositories {
   return {
     ...repos,
+    balanceProjections: {
+      async getByHousehold(householdId, unit, memberIds) {
+        requireHouseholdMembership(callerUserId, householdId, await repos.memberships.getByHousehold(householdId));
+        return repos.balanceProjections.getByHousehold(householdId, unit, memberIds);
+      },
+    },
     contributions: new ScopedContributionRepository(repos.contributions, callerUserId, repos.memberships),
     expenses: new ScopedExpenseRepository(repos.expenses, callerUserId, repos.memberships),
     todos: new ScopedTodoRepository(repos.todos, callerUserId, repos.memberships),

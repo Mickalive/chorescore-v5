@@ -11,13 +11,13 @@
  * CrossLedgerSettlement record with a snapshotted rate.
  *
  * Balances are derived views — they never mutate the underlying ledger.
- * Materialized for display efficiency; delta-based refresh on data change.
+ * Stored member totals refresh on data change; history remains paginated.
  *
  * Periods narrow paginated history, never the main perpetual balances or
  * compensation suggestions. Settlements remain in both all-time ledgers.
  */
 
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   StyleSheet,
@@ -36,37 +36,26 @@ import { useApp, DataChangeType } from '../../src/features/app/AppContext';
 import { useI18n } from '../../src/i18n';
 import { parsePositiveNumber } from '../../src/domain/services/addEntryService';
 import {
-  ContributionEntry,
-  CrossLedgerSettlement,
-  ExpenseEntry,
   Household,
   Member,
   MoneyTransfer,
   ActivityEntry,
 } from '../../src/domain/entities';
 import {
-  calculateContributionBalances,
   balancesToArray,
   suggestContributionTransfers,
   contributionLedgerIsZeroSum,
 } from '../../src/domain/calculations/contributionLedger';
 import {
-  allocateExpense,
-  calculateFinancialBalancesByCurrency,
   financialBalancesToArray,
   suggestMoneyTransfers,
   financialLedgerIsZeroSum,
 } from '../../src/domain/calculations/expenseLedger';
 import { periodBoundary, Period } from '../../src/domain/calculations/periods';
 import { quoteCrossLedgerMoneyAmount } from '../../src/domain/calculations/crossLedgerSettlement';
-import { validateSettlementPreconditions } from '../../src/domain/calculations/settlementPreconditions';
-import {
-  createBalanceSnapshot,
-  BalanceSnapshot,
-  deltaUpdateContribution,
-  deltaUpdateContributionFromSettlement,
-  deltaUpdateMoneyFromSettlement,
-} from '../../src/domain/calculations/materializedBalances';
+import { loadGroupBalances, createProjectedSettlement } from '../../src/application/use-cases/groupBalances';
+import { LoadingState, ErrorState } from '../../src/ui/components/States';
+import type { BalanceSnapshot } from '../../src/domain/calculations/materializedBalances';
 import {
   ActivityFilter,
   ActivityLogPage,
@@ -120,15 +109,11 @@ export default function BalancesScreen() {
   const [period, setPeriod] = useState<Period>('all-time');
   const [household, setHousehold] = useState<Household | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
-  const [contributions, setContributions] = useState<ContributionEntry[]>([]);
-  const [expenses, setExpenses] = useState<ExpenseEntry[]>([]);
-  const [settlements, setSettlements] = useState<CrossLedgerSettlement[]>([]);
-
-  // Materialized balance snapshot (all-time, for delta refresh)
-  const snapshotRef = useRef<BalanceSnapshot | null>(null);
-
-  // Track whether a full re-read is needed (initial load or household change)
-  const initialLoadDoneRef = useRef(false);
+  const [snapshot, setSnapshot] = useState<BalanceSnapshot>(() => ({ contribution: new Map(), moneyByCurrency: new Map() }));
+  const [balanceLoading, setBalanceLoading] = useState(true);
+  const [balanceError, setBalanceError] = useState(false);
+  const loadRequestRef = useRef(0);
+  const activeGroupRef = useRef(currentHouseholdId);
   const lastHouseholdIdRef = useRef<string | null>(null);
 
   // Compenser modal state
@@ -148,286 +133,51 @@ export default function BalancesScreen() {
   // modified or removed here under Balances, never in the past-only ledger.
   const [selectedEntry, setSelectedEntry] = useState<ActivityEntry | null>(null);
 
-  // ── Full load (initial / household change) ──────────────────
+  // Read a durable projection, never complete ledger payloads. Group changes
+  // invalidate in-flight reads and close actions before the next frame.
+  useLayoutEffect(() => {
+    activeGroupRef.current = currentHouseholdId;
+    loadRequestRef.current += 1;
+    setBalanceLoading(true);
+    setBalanceError(false);
+    setSelectedEntry(null);
+    setShowCompenser(false);
+  }, [currentHouseholdId]);
 
   const fullLoad = useCallback(async () => {
-    if (!currentHouseholdId) return;
-
-    const [hh, mems, contribs, exps, sett] = await Promise.all([
-      repos.households.getById(currentHouseholdId),
-      repos.members.getByHousehold(currentHouseholdId),
-      repos.contributions.getByHousehold(currentHouseholdId),
-      repos.expenses.getByHousehold(currentHouseholdId),
-      repos.settlements.getByHousehold(currentHouseholdId),
-    ]);
-
-    setHousehold(hh);
-    setMembers(mems);
-    setContributions(contribs);
-    setExpenses(exps);
-    setSettlements(sett);
-
-    // Build initial materialized snapshot (all-time)
-    const memberIds = mems.map((m) => m.id);
-    const unit = hh?.contributionUnit ?? 'minutes';
-    snapshotRef.current = createBalanceSnapshot(
-      contribs, exps, sett, unit, memberIds, 'all-time'
-    );
-
-    initialLoadDoneRef.current = true;
-    lastHouseholdIdRef.current = currentHouseholdId;
-  }, [currentHouseholdId, repos]);
-
-  // ── Delta refresh (data-change signal) ──────────────────────
-  // Re-reads only the changed collection type and applies delta
-  // to the materialized snapshot.  No full re-read, no full replay.
-
-  // ── Refs that track the current arrays synchronously ──────────
-  // handleDataChange is called from emitDataChange which may fire
-  // synchronously while React closures still hold the previous
-  // render's state. Refs are updated *after* the state setter in the
-  // same handler, so when the handler fires again (for the delta it
-  // triggers internally), the ref reflects the latest array. This is
-  // critical for settlement (which modifies snapshotRef directly) and
-  // for detecting removals/modifications across all types.
-
-  const contributionsRef = useRef(contributions);
-  contributionsRef.current = contributions;
-  const expensesRef = useRef(expenses);
-  expensesRef.current = expenses;
-  const settlementsRef = useRef(settlements);
-  settlementsRef.current = settlements;
-
-  const handleDataChange = useCallback(async (
-    type: DataChangeType,
-    hhId: string,
-  ) => {
-    if (!currentHouseholdId || hhId !== currentHouseholdId) return;
-    if (!initialLoadDoneRef.current || !snapshotRef.current) return;
-
-    const unit = household?.contributionUnit ?? 'minutes';
-    const memberIds = members.map((m) => m.id);
-
-    switch (type) {
-      case 'contribution': {
-        const newContribs = await repos.contributions.getByHousehold(currentHouseholdId);
-        // Use refs to handle the case where this fires synchronously
-        // after a local write that updated state but hasn't re-rendered yet.
-        const oldIds = new Set(contributionsRef.current.map((c) => c.id));
-        const newIds = new Set(newContribs.map((c) => c.id));
-
-        let snap = snapshotRef.current;
-
-        // Removed entries: in old but not in new
-        const removed = contributionsRef.current.filter((c) => !newIds.has(c.id));
-        for (const entry of removed) {
-          snap = {
-            ...snap,
-            contribution: deltaUpdateContribution(snap.contribution, entry, unit, memberIds, 'remove'),
-          };
-        }
-
-        // Added entries: in new but not in old
-        const added = newContribs.filter((c) => !oldIds.has(c.id));
-        for (const entry of added) {
-          snap = {
-            ...snap,
-            contribution: deltaUpdateContribution(snap.contribution, entry, unit, memberIds, 'add'),
-          };
-        }
-
-        // Modified entries: same id but different fields — remove old + apply new
-        const oldMap = new Map(contributionsRef.current.map((c) => [c.id, c]));
-        for (const newEntry of newContribs) {
-          const oldEntry = oldMap.get(newEntry.id);
-          if (!oldEntry) continue; // already handled as added
-          // Check if the entry changed (value, performedBy, or beneficiaries differ)
-          if (
-            oldEntry.value !== newEntry.value ||
-            oldEntry.performedByMemberId !== newEntry.performedByMemberId ||
-            JSON.stringify(oldEntry.beneficiaryMemberIds) !== JSON.stringify(newEntry.beneficiaryMemberIds)
-          ) {
-            snap = {
-              ...snap,
-              contribution: deltaUpdateContribution(snap.contribution, oldEntry, unit, memberIds, 'remove'),
-            };
-            snap = {
-              ...snap,
-              contribution: deltaUpdateContribution(snap.contribution, newEntry, unit, memberIds, 'add'),
-            };
-          }
-        }
-
-        snapshotRef.current = snap;
-        setContributions(newContribs);
-        break;
-      }
-      case 'expense': {
-        const newExps = await repos.expenses.getByHousehold(currentHouseholdId);
-        const oldIds = new Set(expensesRef.current.map((e) => e.id));
-        const newIds = new Set(newExps.map((e) => e.id));
-
-        let snap = snapshotRef.current;
-
-        // Removed entries: in old but not in new
-        const removed = expensesRef.current.filter((e) => !newIds.has(e.id));
-        for (const entry of removed) {
-          const shares = allocateExpense(entry);
-          let currBal = new Map(snap.moneyByCurrency.get(entry.currency) ?? []);
-          currBal.set(entry.paidByMemberId, (currBal.get(entry.paidByMemberId) ?? 0) - entry.amountMinor);
-          for (const share of shares) {
-            currBal.set(share.memberId, (currBal.get(share.memberId) ?? 0) + share.amountMinor);
-          }
-          const newMoneyByCurrency = new Map(snap.moneyByCurrency);
-          newMoneyByCurrency.set(entry.currency, currBal);
-          snap = { ...snap, moneyByCurrency: newMoneyByCurrency };
-        }
-
-        // Added entries: in new but not in old — use allocateExpense for splitMode-aware allocation
-        const added = newExps.filter((e) => !oldIds.has(e.id));
-        for (const entry of added) {
-          const shares = allocateExpense(entry);
-          let currBal = new Map(snap.moneyByCurrency.get(entry.currency) ?? []);
-          currBal.set(entry.paidByMemberId, (currBal.get(entry.paidByMemberId) ?? 0) + entry.amountMinor);
-          for (const share of shares) {
-            currBal.set(share.memberId, (currBal.get(share.memberId) ?? 0) - share.amountMinor);
-          }
-          const newMoneyByCurrency = new Map(snap.moneyByCurrency);
-          newMoneyByCurrency.set(entry.currency, currBal);
-          snap = { ...snap, moneyByCurrency: newMoneyByCurrency };
-        }
-
-        // Modified entries: same id but different fields — remove old + apply new
-        const oldExpMap = new Map(expensesRef.current.map((e) => [e.id, e]));
-        for (const newEntry of newExps) {
-          const oldEntry = oldExpMap.get(newEntry.id);
-          if (!oldEntry) continue;
-          if (
-            oldEntry.amountMinor !== newEntry.amountMinor ||
-            oldEntry.currency !== newEntry.currency ||
-            oldEntry.paidByMemberId !== newEntry.paidByMemberId ||
-            JSON.stringify(oldEntry.participantMemberIds) !== JSON.stringify(newEntry.participantMemberIds) ||
-            oldEntry.splitMode !== newEntry.splitMode ||
-            JSON.stringify(oldEntry.customShares) !== JSON.stringify(newEntry.customShares)
-          ) {
-            // Remove old effect
-            const oldShares = allocateExpense(oldEntry);
-            let currBal = new Map(snap.moneyByCurrency.get(oldEntry.currency) ?? []);
-            currBal.set(oldEntry.paidByMemberId, (currBal.get(oldEntry.paidByMemberId) ?? 0) - oldEntry.amountMinor);
-            for (const share of oldShares) {
-              currBal.set(share.memberId, (currBal.get(share.memberId) ?? 0) + share.amountMinor);
-            }
-            const tempByCurrency = new Map(snap.moneyByCurrency);
-            tempByCurrency.set(oldEntry.currency, currBal);
-            snap = { ...snap, moneyByCurrency: tempByCurrency };
-
-            // Apply new effect
-            const newShares = allocateExpense(newEntry);
-            let currBal2 = new Map(snap.moneyByCurrency.get(newEntry.currency) ?? []);
-            currBal2.set(newEntry.paidByMemberId, (currBal2.get(newEntry.paidByMemberId) ?? 0) + newEntry.amountMinor);
-            for (const share of newShares) {
-              currBal2.set(share.memberId, (currBal2.get(share.memberId) ?? 0) - share.amountMinor);
-            }
-            const tempByCurrency2 = new Map(snap.moneyByCurrency);
-            tempByCurrency2.set(newEntry.currency, currBal2);
-            snap = { ...snap, moneyByCurrency: tempByCurrency2 };
-          }
-        }
-
-        snapshotRef.current = snap;
-        setExpenses(newExps);
-        break;
-      }
-      case 'settlement': {
-        const newSett = await repos.settlements.getByHousehold(currentHouseholdId);
-        // Use the ref because handleCompenserConfirm already updated state
-        // and this signal may fire synchronously after the local write.
-        const oldIds = new Set(settlementsRef.current.map((s) => s.id));
-        const newIds = new Set(newSett.map((s) => s.id));
-
-        let snap = snapshotRef.current;
-
-        // Removed entries
-        const removed = settlementsRef.current.filter((s) => !newIds.has(s.id));
-        for (const s of removed) {
-          snap = {
-            contribution: deltaUpdateContributionFromSettlement(snap.contribution, s, unit, 'remove'),
-            moneyByCurrency: (() => {
-              const currencyMap = new Map(snap.moneyByCurrency);
-              const currBalances = new Map(currencyMap.get(s.currency) ?? []);
-              currencyMap.set(s.currency, deltaUpdateMoneyFromSettlement(currBalances, s, 'remove'));
-              return currencyMap;
-            })(),
-          };
-        }
-
-        // Added entries (only from OTHER sources — the Balances screen
-        // applies its own settlements directly in handleCompenserConfirm)
-        const added = newSett.filter((s) => !oldIds.has(s.id));
-        for (const s of added) {
-          snap = {
-            contribution: deltaUpdateContributionFromSettlement(snap.contribution, s, unit, 'add'),
-            moneyByCurrency: (() => {
-              const currencyMap = new Map(snap.moneyByCurrency);
-              const currBalances = new Map(currencyMap.get(s.currency) ?? []);
-              currencyMap.set(s.currency, deltaUpdateMoneyFromSettlement(currBalances, s, 'add'));
-              return currencyMap;
-            })(),
-          };
-        }
-
-        snapshotRef.current = snap;
-        setSettlements(newSett);
-        break;
-      }
-      case 'household': {
-        const hh = await repos.households.getById(currentHouseholdId);
-        setHousehold(hh);
-        break;
-      }
-      case 'member': {
-        const mems = await repos.members.getByHousehold(currentHouseholdId);
-        const snapshot = snapshotRef.current;
-        if (snapshot) {
-          const contribution = new Map(snapshot.contribution);
-          const moneyByCurrency = new Map([...snapshot.moneyByCurrency].map(([currency, balances]) =>
-            [currency, new Map(balances)] as const));
-          for (const member of mems) {
-            if (!contribution.has(member.id)) contribution.set(member.id, 0);
-            for (const balances of moneyByCurrency.values()) {
-              if (!balances.has(member.id)) balances.set(member.id, 0);
-            }
-          }
-          snapshotRef.current = { contribution, moneyByCurrency };
-        }
-        setMembers(mems);
-        break;
+    const id = currentHouseholdId;
+    if (!id || activeGroupRef.current !== id) return;
+    const request = ++loadRequestRef.current;
+    if (lastHouseholdIdRef.current !== id) setBalanceLoading(true);
+    setBalanceError(false);
+    try {
+      const loaded = await loadGroupBalances(repos, id);
+      if (request !== loadRequestRef.current || activeGroupRef.current !== id) return;
+      setHousehold(loaded.household);
+      setMembers(loaded.members);
+      setSnapshot(loaded.snapshot);
+      lastHouseholdIdRef.current = id;
+      setBalanceLoading(false);
+    } catch {
+      if (request === loadRequestRef.current && activeGroupRef.current === id) {
+        setBalanceError(true);
+        setBalanceLoading(false);
       }
     }
-  }, [currentHouseholdId, household, members, repos]);
+  }, [currentHouseholdId, repos]);
 
-  // Subscribe to data-change signals
-  useEffect(() => {
-    const unsub = subscribeToDataChanges(handleDataChange);
-    return unsub;
-  }, [subscribeToDataChanges, handleDataChange]);
+  const handleDataChange = useCallback(async (type: DataChangeType, id: string) => {
+    if (id === currentHouseholdId && ['contribution','expense','settlement','member','household'].includes(type)) await fullLoad();
+  }, [currentHouseholdId, fullLoad]);
 
-  // Initial load
+  useEffect(() => subscribeToDataChanges(handleDataChange), [subscribeToDataChanges, handleDataChange]);
   useEffect(() => {
-    fullLoad();
+    void fullLoad();
+    return () => { loadRequestRef.current += 1; };
   }, [fullLoad]);
-
-  // Refresh on screen focus — only if household changed or data may be stale
-  useFocusEffect(
-    useCallback(() => {
-      if (!currentHouseholdId) return;
-      if (lastHouseholdIdRef.current !== currentHouseholdId) {
-        // Household changed — full reload
-        fullLoad();
-      }
-      // Otherwise, data-change signal handles incremental updates
-    }, [currentHouseholdId, fullLoad])
-  );
+  useFocusEffect(useCallback(() => {
+    if (lastHouseholdIdRef.current === currentHouseholdId) void fullLoad();
+  }, [currentHouseholdId, fullLoad]));
 
   // ── Member name helper ────────────────────────────────────
 
@@ -443,22 +193,14 @@ export default function BalancesScreen() {
 
   // Main balances are perpetual. Period selection narrows history only; it
   // must never hide an old debt or change compensation suggestions.
-  const contributionBalances = useMemo(
-    () => snapshotRef.current?.contribution
-      ?? calculateContributionBalances(contributions, unit, settlements, memberIds),
-    [contributions, unit, settlements, memberIds]
-  );
+  const contributionBalances = snapshot.contribution;
 
   const contributionArray = useMemo(
     () => balancesToArray(contributionBalances),
     [contributionBalances]
   );
 
-  const moneyBalancesByCurrency = useMemo(
-    () => snapshotRef.current?.moneyByCurrency
-      ?? calculateFinancialBalancesByCurrency(expenses, settlements, memberIds),
-    [expenses, settlements, memberIds]
-  );
+  const moneyBalancesByCurrency = snapshot.moneyByCurrency;
 
   // Settlement suggestions
   const contributionSuggestions = useMemo(
@@ -564,53 +306,14 @@ export default function BalancesScreen() {
       createdBy: currentUser?.userId ?? household.ownerId,
     };
 
-    // Run precondition validation
-    const result = validateSettlementPreconditions(
-      settlementData as any,
-      contributions,
-      expenses,
-      memberIds,
-      settlements,
-      true
-    );
-
-    if (!result.valid) {
-      setCompenserError(result.errors[0]);
-      return;
-    }
-
     compensatingRef.current = true;
     setIsCompensating(true);
     try {
-      // Persist the immutable settlement — use the returned entity (real id)
-      const persistedSettlement = await repos.withTransaction(async () => repos.settlements.create(settlementData));
-
-      // Update local state with the real persisted entity
-      const newSettlements = [...settlements, persistedSettlement];
-      setSettlements(newSettlements);
-
-      // Apply delta to materialized snapshot — BOTH ledgers
-      if (snapshotRef.current) {
-        snapshotRef.current = {
-          contribution: deltaUpdateContributionFromSettlement(
-            snapshotRef.current.contribution, persistedSettlement, unit, 'add'
-          ),
-          moneyByCurrency: (() => {
-            const currencyMap = new Map(snapshotRef.current!.moneyByCurrency);
-            const currBalances = new Map(currencyMap.get(persistedSettlement.currency) ?? []);
-            currencyMap.set(persistedSettlement.currency, deltaUpdateMoneyFromSettlement(currBalances, persistedSettlement, 'add'));
-            return currencyMap;
-          })(),
-        };
-      }
-
-      // NOTE: We do NOT emit 'settlement' here. The screen already applied
-      // the delta to snapshotRef and updated local state (setSettlements).
-      // Emitting would cause handleDataChange('settlement') to re-read the
-      // repo, compute added against the stale `settlements` closure (which
-      // does NOT include the just-created entity because React state updates
-      // do not mutate the current render), and apply the delta a second time.
-      // Other screens (Ajouter, Todos) do not consume settlement signals.
+      await createProjectedSettlement(repos, settlementData);
+      await fullLoad();
+      // Re-reading the projection is idempotent; notifying sync can no longer
+      // apply this settlement twice to an in-memory balance snapshot.
+      emitDataChange('settlement', currentHouseholdId);
 
       // Close modal and reset
       setShowCompenser(false);
@@ -624,7 +327,7 @@ export default function BalancesScreen() {
     }
   }, [
     currentHouseholdId, currentUser, household, compenserPreview, compenserCreditor, compenserValue,
-    unit, contributions, expenses, memberIds, settlements, repos, emitDataChange, t,
+    unit, repos, emitDataChange, fullLoad, t,
   ]);
 
   // ── History pagination ─────────────────────────────────────
@@ -652,7 +355,7 @@ export default function BalancesScreen() {
   // The page itself comes from the repository, never from the full arrays.
   useEffect(() => {
     void loadHistoryPage(historyFilter);
-  }, [historyFilter, loadHistoryPage, contributions, expenses, settlements]);
+  }, [historyFilter, loadHistoryPage, snapshot]);
 
   // ── Render ─────────────────────────────────────────────────
 
@@ -720,6 +423,14 @@ export default function BalancesScreen() {
     const message = formatActivityRow(entry, memberName, unitLabel, t('add.settlement'), locale);
     services.share.share({ message });
   };
+
+  if (balanceError) return (
+    <ScreenContainer><ErrorState title={t('state.error')} message={t('state.genericError')}
+      retryLabel={t('action.retry')} onRetry={() => { void fullLoad(); }} /></ScreenContainer>
+  );
+  if (balanceLoading || household?.id !== currentHouseholdId) return (
+    <ScreenContainer><LoadingState message={t('state.loading')} /></ScreenContainer>
+  );
 
   return (
     <ScreenContainer>

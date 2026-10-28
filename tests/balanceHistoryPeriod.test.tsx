@@ -29,6 +29,8 @@ test('history periods hide old entries without hiding their perpetual task or mo
     occurredAt: '2000-01-01T12:00:00.000Z', createdBy: 'a' });
   await repos.expenses.create({ householdId: household.id, title: 'Récente dépense', amountMinor: 200, currency: 'CHF',
     paidByMemberId: ids[0], participantMemberIds: ids, splitMode: 'equal', occurredAt: now, createdBy: 'a' });
+  const fullReads=[jest.spyOn(repos.contributions,'getByHousehold'),jest.spyOn(repos.expenses,'getByHousehold'),jest.spyOn(repos.settlements,'getByHousehold')];
+  for (const read of fullReads) read.mockRejectedValue(new Error('Screen must read the projection, not complete ledgers'));
   let notify!: (type: string, householdId: string) => Promise<void>;
   mockApp.mockReturnValue({ currentHouseholdId: household.id, currentUser: { userId: 'a' }, repos,
     subscribeToDataChanges: (listener: typeof notify) => { notify = listener; return () => undefined; },
@@ -53,6 +55,7 @@ test('history periods hide old entries without hiding their perpetual task or mo
     await act(async () => { select('all-time'); });
     expect(content()).toContain('Ancienne tâche');
     expect(content()).toContain('Ancienne dépense');
+    for (const read of fullReads) { expect(read).not.toHaveBeenCalled(); read.mockRestore(); }
     expect(await repos.contributions.getByHousehold(household.id)).toHaveLength(2);
     expect(await repos.expenses.getByHousehold(household.id)).toHaveLength(2);
     await repos.members.create({ householdId: household.id, name: 'Charlie', userId: null });
@@ -63,6 +66,7 @@ test('history periods hide old entries without hiding their perpetual task or mo
     expect(content()).toMatch(/\+ 1,51\sCHF/);
     expect(content()).toMatch(/0,00\sCHF/);
   } finally {
+    for (const read of fullReads) read.mockRestore();
     await act(async () => tree.unmount());
   }
 });

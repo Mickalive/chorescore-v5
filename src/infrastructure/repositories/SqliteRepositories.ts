@@ -7,6 +7,7 @@
  */
 
 import {
+  ContributionUnit,
   User,
   Membership,
   Household,
@@ -30,6 +31,7 @@ import {
   PendingSyncMutation,
 } from '../../domain/entities';
 import {
+  BalanceProjectionRepository,
   UserRepository,
   MembershipRepository,
   HouseholdRepository,
@@ -49,6 +51,8 @@ import {
 import { getDatabase as openDatabase, parseJsonArray, toJsonArray } from '../local/SqliteStorage';
 import type { SQLiteDatabase } from 'expo-sqlite';
 import { generateRecordId as generateId } from './recordIdentity';
+import { contributionBalanceImpact, expenseBalanceImpact, settlementBalanceImpact, BalanceImpact } from '../../domain/calculations/balanceImpact';
+import type { BalanceSnapshot } from '../../domain/calculations/materializedBalances';
 
 export type SqliteDatabaseProvider = () => Promise<SQLiteDatabase>;
 
@@ -308,7 +312,7 @@ export class SqliteHouseholdRepository extends SqliteDatabaseBound implements Ho
     // Caller owns the transaction. Child deletion fires photo-link triggers;
     // file garbage collection then removes only unreferenced managed files.
     for (const table of ['contribution_entries','expense_entries','todo_items','persistent_tasks',
-      'settlements','categories','invitations','memberships','members','sync_records','sync_cursors',
+      'settlements','balance_totals','categories','invitations','memberships','members','sync_records','sync_cursors',
       'sync_sequences','sync_remote_versions','sync_pending_mutations','sync_conflicts','sync_groups']) {
       await db.runAsync(`DELETE FROM ${table} WHERE householdId = ?`, [id]);
     }
@@ -618,20 +622,25 @@ function categoryFromRow(row: CategoryRow): Category {
  */
 const CONTRIBUTION_COLUMNS =
   'id, householdId, label, performedByMemberId, beneficiaryMemberIds, value, unit, persistentTaskId, occurredAt, createdBy, modifiedBy, ' +
-  'categoryId, categoryLabelSnapshot, note, attachmentsJson, splitMode, splitWeightsJson, splitSource';
+  'categoryId, categoryLabelSnapshot, note, attachmentsJson, splitMode, splitWeightsJson, splitSource, balanceImpactJson';
 
 /** One placeholder per column, generated so SQL and params cannot drift apart. */
-const contributionPlaceholders = Array(18).fill('?').join(', ');
+const contributionPlaceholders = Array(19).fill('?').join(', ');
+
+function upsertColumns(columns: string): string {
+  return columns.split(',').map(column => column.trim()).filter(column => column !== 'id')
+    .map(column => `${column}=excluded.${column}`).join(',');
+}
 
 const CONTRIBUTION_INSERT_SQL =
   `INSERT INTO contribution_entries (${CONTRIBUTION_COLUMNS}) VALUES (${contributionPlaceholders})`;
 
 const CONTRIBUTION_UPSERT_SQL =
-  `INSERT OR REPLACE INTO contribution_entries (${CONTRIBUTION_COLUMNS}) VALUES (${contributionPlaceholders})`;
+  `${CONTRIBUTION_INSERT_SQL} ON CONFLICT(id) DO UPDATE SET ${upsertColumns(CONTRIBUTION_COLUMNS)}`;
 
 const CONTRIBUTION_UPDATE_SQL =
   'UPDATE contribution_entries SET label = ?, performedByMemberId = ?, beneficiaryMemberIds = ?, value = ?, unit = ?, persistentTaskId = ?, occurredAt = ?, modifiedBy = ?, ' +
-  'categoryId = ?, categoryLabelSnapshot = ?, note = ?, attachmentsJson = ?, splitMode = ?, splitWeightsJson = ?, splitSource = ? WHERE id = ?';
+  'categoryId = ?, categoryLabelSnapshot = ?, note = ?, attachmentsJson = ?, splitMode = ?, splitWeightsJson = ?, splitSource = ?, balanceImpactJson = ? WHERE id = ?';
 
 function contributionParams(entry: ContributionEntry): (string | number | null)[] {
   return [
@@ -653,6 +662,7 @@ function contributionParams(entry: ContributionEntry): (string | number | null)[
     entry.splitMode ?? null,
     entry.splitWeights && entry.splitWeights.length > 0 ? toJsonArray(entry.splitWeights) : null,
     entry.splitSource ?? null,
+    JSON.stringify(contributionBalanceImpact(entry)),
   ];
 }
 
@@ -744,6 +754,7 @@ export class SqliteContributionEntryRepository extends SqliteDatabaseBound imple
       updated.splitMode ?? null,
       updated.splitWeights && updated.splitWeights.length > 0 ? toJsonArray(updated.splitWeights) : null,
       updated.splitSource ?? null,
+      JSON.stringify(contributionBalanceImpact(updated)),
       id,
     ]);
     return updated;
@@ -1128,16 +1139,16 @@ function todoFromRow(row: TodoRow): TodoItem {
 /** V4-01: user-created category reference + snapshot + attachments. */
 const EXPENSE_COLUMNS =
   'id, householdId, title, amountMinor, currency, paidByMemberId, participantMemberIds, splitMode, customSharesJson, note, category, occurredAt, createdBy, modifiedBy, ' +
-  'categoryId, categoryLabelSnapshot, attachmentsJson';
+  'categoryId, categoryLabelSnapshot, attachmentsJson, balanceImpactJson';
 
-const expensePlaceholders = Array(17).fill('?').join(', ');
+const expensePlaceholders = Array(18).fill('?').join(', ');
 
 const EXPENSE_INSERT_SQL = `INSERT INTO expense_entries (${EXPENSE_COLUMNS}) VALUES (${expensePlaceholders})`;
-const EXPENSE_UPSERT_SQL = `INSERT OR REPLACE INTO expense_entries (${EXPENSE_COLUMNS}) VALUES (${expensePlaceholders})`;
+const EXPENSE_UPSERT_SQL = `${EXPENSE_INSERT_SQL} ON CONFLICT(id) DO UPDATE SET ${upsertColumns(EXPENSE_COLUMNS)}`;
 
 const EXPENSE_UPDATE_SQL =
   'UPDATE expense_entries SET title = ?, amountMinor = ?, currency = ?, paidByMemberId = ?, participantMemberIds = ?, splitMode = ?, customSharesJson = ?, note = ?, category = ?, occurredAt = ?, modifiedBy = ?, ' +
-  'categoryId = ?, categoryLabelSnapshot = ?, attachmentsJson = ? WHERE id = ?';
+  'categoryId = ?, categoryLabelSnapshot = ?, attachmentsJson = ?, balanceImpactJson = ? WHERE id = ?';
 
 function expenseParams(entry: ExpenseEntry): (string | number | null)[] {
   return [
@@ -1158,6 +1169,7 @@ function expenseParams(entry: ExpenseEntry): (string | number | null)[] {
     entry.categoryId ?? null,
     entry.categoryLabelSnapshot ?? null,
     entry.attachments && entry.attachments.length > 0 ? toJsonArray(entry.attachments) : null,
+    JSON.stringify(expenseBalanceImpact(entry)),
   ];
 }
 
@@ -1248,6 +1260,7 @@ export class SqliteExpenseEntryRepository extends SqliteDatabaseBound implements
       updated.categoryId ?? null,
       updated.categoryLabelSnapshot ?? null,
       updated.attachments && updated.attachments.length > 0 ? toJsonArray(updated.attachments) : null,
+      JSON.stringify(expenseBalanceImpact(updated)),
       id,
     ]);
     return updated;
@@ -1309,26 +1322,21 @@ function expenseFromRow(row: ExpenseEntryRow): ExpenseEntry {
 
 // ── Settlement Repository ──────────────────────────────────────
 
+const SETTLEMENT_COLUMNS = 'id,householdId,contributionCreditorMemberId,counterpartyMemberId,contributionValue,contributionUnit,moneyAmountMinor,currency,rateSnapshotJson,occurredAt,createdBy,balanceImpactJson';
+const SETTLEMENT_INSERT_SQL = `INSERT INTO settlements (${SETTLEMENT_COLUMNS}) VALUES (${Array(12).fill('?').join(',')})`;
+
+function settlementParams(entry: CrossLedgerSettlement): (string | number)[] {
+  return [entry.id,entry.householdId,entry.contributionCreditorMemberId,entry.counterpartyMemberId,
+    entry.contributionValue,entry.contributionUnit,entry.moneyAmountMinor,entry.currency,
+    JSON.stringify(entry.rateSnapshot),entry.occurredAt,entry.createdBy,JSON.stringify(settlementBalanceImpact(entry))];
+}
+
 export class SqliteSettlementRepository extends SqliteDatabaseBound implements SettlementRepository {
   async seed(settlements: CrossLedgerSettlement[]): Promise<void> {
     const db = await this.db();
     for (const settlement of settlements) {
-      await db.runAsync(
-        'INSERT OR REPLACE INTO settlements (id, householdId, contributionCreditorMemberId, counterpartyMemberId, contributionValue, contributionUnit, moneyAmountMinor, currency, rateSnapshotJson, occurredAt, createdBy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [
-          settlement.id,
-          settlement.householdId,
-          settlement.contributionCreditorMemberId,
-          settlement.counterpartyMemberId,
-          settlement.contributionValue,
-          settlement.contributionUnit,
-          settlement.moneyAmountMinor,
-          settlement.currency,
-          JSON.stringify(settlement.rateSnapshot),
-          settlement.occurredAt,
-          settlement.createdBy,
-        ]
-      );
+      await db.runAsync(`${SETTLEMENT_INSERT_SQL} ON CONFLICT(id) DO UPDATE SET ${upsertColumns(SETTLEMENT_COLUMNS)}`,
+        settlementParams(settlement));
     }
   }
 
@@ -1387,22 +1395,7 @@ export class SqliteSettlementRepository extends SqliteDatabaseBound implements S
       ...settlement,
       id: generateId('settlement'),
     };
-    await db.runAsync(
-      'INSERT INTO settlements (id, householdId, contributionCreditorMemberId, counterpartyMemberId, contributionValue, contributionUnit, moneyAmountMinor, currency, rateSnapshotJson, occurredAt, createdBy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [
-        created.id,
-        created.householdId,
-        created.contributionCreditorMemberId,
-        created.counterpartyMemberId,
-        created.contributionValue,
-        created.contributionUnit,
-        created.moneyAmountMinor,
-        created.currency,
-        JSON.stringify(created.rateSnapshot),
-        created.occurredAt,
-        created.createdBy,
-      ]
-    );
+    await db.runAsync(SETTLEMENT_INSERT_SQL, settlementParams(created));
     return created;
   }
 
@@ -1440,6 +1433,49 @@ function settlementFromRow(row: SettlementRow): CrossLedgerSettlement {
     occurredAt: row.occurredAt,
     createdBy: row.createdBy,
   };
+}
+
+/** Stored totals are local derived data. Each legacy page crosses the native
+ * bridge at most once; following opens read member totals, not ledger payloads.
+ */
+export class SqliteBalanceProjectionRepository extends SqliteDatabaseBound implements BalanceProjectionRepository {
+  private async backfill<Row extends { id: string }>(
+    db: SQLiteDatabase, table: string, householdId: string, impact: (row: Row) => BalanceImpact[],
+  ): Promise<void> {
+    for (;;) {
+      const page = await db.getAllAsync<Row>(
+        `SELECT * FROM ${table} WHERE householdId=? AND balanceImpactJson IS NULL ORDER BY id LIMIT 100`, [householdId]);
+      if (!page.length) return;
+      // One atomic SQL update per page, rather than one native round-trip per
+      // historic entry. Conditional writes cannot overwrite a concurrent edit.
+      const params: (string | number)[] = [];
+      for (const row of page) params.push(row.id, JSON.stringify(impact(row)));
+      params.push(householdId, ...page.map(row => row.id));
+      await db.runAsync(`UPDATE ${table} SET balanceImpactJson=CASE id ${page.map(() => 'WHEN ? THEN ?').join(' ')} END
+        WHERE householdId=? AND balanceImpactJson IS NULL AND id IN (${page.map(() => '?').join(',')})`, params);
+    }
+  }
+
+  async getByHousehold(householdId: string, unit: ContributionUnit, memberIds: string[]): Promise<BalanceSnapshot> {
+    const db = await this.db();
+    await this.backfill<ContributionEntryRow>(db, 'contribution_entries', householdId, row => contributionBalanceImpact(contributionFromRow(row)));
+    await this.backfill<ExpenseEntryRow>(db, 'expense_entries', householdId, row => expenseBalanceImpact(expenseFromRow(row)));
+    await this.backfill<SettlementRow>(db, 'settlements', householdId, row => settlementBalanceImpact(settlementFromRow(row)));
+    const totals = await db.getAllAsync<{ ledger: string; bucket: string; memberId: string; amount: number }>(
+      "SELECT ledger,bucket,memberId,amount FROM balance_totals WHERE householdId=? AND supportCount>0 AND (ledger='money' OR bucket=?)", [householdId,unit]);
+    const contribution = new Map(memberIds.map(id => [id, 0]));
+    const moneyByCurrency = new Map<string, Map<string, number>>();
+    for (const row of totals) {
+      if (row.ledger === 'contribution') contribution.set(row.memberId,row.amount);
+      else {
+        if (!Number.isSafeInteger(row.amount)) throw new Error('Money balance exceeds safe integer precision');
+        let balances = moneyByCurrency.get(row.bucket);
+        if (!balances) { balances=new Map(memberIds.map(id => [id,0])); moneyByCurrency.set(row.bucket,balances); }
+        balances.set(row.memberId,row.amount);
+      }
+    }
+    return { contribution, moneyByCurrency };
+  }
 }
 
 // ── V3-06: SQLite Invitation Repository ────────────────────────

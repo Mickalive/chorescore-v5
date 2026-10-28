@@ -29,6 +29,7 @@ export function getDatabase(name: string = DEFAULT_DATABASE_NAME): Promise<SQLit
       await initializeSchema(database);
       await applyV4ColumnMigrations(database);
       await initializeAttachmentLinks(database);
+      await initializeBalanceProjections(database);
       return database;
     } catch (error) {
       await database.closeAsync();
@@ -115,7 +116,8 @@ export async function initializeSchema(database: SQLite.SQLiteDatabase): Promise
       attachmentsJson TEXT,
       splitMode TEXT,
       splitWeightsJson TEXT,
-      splitSource TEXT
+      splitSource TEXT,
+      balanceImpactJson TEXT
     );
 
     CREATE TABLE IF NOT EXISTS persistent_tasks (
@@ -167,7 +169,8 @@ export async function initializeSchema(database: SQLite.SQLiteDatabase): Promise
       -- V4-01: optional user-created category / attachments
       categoryId TEXT,
       categoryLabelSnapshot TEXT,
-      attachmentsJson TEXT
+      attachmentsJson TEXT,
+      balanceImpactJson TEXT
     );
 
     -- V4-01: user-created categories. NO seeded taxonomy: a household starts
@@ -193,7 +196,8 @@ export async function initializeSchema(database: SQLite.SQLiteDatabase): Promise
       currency TEXT NOT NULL,
       rateSnapshotJson TEXT NOT NULL,
       occurredAt TEXT NOT NULL,
-      createdBy TEXT NOT NULL
+      createdBy TEXT NOT NULL,
+      balanceImpactJson TEXT
     );
 
     -- File lifecycle is independent from ledger history. Links are changed by
@@ -343,6 +347,9 @@ export interface ColumnMigration {
 }
 
 export const V4_COLUMN_MIGRATIONS: ColumnMigration[] = [
+  { table: 'contribution_entries', column: 'balanceImpactJson', ddl: 'TEXT' },
+  { table: 'expense_entries', column: 'balanceImpactJson', ddl: 'TEXT' },
+  { table: 'settlements', column: 'balanceImpactJson', ddl: 'TEXT' },
   // contribution_entries: category / attachments / snapshoted custom split
   { table: 'contribution_entries', column: 'categoryId', ddl: 'TEXT' },
   { table: 'contribution_entries', column: 'categoryLabelSnapshot', ddl: 'TEXT' },
@@ -396,6 +403,51 @@ export async function applyV4ColumnMigrations(
     }
   }
   return added;
+}
+
+/** Derived member totals commit/roll back in the ledger's own SQL statement.
+ * Impacts use the domain allocators, not a second implementation in SQL.
+ * Legacy NULL impacts are backfilled lazily; opening Groups never replays them.
+ */
+export async function initializeBalanceProjections(database: SQLite.SQLiteDatabase): Promise<void> {
+  await database.execAsync(`
+    CREATE TABLE IF NOT EXISTS balance_totals (
+      householdId TEXT NOT NULL,
+      ledger TEXT NOT NULL,
+      bucket TEXT NOT NULL,
+      memberId TEXT NOT NULL,
+      amount NUMERIC NOT NULL CHECK (ledger<>'money' OR typeof(amount)='integer'),
+      supportCount INTEGER NOT NULL,
+      PRIMARY KEY (householdId, ledger, bucket, memberId)
+    );
+  `);
+  for (const table of ['contribution_entries', 'expense_entries', 'settlements']) {
+    const apply = (row: 'OLD' | 'NEW', sign: number) => `
+      INSERT INTO balance_totals (householdId,ledger,bucket,memberId,amount,supportCount)
+        SELECT ${row}.householdId,json_extract(value,'$.ledger'),json_extract(value,'$.bucket'),
+          json_extract(value,'$.memberId'),${sign}*json_extract(value,'$.amount'),${sign}
+        FROM json_each(COALESCE(${row}.balanceImpactJson,'[]')) WHERE 1
+        ON CONFLICT(householdId,ledger,bucket,memberId) DO UPDATE SET
+          amount=balance_totals.amount+excluded.amount,
+          supportCount=balance_totals.supportCount+excluded.supportCount;
+      DELETE FROM balance_totals WHERE householdId=${row}.householdId AND supportCount<=0;
+    `;
+    await database.execAsync(`
+      CREATE INDEX IF NOT EXISTS idx_${table}_balance_backfill
+        ON ${table}(householdId,id) WHERE balanceImpactJson IS NULL;
+      CREATE TRIGGER IF NOT EXISTS ${table}_balance_insert AFTER INSERT ON ${table} BEGIN
+        ${apply('NEW', 1)}
+      END;
+      CREATE TRIGGER IF NOT EXISTS ${table}_balance_update
+        AFTER UPDATE OF balanceImpactJson,householdId ON ${table} BEGIN
+        ${apply('OLD', -1)}
+        ${apply('NEW', 1)}
+      END;
+      CREATE TRIGGER IF NOT EXISTS ${table}_balance_delete AFTER DELETE ON ${table} BEGIN
+        ${apply('OLD', -1)}
+      END;
+    `);
+  }
 }
 
 /** Additive file-reference migration; never changes an entry's content. */

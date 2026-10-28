@@ -12,5 +12,6 @@
   "fullNativeJourneyPassed": false,
   "productionFirebaseVerified": false,
   "twoPhysicalPhonesVerified": false,
-  "previousNativeEvidence": "android-candidate.json"
+  "previousNativeEvidence": "android-candidate.json",
+  "supersededBy": "android-projection-candidate.json"
 }
