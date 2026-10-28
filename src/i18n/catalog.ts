@@ -367,6 +367,7 @@ export const CATALOG: Record<SupportedLocale, LocaleCatalog> = {
     'invite.createTargetedLink': 'Partager l’invitation pour {name}',
     'invite.createError': 'Impossible de créer l’invitation.',
     'invite.targetRequiredTitle': 'Choisissez un membre',
+    'invite.alreadyJoined': '{name} a déjà rejoint le groupe.',
     'invite.targetRequiredBody':
       'La synchronisation sécurisée invite un membre nommé précis. Ouvrez le membre concerné puis « Inviter ».',
     'invite.groupNotFound': 'Groupe introuvable.',
@@ -386,6 +387,7 @@ export const CATALOG: Record<SupportedLocale, LocaleCatalog> = {
     'join.title': 'Rejoindre un groupe',
     'join.invalidLink': 'Lien d’invitation invalide.',
     'join.notFound': 'Invitation introuvable ou invalide.',
+    'join.unavailable': 'Cette invitation a expiré, a été utilisée ou n’est plus disponible.',
     'join.groupNotFound': 'Groupe introuvable.',
     'join.signInRequired': 'Connectez-vous pour accepter l’invitation.',
     'join.verifyError': 'Erreur lors de la vérification de l’invitation.',
@@ -816,6 +818,7 @@ export const CATALOG: Record<SupportedLocale, LocaleCatalog> = {
     'invite.createTargetedLink': 'Share the invitation for {name}',
     'invite.createError': 'Could not create the invitation.',
     'invite.targetRequiredTitle': 'Choose a member',
+    'invite.alreadyJoined': '{name} has already joined the group.',
     'invite.targetRequiredBody':
       'Secure synchronization invites one specific named member. Open that member, then choose “Invite”.',
     'invite.groupNotFound': 'Group not found.',
@@ -835,6 +838,7 @@ export const CATALOG: Record<SupportedLocale, LocaleCatalog> = {
     'join.title': 'Join a group',
     'join.invalidLink': 'Invalid invite link.',
     'join.notFound': 'Invitation not found or invalid.',
+    'join.unavailable': 'This invitation has expired, was already used, or is no longer available.',
     'join.groupNotFound': 'Group not found.',
     'join.signInRequired': 'Sign in to accept the invitation.',
     'join.verifyError': 'Error while checking the invitation.',

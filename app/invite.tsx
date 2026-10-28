@@ -2,13 +2,13 @@
  * ChoreScore V4 — Invitation Screen
  *
  * Invitations are shared by link only, after the group exists. The link is
- * generated locally and opened in the native share sheet through the injected
+ * issued by the authenticated collaboration service and opened in the native share sheet through the injected
  * SystemShareGateway port (no fake share).
  *
  * Free for all. No premium gating. No plan limits.
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
 import {
   View,
   StyleSheet,
@@ -31,38 +31,54 @@ import { buildInviteLink } from '../src/features/invitations/inviteLink';
 export default function InviteScreen() {
   const router = useRouter();
   const { t, locale } = useI18n();
-  const { currentHouseholdId, currentUser, repos, services } = useApp();
+  const { currentHouseholdId, currentUser, repos, services, subscribeToDataChanges } = useApp();
   const collaborationAvailable = services.sync.isAvailable();
   const { memberId } = useLocalSearchParams<{ memberId?: string }>();
   const [existingInvitations, setExistingInvitations] = useState<Invitation[]>([]);
   const [targetMember, setTargetMember] = useState<Member | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [revokingId, setRevokingId] = useState<string | null>(null);
+  const submittingRef = useRef(false);
+  const flowKey = JSON.stringify([currentHouseholdId, currentUser?.userId, memberId]);
+  const activeFlow = useRef<string | null>(flowKey);
+  const loadSequence = useRef(0);
+  useLayoutEffect(() => {
+    activeFlow.current = flowKey;
+    setTargetMember(null);
+    setExistingInvitations([]);
+    return () => { activeFlow.current = null; };
+  }, [flowKey]);
 
   const loadInvitations = useCallback(async () => {
     if (!currentHouseholdId) return;
-    const invs = await repos.invitations.getByHousehold(currentHouseholdId);
-    setExistingInvitations(invs.filter((i: Invitation) => i.status === 'pending'));
-  }, [currentHouseholdId, repos]);
+    const sequence = ++loadSequence.current;
+    const [invs, members] = await Promise.all([
+      repos.invitations.getByHousehold(currentHouseholdId),
+      repos.members.getByHousehold(currentHouseholdId),
+    ]);
+    if (activeFlow.current !== flowKey || sequence !== loadSequence.current) return;
+    setTargetMember(members.find(member => member.id === memberId) ?? null);
+    setExistingInvitations(invs.filter((inv: Invitation) =>
+      inv.status === 'pending' && inv.invitedByUserId === currentUser?.userId &&
+      Date.parse(inv.expiresAt) > Date.now() &&
+      members.some(member => member.id === inv.targetMemberId && !member.userId),
+    ));
+  }, [currentHouseholdId, currentUser?.userId, memberId, repos, flowKey]);
 
   useEffect(() => {
-    loadInvitations();
-  }, [loadInvitations]);
-
-  // V4-09: a targeted invitation links an existing named member. Resolve the
-  // member so the screen can show who is being invited and create the
-  // invitation with the exact member id (never a name match).
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      if (!memberId || !currentHouseholdId) return;
-      const member = await repos.members.getById(memberId);
-      if (!cancelled) setTargetMember(member ?? null);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [memberId, currentHouseholdId, repos]);
+    void loadInvitations().catch(() => {
+      setExistingInvitations([]);
+      setTargetMember(null);
+    });
+    return subscribeToDataChanges((type, groupId) => {
+      if (groupId === currentHouseholdId && ['member', 'household'].includes(type)) {
+        void loadInvitations().catch(() => {
+          setExistingInvitations([]);
+          setTargetMember(null);
+        });
+      }
+    });
+  }, [loadInvitations, subscribeToDataChanges, currentHouseholdId]);
 
   const shareLink = useCallback(async (token: string, groupName?: string) => {
     const link = buildInviteLink(token);
@@ -79,64 +95,52 @@ export default function InviteScreen() {
     collaborationAvailable && typeof services.sync.createInvitation === 'function';
 
   const handleCreateAndShare = async () => {
-    if (!collaborationAvailable) {
+    if (submittingRef.current || activeFlow.current !== flowKey) return;
+    if (!remoteInvitations) {
       Alert.alert(t('invite.unavailableTitle'), t('invite.unavailableBody'));
       return;
     }
     if (!currentHouseholdId || !currentUser) return;
-    if (remoteInvitations && !targetMember) {
+    if (!targetMember || targetMember.userId) {
       Alert.alert(t('invite.targetRequiredTitle'), t('invite.targetRequiredBody'));
       return;
     }
+    submittingRef.current = true;
     setIsSubmitting(true);
     try {
       const household = await repos.households.getById(currentHouseholdId);
       if (!household) throw new Error(t('invite.groupNotFound'));
 
-      if (remoteInvitations) {
-        // Real collaboration: the server issues an opaque, expiring token for
-        // this exact named member. The local row only mirrors it for history.
-        const remote = await services.sync.createInvitation!(
-          currentHouseholdId,
-          targetMember!.id,
-        );
-        const localInvitation = createInvitation({
-          household,
-          invitedByUserId: currentUser.userId,
-          targetMemberId: targetMember!.id,
-        });
-        const created = await repos.invitations.create({
-          ...localInvitation,
-          linkToken: remote.token,
-          expiresAt: remote.expiresAt,
-        });
-        await shareLink(created.linkToken, household.name);
-        await loadInvitations();
-        return;
+      const members = await repos.members.getByHousehold(currentHouseholdId);
+      const target = members.find(member => member.id === targetMember.id && !member.userId);
+      if (!target || household.ownerId !== currentUser.userId) {
+        throw new Error('Invitation target is no longer available');
       }
-
-      // Reuse the current pending link so repeated taps never pile up
-      // one-time invitations. The reuse is scoped to the SAME target.
-      const existing = existingInvitations.find(
-        (inv) => (inv.targetMemberId ?? null) === (targetMember?.id ?? null),
-      );
+      const invitations = await repos.invitations.getByHousehold(currentHouseholdId);
+      const existing = invitations.find(inv => inv.status === 'pending' &&
+        inv.invitedByUserId === currentUser.userId && inv.targetMemberId === target.id &&
+        Date.parse(inv.expiresAt) > Date.now() && /^[A-Za-z0-9_-]{43}$/.test(inv.linkToken));
       if (existing) {
+        if (activeFlow.current !== flowKey) return;
         await shareLink(existing.linkToken, household.name);
         return;
       }
+      const remote = await services.sync.createInvitation!(currentHouseholdId, target.id);
 
       const invData = createInvitation({
         household,
         invitedByUserId: currentUser.userId,
-        targetMemberId: targetMember?.id ?? null,
+        targetMemberId: target.id,
       });
-      const created = await repos.invitations.create(invData);
+      const created = await repos.invitations.create({ ...invData, linkToken: remote.token, expiresAt: remote.expiresAt });
+      if (activeFlow.current !== flowKey) return;
       await shareLink(created.linkToken, household.name);
       await loadInvitations();
     } catch {
-      Alert.alert(t('state.error'), t('invite.createError'));
+      if (activeFlow.current === flowKey) Alert.alert(t('state.error'), t('invite.createError'));
     } finally {
-      setIsSubmitting(false);
+      submittingRef.current = false;
+      if (activeFlow.current !== null) setIsSubmitting(false);
     }
   };
 
@@ -189,7 +193,9 @@ export default function InviteScreen() {
         )}
         <Card style={styles.card}>
           <Text variant="body" style={styles.hint}>
-            {targetMember
+            {targetMember?.userId
+              ? t('invite.alreadyJoined', { name: targetMember.name })
+              : targetMember
               ? t('invite.targetedHint', { name: targetMember.name })
               : remoteInvitations
                 ? t('invite.targetRequiredBody')
@@ -202,7 +208,8 @@ export default function InviteScreen() {
             variant="primary"
             onPress={handleCreateAndShare}
             disabled={
-              !collaborationAvailable ||
+              !remoteInvitations ||
+              !!targetMember?.userId ||
               !currentHouseholdId ||
               isSubmitting ||
               (remoteInvitations && !targetMember)
