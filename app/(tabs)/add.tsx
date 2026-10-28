@@ -1,3 +1,4 @@
+import { TaskShortcutsManager } from '../../src/features/shortcuts/TaskShortcutsManager';
 import { generateRecordId } from '../../src/infrastructure/repositories/recordIdentity';
 import { DateTimeField } from '../../src/ui/components/DateTimeField';
 import { taskUpdatePayload, expenseUpdatePayload } from '../../src/features/entries/editPayload';
@@ -251,6 +252,8 @@ export default function AddScreen() {
     if (householdMembers.length > 0) {
       setTaskForm((prev) => ({
         ...prev,
+        ...(prev.persistentTaskId && tasks.some(task => task.id === prev.persistentTaskId && task.defaultUnit !== household.contributionUnit)
+          ? { persistentTaskId: null, value: '' } : {}),
         performedByMemberId: prev.performedByMemberId || householdMembers[0].id,
         beneficiaryMemberIds:
           prev.beneficiaryMemberIds.length > 0
@@ -279,6 +282,11 @@ export default function AddScreen() {
     try {
       if (type === 'member' || type === 'household') await loadHousehold();
       else if (type === 'category') await loadCategories();
+      else if (type === 'shortcut') {
+        const tasks = await repos.tasks.getByHousehold(groupId);
+        setPersistentTasks(tasks);
+        setTaskForm(prev => prev.persistentTaskId && !tasks.some(task => task.id === prev.persistentTaskId) ? { ...prev, persistentTaskId: null } : prev);
+      }
     } catch { setLoadError(true); }
   }), [subscribeToDataChanges, currentHouseholdId, loadHousehold, loadCategories]);
 
@@ -1073,15 +1081,18 @@ export default function AddScreen() {
             />
           </View>
 
-          {persistentTasks.length > 0 && (
+          {persistentTasks.some(task => task.defaultUnit === activeTaskUnit) && (
             <View style={styles.inputGroup}>
               <Text variant="caption">{t('add.shortcuts')}</Text>
               <View style={styles.chipRow}>
-                {persistentTasks.map((pt) => {
+                {persistentTasks.filter(pt => pt.defaultUnit === activeTaskUnit).map((pt) => {
                   const selected = taskForm.persistentTaskId === pt.id;
                   return (
                     <TouchableOpacity
                       key={pt.id}
+                      testID={`add.shortcut.${pt.id}`}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
                       style={[styles.memberChip, selected && styles.memberChipActive]}
                       onPress={() => {
                         if (selected) {
@@ -1317,6 +1328,18 @@ export default function AddScreen() {
           </TouchableOpacity>
 
           {categoriesOpen && renderCategoryManager()}
+          {!isEditing && currentHouseholdId && <TaskShortcutsManager
+            householdId={currentHouseholdId} name={taskForm.label} value={taskForm.value} unit={activeTaskUnit}
+            beneficiaryMemberIds={taskForm.beneficiaryMemberIds} tasks={persistentTasks}
+            onSaved={task => {
+              setPersistentTasks(prev => prev.some(item => item.id === task.id) ? prev : [...prev, task]);
+              setTaskForm(prev => ({ ...prev, persistentTaskId: task.id }));
+            }}
+            onDeleted={id => {
+              setPersistentTasks(prev => prev.filter(task => task.id !== id));
+              setTaskForm(prev => prev.persistentTaskId === id ? { ...prev, persistentTaskId: null } : prev);
+            }} />}
+
         </Card>
       )}
 

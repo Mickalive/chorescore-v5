@@ -47,7 +47,7 @@ import {
 import { loadHouseholdsForUser } from './demoFixture';
 
 /** Types of data-change events that screens can emit. */
-export type DataChangeType = 'contribution' | 'expense' | 'settlement' | 'household' | 'member' | 'todo' | 'category';
+export type DataChangeType = 'contribution' | 'expense' | 'settlement' | 'household' | 'member' | 'todo' | 'category' | 'shortcut';
 
 /** Callback signature for data-change subscribers. */
 export type DataChangeCallback = (type: DataChangeType, householdId: string) => void;
@@ -304,7 +304,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         else if (collection === 'categories') types.add('category');
         else if (collection === 'households') types.add('household');
         else if (collection === 'members' || collection === 'memberships') types.add('member');
-        else if (collection === 'todo_items' || collection === 'persistent_tasks') types.add('todo');
+        else if (collection === 'todo_items') types.add('todo');
+        else if (collection === 'persistent_tasks') types.add('shortcut');
       }
       if (types.has('todo') || types.has('household') || types.has('member')) refreshReminders();
       for (const type of types) {

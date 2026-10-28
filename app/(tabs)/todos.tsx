@@ -198,7 +198,7 @@ export default function TodosScreen() {
   }, [loadData]);
 
   useEffect(() => subscribeToDataChanges(async (type, groupId) => {
-    if (groupId !== currentHouseholdId || !['todo', 'member', 'household', 'category'].includes(type)) return;
+    if (groupId !== currentHouseholdId || !['todo', 'member', 'household', 'category', 'shortcut'].includes(type)) return;
     try { await loadData(); } catch { setLoadError(true); }
   }), [subscribeToDataChanges, currentHouseholdId, loadData]);
 

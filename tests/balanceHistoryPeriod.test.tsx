@@ -95,3 +95,25 @@ test('a history read failure shows retry without claiming the group is empty and
   read.mockRestore();
   await act(async () => tree.unmount());
 });
+
+test('history and sharing retain the original entry unit after the group changes from points to minutes', async () => {
+  const repos = createInMemoryRepositories();
+  const { household, ownerMember } = await createGroupWithMembers(repos, {
+    name: 'Unités historiques', owner: { userId: 'a', displayName: 'Alice' }, memberNames: [], contributionUnit: 'points' });
+  await repos.contributions.create({ householdId: household.id, label: 'Ancienne tâche en points', value: 9,
+    unit: 'points', performedByMemberId: ownerMember.id, beneficiaryMemberIds: [ownerMember.id], persistentTaskId: null,
+    occurredAt: '2026-01-02T08:17:00.000Z', createdBy: 'a' });
+  await repos.households.update(household.id, { contributionUnit: 'minutes' });
+  const share = jest.fn(async () => {});
+  mockApp.mockReturnValue({ currentHouseholdId: household.id, currentUser: { userId: 'a' }, repos,
+    subscribeToDataChanges: () => () => {}, emitDataChange: jest.fn(), services: { share: { share } } });
+  let tree!: renderer.ReactTestRenderer;
+  await act(async () => { tree = renderer.create(<BalancesScreen />); });
+  const entry = tree.root.findAllByType(TouchableOpacity).find(button => button.props.testID === 'balances.history.index.0')!;
+  expect(entry.props.accessibilityLabel).toContain('9 pts');
+  expect(entry.props.accessibilityLabel).not.toContain('9 min');
+  await act(async () => entry.props.onPress());
+  await act(async () => tree.root.findAllByType(TouchableOpacity).find(button => button.props.testID === 'balances.shareEntry')!.props.onPress());
+  expect(share).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('9 pts') }));
+  await act(async () => tree.unmount());
+});

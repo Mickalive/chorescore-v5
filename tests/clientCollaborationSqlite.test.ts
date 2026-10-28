@@ -550,3 +550,26 @@ test('lost group-creation response survives restart without conflicts or droppin
   expect(events.findLast((change: any) => change.id === namedMembers[0].id).value.name).toBe('Robert');
   expect(events.find((change: any) => change.id === added.id).value.name).toBe('Charlie');
 });
+
+test('a reusable shortcut is shared between two real SQLite clients and its deletion keeps past tasks', async () => {
+  const { saveTaskShortcut } = require('../src/application/use-cases/taskShortcuts');
+  const alice = await openClient('shortcut-alice', 'shortcut-alice.db');
+  const bob = await openClient('shortcut-bob', 'shortcut-bob.db');
+  const { household, ownerMember, namedMembers } = await createGroupWithMembers(alice.repos, {
+    name: 'Raccourcis partagés', owner: { userId: alice.uid, displayName: 'Alice' }, memberNames: ['Bob'], contributionUnit: 'points' });
+  await alice.sync.ensureRemoteGroup(household.id, alice.uid);
+  const invitation = await alice.sync.createInvitation(household.id, namedMembers[0].id);
+  await bob.sync.acceptInvitation(invitation.token);
+  const shortcut = await saveTaskShortcut(alice.repos, { householdId: household.id, name: 'Cuisine', value: '3,5', unit: 'points', beneficiaryMemberIds: [ownerMember.id, namedMembers[0].id] });
+  await alice.sync.pushChanges(household.id); await bob.sync.pullChanges(household.id);
+  expect(await bob.repos.tasks.getById(shortcut.id)).toEqual(shortcut);
+  const entry = await bob.repos.contributions.create({ householdId: household.id, label: shortcut.name, value: shortcut.defaultValue,
+    unit: shortcut.defaultUnit, performedByMemberId: namedMembers[0].id, beneficiaryMemberIds: shortcut.defaultBeneficiaryMemberIds!,
+    persistentTaskId: shortcut.id, occurredAt: new Date().toISOString(), createdBy: bob.uid });
+  await bob.sync.pushChanges(household.id); await alice.sync.pullChanges(household.id);
+  await alice.repos.tasks.delete(shortcut.id);
+  await alice.sync.pushChanges(household.id); await bob.sync.pullChanges(household.id);
+  await restart(bob);
+  expect(await bob.repos.tasks.getById(shortcut.id)).toBeNull();
+  expect(await bob.repos.contributions.getById(entry.id)).toEqual(entry);
+});

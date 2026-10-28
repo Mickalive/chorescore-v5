@@ -25,6 +25,7 @@ import {
 import { AllRepositories } from '../../infrastructure/repositories/RepositoryFactory';
 
 export interface ActivityHistoryOptions {
+  persistentTaskId?: string | null;
   limit?: number;
   cursor?: string | null;
   filter?: ActivityFilter;
@@ -58,11 +59,12 @@ export async function loadActivityHistoryPage(
   options: ActivityHistoryOptions = {},
 ): Promise<ActivityLogPage> {
   const limit = options.limit ?? 20;
-  const filter = options.filter ?? 'all';
+  const filter = options.persistentTaskId !== undefined ? 'contribution' : options.filter ?? 'all';
   const query: PaginatedQuery = {
     limit: limit + 1,
     cursor: options.cursor ?? null,
     after: options.after,
+    persistentTaskId: options.persistentTaskId,
   };
 
   const requests: Promise<ActivityLogPage['entries']>[] = [];

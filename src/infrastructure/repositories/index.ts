@@ -123,6 +123,8 @@ export interface PaginatedResult<T> {
 }
 
 export interface PaginatedQuery {
+  /** Contribution history only: undefined=all, null=unlinked tasks. */
+  persistentTaskId?: string | null;
   limit?: number;
   /** Exclusive composite cursor — items strictly older than the encoded position. */
   cursor?: string | null;

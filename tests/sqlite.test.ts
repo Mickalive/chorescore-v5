@@ -522,3 +522,29 @@ test('group root counts use one compact SQL query instead of loading every membe
   await expect(scoped.members.getCountsByHouseholds(ids)).rejects.toThrow();
   read.mockRestore(); membershipRead.mockRestore(); forbidden.mockRestore();
 });
+
+test('shortcut history filters paginate in SQL, preserve deleted shortcut history and isolate groups', async () => {
+  const repos = (await createSqliteRepositories())!;
+  const { saveTaskShortcut } = require('../src/application/use-cases/taskShortcuts');
+  const { loadActivityHistoryPage } = require('../src/application/use-cases/activityHistory');
+  const { household, ownerMember } = await createGroupWithMembers(repos, { name: 'Raccourcis',
+    owner: { userId: 'shortcuts-owner', displayName: 'Alice' }, memberNames: [], contributionUnit: 'points' });
+  const shortcut = await saveTaskShortcut(repos, { householdId: household.id, name: 'Cuisine', value: '3,5', unit: 'points', beneficiaryMemberIds: [ownerMember.id] });
+  for (let i = 0; i < 5; i++) await repos.contributions.create({ householdId: household.id,
+    label: i < 3 ? 'Cuisine' : 'Spontanée', value: 3.5, unit: 'points', performedByMemberId: ownerMember.id,
+    beneficiaryMemberIds: [ownerMember.id], persistentTaskId: i < 3 ? shortcut.id : null,
+    occurredAt: '2026-01-01T00:00:00.000Z', createdBy: 'shortcuts-owner' });
+  const fullRead = jest.spyOn(repos.contributions, 'getByHousehold').mockRejectedValue(new Error('No full history read'));
+  const first = await loadActivityHistoryPage(repos, household.id, { persistentTaskId: shortcut.id, limit: 2 });
+  expect(first.entries).toHaveLength(2); expect(first.hasMore).toBe(true);
+  const next = await loadActivityHistoryPage(repos, household.id, { persistentTaskId: shortcut.id, limit: 2, cursor: first.cursor });
+  expect(next.entries).toHaveLength(1); expect(next.hasMore).toBe(false);
+  expect(new Set([...first.entries, ...next.entries].map(row => row.entry.id)).size).toBe(3);
+  expect((await loadActivityHistoryPage(repos, household.id, { persistentTaskId: null })).entries).toHaveLength(2);
+  expect((await loadActivityHistoryPage(repos, 'another-group', { persistentTaskId: shortcut.id })).entries).toEqual([]);
+  await repos.tasks.delete(shortcut.id);
+  expect((await loadActivityHistoryPage(repos, household.id, { persistentTaskId: shortcut.id })).entries).toHaveLength(3);
+  const plan = native.prepare('EXPLAIN QUERY PLAN SELECT * FROM contribution_entries WHERE householdId = ? AND persistentTaskId = ? ORDER BY occurredAt DESC, id DESC LIMIT 21').all(household.id, shortcut.id);
+  expect(JSON.stringify(plan)).toContain('idx_contributions_shortcut_history');
+  expect(fullRead).not.toHaveBeenCalled(); fullRead.mockRestore();
+});

@@ -433,6 +433,10 @@ export class InMemoryContributionEntryRepository implements ContributionEntryRep
     let items = Array.from(this.items.values())
       .filter((e) => e.householdId === householdId);
 
+    if (query.persistentTaskId !== undefined) {
+      items = items.filter(entry => (entry.persistentTaskId ?? null) === query.persistentTaskId);
+    }
+
     // Apply after filter (inclusive)
     if (query.after) {
       items = items.filter((e) => e.occurredAt >= query.after!);

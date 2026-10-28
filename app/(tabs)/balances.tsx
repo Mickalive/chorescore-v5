@@ -38,6 +38,7 @@ import { parsePositiveNumber } from '../../src/domain/services/addEntryService';
 import {
   Household,
   Member,
+  PersistentTask,
   MoneyTransfer,
   ActivityEntry,
 } from '../../src/domain/entities';
@@ -75,14 +76,14 @@ import {
 function formatActivityRow(
   entry: ActivityEntry,
   memberName: (id: string) => string,
-  unitShort: string,
+  unitLabels: { minutes: string; points: string },
   settlementLabel: string,
   locale: string,
 ): string {
   switch (entry.type) {
     case 'contribution': {
       const e = entry.entry;
-      const val = formatContributionValue(e.value, unitShort, locale);
+      const val = formatContributionValue(e.value, unitLabels[e.unit], locale);
       return `${e.label}  ${val}  ${memberName(e.performedByMemberId)} → ${e.beneficiaryMemberIds.map(memberName).join(', ')}`;
     }
     case 'expense': {
@@ -91,7 +92,7 @@ function formatActivityRow(
     }
     case 'cross-ledger-settlement': {
       const e = entry.entry;
-      const contrib = formatContributionValue(-e.contributionValue, unitShort, locale);
+      const contrib = formatContributionValue(-e.contributionValue, unitLabels[e.contributionUnit], locale);
       const money = formatMoneyAmount(e.moneyAmountMinor, e.currency, locale);
       return `${settlementLabel}  ${memberName(e.contributionCreditorMemberId)} ${contrib} ↔ ${money}`;
     }
@@ -126,6 +127,23 @@ export default function BalancesScreen() {
 
   // History filter state
   const [historyFilter, setHistoryFilter] = useState<ActivityFilter>('all');
+  const [historyShortcut, setHistoryShortcut] = useState<string | null | undefined>(undefined);
+  const [shortcuts, setShortcuts] = useState<PersistentTask[]>([]);
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      if (!currentHouseholdId) return;
+      try { const tasks = await repos.tasks.getByHousehold(currentHouseholdId); if (active) setShortcuts(tasks); }
+      catch { if (active) setShortcuts([]); }
+    };
+    setHistoryShortcut(undefined);
+    setShortcuts([]);
+    void load();
+    const unsubscribe = subscribeToDataChanges((type, groupId) => {
+      if (groupId === currentHouseholdId && type === 'shortcut') void load();
+    });
+    return () => { active = false; unsubscribe(); };
+  }, [currentHouseholdId, repos, subscribeToDataChanges]);
   const [historyPage, setHistoryPage] = useState<ActivityLogPage | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState(false);
@@ -135,7 +153,7 @@ export default function BalancesScreen() {
     setHistoryPage(null);
     setHistoryError(false);
     return () => { historyRequestRef.current += 1; };
-  }, [currentHouseholdId, historyFilter, period]);
+  }, [currentHouseholdId, historyFilter, historyShortcut, period]);
 
   // Entry action sheet (Edit / Delete / Share) — historical entries are
   // modified or removed here under Balances, never in the past-only ledger.
@@ -350,6 +368,7 @@ export default function BalancesScreen() {
       const page = await loadActivityHistoryPage(repos, currentHouseholdId, {
         limit: HISTORY_PAGE_SIZE,
         filter,
+        persistentTaskId: historyShortcut,
         cursor: cursor ?? null,
         after: period === 'all-time' ? undefined : periodBoundary(period),
       });
@@ -359,7 +378,7 @@ export default function BalancesScreen() {
     } finally {
       if (request === historyRequestRef.current) setHistoryLoading(false);
     }
-  }, [currentHouseholdId, repos, period]);
+  }, [currentHouseholdId, repos, period, historyShortcut]);
 
   // Reset history page on filter change and after every local ledger change.
   // The page itself comes from the repository, never from the full arrays.
@@ -369,7 +388,8 @@ export default function BalancesScreen() {
 
   // ── Render ─────────────────────────────────────────────────
 
-  const unitLabel = unit === 'minutes' ? t('unit.minutesShort') : t('unit.pointsShort');
+  const unitLabels = { minutes: t('unit.minutesShort'), points: t('unit.pointsShort') };
+  const unitLabel = unitLabels[unit];
 
   const periodLabels: Record<Period, string> = {
     week: t('balances.periodWeek'),
@@ -430,7 +450,7 @@ export default function BalancesScreen() {
 
   const handleShareEntry = (entry: ActivityEntry) => {
     setSelectedEntry(null);
-    const message = formatActivityRow(entry, memberName, unitLabel, t('add.settlement'), locale);
+    const message = formatActivityRow(entry, memberName, unitLabels, t('add.settlement'), locale);
     services.share.share({ message });
   };
 
@@ -650,7 +670,7 @@ export default function BalancesScreen() {
             <TouchableOpacity
               key={f}
               style={[styles.historyFilterBtn, historyFilter === f && styles.historyFilterBtnActive]}
-              onPress={() => setHistoryFilter(f)}
+              onPress={() => { setHistoryFilter(f); setHistoryShortcut(undefined); }}
             >
               <Text
                 variant="caption"
@@ -660,6 +680,18 @@ export default function BalancesScreen() {
               </Text>
             </TouchableOpacity>
           ))}
+        </View>
+        <Text variant="caption">{t('shortcuts.history')}</Text>
+        <View style={styles.historyFilterRow}>
+          {[{ id: undefined, name: t('shortcuts.all') }, ...shortcuts.map(task => ({ id: task.id as string | null | undefined, name: task.name })),
+            { id: null, name: t('shortcuts.other') }].map(option => <TouchableOpacity
+              key={option.id === undefined ? 'all' : option.id === null ? 'other' : option.id}
+              testID={`balances.shortcut.${option.id === undefined ? 'all' : option.id === null ? 'other' : option.id}`}
+              accessibilityRole="button" accessibilityState={{ selected: historyShortcut === option.id }}
+              style={[styles.historyFilterBtn, historyShortcut === option.id && styles.historyFilterBtnActive]}
+              onPress={() => { setHistoryShortcut(option.id); if (option.id !== undefined) setHistoryFilter('contribution'); }}>
+              <Text variant="caption" color={historyShortcut === option.id ? colors.textOnPrimary : colors.textSecondary}>{option.name}</Text>
+            </TouchableOpacity>)}
         </View>
         <Card style={styles.historyCard}>
           {historyError && <ErrorState title={t('state.errorTitle')} message={t('balances.historyError')}
@@ -676,13 +708,18 @@ export default function BalancesScreen() {
                   accessibilityLabel={formatActivityRow(
                     entry,
                     memberName,
-                    unitLabel,
+                    unitLabels,
                     t('add.settlement'),
                     locale,
                   )}
                 >
                   <Text variant="body" style={styles.historyText} numberOfLines={2}>
-                    {formatActivityRow(entry, memberName, unitLabel, t('add.settlement'), locale)}
+                    {formatActivityRow(entry, memberName, unitLabels, t('add.settlement'), locale)}
+                  </Text>
+                  <Text variant="caption" color={colors.textSecondary}>
+                    {new Date(entry.entry.occurredAt).toLocaleString(locale === 'fr' ? 'fr-FR' : 'en-US', {
+                      year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+                    })}
                   </Text>
                 </TouchableOpacity>
               ))}
@@ -729,7 +766,7 @@ export default function BalancesScreen() {
                 style={styles.actionSheetSummary}
                 numberOfLines={2}
               >
-                {formatActivityRow(selectedEntry, memberName, unitLabel, t('add.settlement'), locale)}
+                {formatActivityRow(selectedEntry, memberName, unitLabels, t('add.settlement'), locale)}
               </Text>
             )}
 
@@ -1033,10 +1070,14 @@ const styles = StyleSheet.create({
   // History section
   historyFilterRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: spacing.xs,
     marginBottom: spacing.md,
   },
   historyFilterBtn: {
+    minHeight: 48,
+    maxWidth: '100%',
+    justifyContent: 'center',
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs,
     borderRadius: borderRadius.sm,

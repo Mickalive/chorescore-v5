@@ -62,9 +62,20 @@ const server = createServer((req, res) => {
     await button('Annuler').click();
     await expect(field('add.taskDateTime.time')).toBeHidden();
     await expect(field('add.taskDateTime')).toContainText('08:17');
+    await field('shortcuts.manage').click();
+    await field('shortcuts.save').click();
+    await expect(page.locator('[data-testid^="add.shortcut."]:visible')).toHaveCount(1);
+    await screenshot('task-shortcuts-web');
     await screenshot('add-task-web');
     await button('Ajouter la tâche').click();
     await expect(field('add.taskLabel')).toHaveValue('');
+    await page.reload();
+    await page.locator('[data-testid^="add.shortcut."]:visible').click();
+    await expect(field('add.taskLabel')).toHaveValue('Cuisine');
+    await expect(field('add.taskValue')).toHaveValue('9');
+    await field('add.taskLabel').fill('');
+    await field('add.taskValue').fill('');
+
     await page.getByText('Dépense', { exact: true }).filter({visible:true}).click();
     await field('add.expenseTitle').fill('Courses');
     await field('add.expenseAmount').fill('1,01');
@@ -77,6 +88,15 @@ const server = createServer((req, res) => {
     await expect(page.getByText('+ 4,5 pts', { exact: true })).toBeVisible();
     await expect(page.getByText(/^\+ 0,50[\s\u00a0\u202f]CHF$/)).toBeVisible();
     await screenshot('balances-web');
+    await field('balances.shortcut.other').click();
+    await expect(page.getByText(/^Cuisine\s/)).toHaveCount(0);
+    await expect(page.getByText('+ 4,5 pts', { exact: true })).toBeVisible();
+    await page.locator('[data-testid^="balances.shortcut."]:visible').filter({ hasText: /^Cuisine$/ }).click();
+    await page.getByText(/^Cuisine\s/).first().waitFor();
+    await screenshot('shortcut-history-web');
+    await field('balances.shortcut.all').click();
+    await page.getByText('Tout', { exact: true }).filter({ visible: true }).last().click();
+
     await page.getByText(/^Cuisine\s/).first().click();
     await button('Modifier la tâche').click();
     await expect(field('add.taskNote')).toHaveValue('Note persistante');
@@ -280,7 +300,7 @@ const server = createServer((req, res) => {
     await button('Open group Notre maison').waitFor();
     await screenshot('groups-en-small-web');
     assert.deepEqual(errors, []);
-    console.log('PASS: custom compensation and agreed French decimal rate with exact persisted cents; history periods with perpetual balances, category defaults and historical snapshots, custom task weights and exact-cent shares, both todo kinds; owner group deletion with exact-name confirmation, cancel and reload; arbitrary local dates/times, invalid-date rejection and cancellation; points group + pending named member; exact-cent expense; task and notes; Balances edit; reload persistence; todo completion; zero-sum balances; FR/EN preference persistence and small-screen layout.');
+    console.log('PASS: persisted reusable task shortcut and indexed history filters; custom compensation and agreed French decimal rate with exact persisted cents; history periods with perpetual balances, category defaults and historical snapshots, custom task weights and exact-cent shares, both todo kinds; owner group deletion with exact-name confirmation, cancel and reload; arbitrary local dates/times, invalid-date rejection and cancellation; points group + pending named member; exact-cent expense; task and notes; Balances edit; reload persistence; todo completion; zero-sum balances; FR/EN preference persistence and small-screen layout.');
     console.log('Screenshots:', evidence, '(web only; not Android evidence)');
   } catch (error) {
     await screenshot('failure-web').catch(() => {});

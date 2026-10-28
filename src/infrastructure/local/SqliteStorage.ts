@@ -222,6 +222,7 @@ export async function initializeSchema(database: SQLite.SQLiteDatabase): Promise
     CREATE INDEX IF NOT EXISTS idx_members_household ON members(householdId);
     CREATE INDEX IF NOT EXISTS idx_contributions_household ON contribution_entries(householdId);
     CREATE INDEX IF NOT EXISTS idx_contributions_occurred ON contribution_entries(householdId, occurredAt);
+    CREATE INDEX IF NOT EXISTS idx_contributions_shortcut_history ON contribution_entries(householdId, persistentTaskId, occurredAt DESC, id DESC);
     CREATE INDEX IF NOT EXISTS idx_contributions_unit ON contribution_entries(householdId, unit);
     CREATE INDEX IF NOT EXISTS idx_tasks_household ON persistent_tasks(householdId);
     CREATE INDEX IF NOT EXISTS idx_todos_household ON todo_items(householdId);

@@ -704,6 +704,12 @@ export class SqliteContributionEntryRepository extends SqliteDatabaseBound imple
     let sql = 'SELECT * FROM contribution_entries WHERE householdId = ?';
     const params: (string | number)[] = [householdId];
 
+    if (query.persistentTaskId === null) sql += ' AND persistentTaskId IS NULL';
+    else if (query.persistentTaskId !== undefined) {
+      sql += ' AND persistentTaskId = ?';
+      params.push(query.persistentTaskId);
+    }
+
     if (query.after) {
       sql += ' AND occurredAt >= ?';
       params.push(query.after);

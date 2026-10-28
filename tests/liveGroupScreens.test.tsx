@@ -89,3 +89,26 @@ test('two independently mounted forms never reuse a photo id at the same clock i
     expect(new Set(photos.map(photo => photo.ref)).size).toBe(2);
   } finally { clock.mockRestore(); }
 });
+
+test('a saved shortcut from the old group unit cannot silently turn points into minutes', async () => {
+  const repos = createInMemoryRepositories();
+  const { household, ownerMember } = await createGroupWithMembers(repos, { name: 'Unités', owner: { userId: 'a', displayName: 'Alice' }, memberNames: [], contributionUnit: 'points' });
+  const task = await repos.tasks.create({ householdId: household.id, name: 'Ancien raccourci', defaultValue: 9, defaultUnit: 'points', defaultBeneficiaryMemberIds: [ownerMember.id] });
+  let changed!: (type: any, id: string) => Promise<void>;
+  mockApp.mockReturnValue({ currentHouseholdId: household.id, currentUser: { userId: 'a' }, repos,
+    subscribeToDataChanges: (listener: typeof changed) => { changed = listener; return () => {}; }, emitDataChange: jest.fn(),
+    services: { attachments: { isAvailable: () => false }, media: { isAvailable: () => false } } });
+  let tree!: renderer.ReactTestRenderer;
+  await act(async () => { tree = renderer.create(<AddScreen />); });
+  const { TouchableOpacity } = require('react-native');
+  const shortcut = tree.root.findAllByType(TouchableOpacity).find(node => node.props.testID === `add.shortcut.${task.id}`)!;
+  await act(async () => shortcut.props.onPress());
+  const value = () => tree.root.findAllByType(TextInput).find(node => node.props.testID === 'add.taskValue')!;
+  expect(value().props.value).toBe('9');
+  await repos.households.update(household.id, { contributionUnit: 'minutes' });
+  await act(async () => changed('household', household.id));
+  expect(value().props.value).toBe('');
+  expect(tree.root.findAllByType(TouchableOpacity).some(node => node.props.testID === `add.shortcut.${task.id}`)).toBe(false);
+  expect(await repos.tasks.getById(task.id)).toMatchObject({ defaultUnit: 'points', defaultValue: 9 });
+  await act(async () => tree.unmount());
+});
