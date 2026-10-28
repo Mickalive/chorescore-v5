@@ -71,6 +71,7 @@ export interface HouseholdRepository extends SeedableRepository<Household> {
 }
 
 export interface MemberRepository extends SeedableRepository<Member> {
+  getCountsByHouseholds(householdIds: string[]): Promise<Record<string, number>>;
   getByHousehold(householdId: string): Promise<Member[]>;
   getByHouseholdPaginated(householdId: string, query?: PaginatedQuery): Promise<PaginatedResult<Member>>;
   getById(id: string): Promise<Member | null>;

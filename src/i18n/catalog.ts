@@ -232,6 +232,7 @@ export const CATALOG: Record<SupportedLocale, LocaleCatalog> = {
     'balances.filterTasks': 'Tâches',
     'balances.filterExpenses': 'Dépenses',
     'balances.filterSettlements': 'Compensations',
+    'balances.historyError': 'Impossible de charger l’historique. Réessayez.',
     'balances.emptyActivity': 'Aucune activité.',
     'balances.loadMore': 'Charger plus',
     'balances.entryActions': 'Actions',
@@ -421,6 +422,7 @@ export const CATALOG: Record<SupportedLocale, LocaleCatalog> = {
     'options.privacyDataTitle': 'Données et recherche',
     'options.privacyBody':
       'Vos données sont conservées sur cet appareil. Si vous activez la collaboration, les données du groupe et ses photos sont aussi synchronisées avec le service configuré pour les membres autorisés. La recherche est désactivée dans cette version ; aucun texte libre, note ou photo ne lui est transmis.',
+    'options.privacySaveError': 'Impossible de conserver ce choix. La participation à la recherche reste désactivée.',
     'options.privacyConsent': 'Contribuer aux statistiques anonymisées',
     'options.legal': 'Légal',
     'options.legalTerms': 'Conditions d’utilisation',
@@ -684,6 +686,7 @@ export const CATALOG: Record<SupportedLocale, LocaleCatalog> = {
     'balances.filterTasks': 'Tasks',
     'balances.filterExpenses': 'Expenses',
     'balances.filterSettlements': 'Settlements',
+    'balances.historyError': 'History could not be loaded. Please try again.',
     'balances.emptyActivity': 'No activity.',
     'balances.loadMore': 'Load more',
     'balances.entryActions': 'Actions',
@@ -872,6 +875,7 @@ export const CATALOG: Record<SupportedLocale, LocaleCatalog> = {
     'options.privacyDataTitle': 'Data and research',
     'options.privacyBody':
       'Your data is stored on this device. If you enable collaboration, group data and photos are also synchronized with the configured service for authorized members. Research is disabled in this version; no free text, notes or photos are sent to it.',
+    'options.privacySaveError': 'Your choice could not be saved. Research participation remains disabled.',
     'options.privacyConsent': 'Contribute to anonymized statistics',
     'options.legal': 'Legal',
     'options.legalTerms': 'Terms of use',

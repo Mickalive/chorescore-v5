@@ -192,6 +192,14 @@ export class InMemoryHouseholdRepository implements HouseholdRepository {
 }
 
 export class InMemoryMemberRepository implements MemberRepository {
+  async getCountsByHouseholds(householdIds: string[]): Promise<Record<string, number>> {
+    const counts = Object.fromEntries(householdIds.map(id => [id, 0]));
+    for (const member of this.items.values()) {
+      if (Object.hasOwn(counts, member.householdId)) counts[member.householdId] += 1;
+    }
+    return counts;
+  }
+
   private items = new Map<string, Member>();
 
   /** Snapshot internal state for transactional rollback. */

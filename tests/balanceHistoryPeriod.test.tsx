@@ -70,3 +70,28 @@ test('history periods hide old entries without hiding their perpetual task or mo
     await act(async () => tree.unmount());
   }
 });
+
+test('a history read failure shows retry without claiming the group is empty and recovers persisted rows', async () => {
+  const repos = createInMemoryRepositories();
+  const { household, ownerMember } = await createGroupWithMembers(repos, {
+    name: 'Maison', owner: { userId: 'a', displayName: 'Alice' }, memberNames: [], contributionUnit: 'points',
+  });
+  await repos.contributions.create({ householdId: household.id, label: 'Écriture conservée', value: 6,
+    occurredAt: new Date().toISOString(), performedByMemberId: ownerMember.id,
+    beneficiaryMemberIds: [ownerMember.id], unit: 'points', persistentTaskId: null, createdBy: 'a' });
+  const read = jest.spyOn(repos.contributions, 'getByHouseholdPaginated').mockRejectedValue(new Error('SQLite busy'));
+  mockApp.mockReturnValue({ currentHouseholdId: household.id, currentUser: { userId: 'a' }, repos,
+    subscribeToDataChanges: () => () => {}, emitDataChange: jest.fn(), services: {} });
+  let tree!: renderer.ReactTestRenderer;
+  await act(async () => { tree = renderer.create(<BalancesScreen />); });
+  expect(JSON.stringify(tree.toJSON())).toContain('balances.historyError');
+  expect(JSON.stringify(tree.toJSON())).not.toContain('balances.emptyActivity');
+  read.mockRestore();
+  const { Button } = require('../src/ui/components/Button');
+  const retry = tree.root.findAllByType(Button).find(button => button.props.title === 'action.retry')!;
+  await act(async () => retry.props.onPress());
+  expect(JSON.stringify(tree.toJSON())).toContain('Écriture conservée');
+  expect(JSON.stringify(tree.toJSON())).not.toContain('balances.historyError');
+  read.mockRestore();
+  await act(async () => tree.unmount());
+});

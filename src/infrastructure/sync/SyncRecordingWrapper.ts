@@ -290,6 +290,7 @@ export class SyncRecordingPersistentTaskRepository implements PersistentTaskRepo
 // ── V3-06 REPAIR: Member Recording Wrapper ─────────────────────
 
 export class SyncRecordingMemberRepository implements MemberRepository {
+  getCountsByHouseholds(ids: string[]): Promise<Record<string, number>> { return this.inner.getCountsByHouseholds(ids); }
   constructor(
     private inner: MemberRepository,
     private syncState: SyncStateRepository,

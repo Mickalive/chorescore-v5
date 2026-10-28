@@ -80,3 +80,19 @@ test('a persisted background reminder failure is visible when opening settings',
   await act(async () => { tree = renderer.create(<GeneralOptionsScreen />); });
   expect(tree.root.findAllByType(Button).some(button => button.props.title === 'action.retry')).toBe(true);
 });
+
+test('an unavailable research service cannot be enabled by the privacy control or an old saved preference', async () => {
+  const storage = require('@react-native-async-storage/async-storage');
+  await storage.setItem('chorescore.privacy.consent.v4', 'true');
+  const { LocalResearchAnalyticsAdapter } = require('../src/infrastructure/local/LocalResearchAnalyticsAdapter');
+  const analytics = new LocalResearchAnalyticsAdapter();
+  analytics.setEnabled(true);
+  expect(analytics.isEnabled()).toBe(false);
+  mockApp.mockReturnValue({ ...mockApp(), services: { notifications, analytics } });
+  await act(async () => { tree = renderer.create(<GeneralOptionsScreen />); });
+  const control = tree.root.findAllByType(Switch).find(node => node.props.testID === 'options.privacyConsent')!;
+  expect(control.props.disabled).toBe(true);
+  expect(control.props.value).toBe(false);
+  await act(async () => control.props.onValueChange(true));
+  expect(analytics.isEnabled()).toBe(false);
+});

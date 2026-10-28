@@ -45,6 +45,7 @@ export interface GateViolation {
     | 'reconstruction_risk'
     | 'missing_provenance'
     | 'invalid_provenance'
+    | 'invalid_release'
     | 're_identification_risk'
     | 'missing_taxonomy_version';
   message: string;
@@ -89,7 +90,7 @@ const FORBIDDEN_TEXT_FIELDS = [
  * never leave the device, so a single field of this kind in a release
  * candidate is a critical violation, not a warning.
  */
-const FORBIDDEN_ATTACHMENT_FIELDS = ['attachments', 'attachmentRefs', 'photoRefs'];
+const FORBIDDEN_ATTACHMENT_FIELDS = ['attachments', 'attachmentRefs', 'photoRefs', 'privateUrl', 'downloadUrl', 'storagePath', 'localUri', 'remoteUri'];
 
 /**
  * PrivacyReleaseGate — validates all external analytics outputs.
@@ -110,9 +111,13 @@ export class PrivacyReleaseGate {
    */
   private checkRecord(
     record: Record<string, unknown>,
-    context: string
+    context: string,
+    seen = new WeakSet<object>(),
   ): GateViolation[] {
     const violations: GateViolation[] = [];
+    if (!record || typeof record !== 'object') return violations;
+    if (seen.has(record)) return [{ type: 'invalid_release', message: 'Cyclic release data', severity: 'critical', context }];
+    seen.add(record);
 
     for (const field of FORBIDDEN_ID_FIELDS) {
       if (field in record) {
@@ -148,6 +153,12 @@ export class PrivacyReleaseGate {
       }
     }
 
+    for (const [field, value] of Object.entries(record)) {
+      if (value && typeof value === 'object') {
+        violations.push(...this.checkRecord(value as Record<string, unknown>, `${context}.${field}`, seen));
+      }
+    }
+    seen.delete(record);
     return violations;
   }
 
@@ -271,6 +282,15 @@ export class PrivacyReleaseGate {
   validate(product: ResearchDataProduct): GateCheckResult {
     const allViolations: GateViolation[] = [];
     let maxRiskScore = 0;
+    if (!product || typeof product !== 'object' || !Number.isSafeInteger(product.householdCount)
+        || product.householdCount <= 0 || !Array.isArray(product.data) || product.data.length === 0
+        || product.data.some(record => !record || typeof record !== 'object' || Array.isArray(record))) {
+      return { approved: false, riskScore: 1, requiresDifferentialPrivacy: true,
+        violations: [{ type: 'invalid_release', severity: 'critical', message: 'Invalid cohort count or release records' }] };
+    }
+    // Scan the whole envelope too: provenance and nested arrays are not escape
+    // hatches for operational IDs, notes, or private media references.
+    allViolations.push(...this.checkRecord(product as unknown as Record<string, unknown>, 'release'));
 
     // 1. Check provenance
     if (product.provenance) {

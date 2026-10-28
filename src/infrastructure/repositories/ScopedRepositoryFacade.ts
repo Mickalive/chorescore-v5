@@ -462,6 +462,13 @@ export class ScopedHouseholdRepository implements HouseholdRepository {
  * Authorization-enforcing facade for a member repository.
  */
 export class ScopedMemberRepository implements MemberRepository {
+  async getCountsByHouseholds(householdIds: string[]): Promise<Record<string, number>> {
+    if (householdIds.length === 0) return {};
+    const memberships = await this.membershipRepo.getByUser(this.callerUserId);
+    for (const id of new Set(householdIds)) requireHouseholdMembership(this.callerUserId, id, memberships);
+    return this.inner.getCountsByHouseholds(householdIds);
+  }
+
   constructor(
     private inner: MemberRepository,
     private callerUserId: string,

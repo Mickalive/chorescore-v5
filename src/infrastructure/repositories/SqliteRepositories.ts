@@ -347,6 +347,20 @@ function householdFromRow(row: HouseholdRow): Household {
 // ── Member Repository ──────────────────────────────────────────
 
 export class SqliteMemberRepository extends SqliteDatabaseBound implements MemberRepository {
+  async getCountsByHouseholds(householdIds: string[]): Promise<Record<string, number>> {
+    const ids = [...new Set(householdIds)];
+    const counts = Object.fromEntries(ids.map(id => [id, 0]));
+    if (ids.length === 0) return counts;
+    const db = await this.db();
+    for (let offset = 0; offset < ids.length; offset += 400) {
+      const batch = ids.slice(offset, offset + 400);
+      const rows = await db.getAllAsync<{ householdId: string; count: number }>(
+        `SELECT householdId, COUNT(*) AS count FROM members WHERE householdId IN (${batch.map(() => '?').join(',')}) GROUP BY householdId`, batch);
+      for (const row of rows) counts[row.householdId] = row.count;
+    }
+    return counts;
+  }
+
   async seed(members: Member[]): Promise<void> {
     const db = await this.db();
     for (const m of members) {

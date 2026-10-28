@@ -493,3 +493,32 @@ test('concurrent compensation confirms against the current projection and reject
   await expect(createProjectedSettlement(repos,input)).rejects.toThrow('rate changed');
   expect(await repos.settlements.getByHousehold(household.id)).toHaveLength(1);
 });
+
+test('group root counts use one compact SQL query instead of loading every member, with batched authorization', async () => {
+  const repos = (await createSqliteRepositories())!;
+  const ids: string[] = [];
+  for (let i = 0; i < 25; i++) {
+    const { household } = await createGroupWithMembers(repos, { name: `Groupe ${i}`,
+      owner: { userId: 'root-owner', displayName: 'Alice' }, memberNames: ['Bob', 'Camille'], contributionUnit: 'minutes' });
+    ids.push(household.id);
+  }
+  const read = jest.spyOn(mockDatabase, 'getAllAsync');
+  const counts = await repos.members.getCountsByHouseholds([...ids, ids[0]]);
+  expect(Object.values(counts)).toEqual(Array(25).fill(3));
+  const memberReads = read.mock.calls.filter(([sql]: any) => sql.includes('FROM members'));
+  expect(memberReads).toHaveLength(1);
+  expect(memberReads[0][0]).toContain('COUNT(*)');
+  expect(memberReads[0][0]).toContain('GROUP BY householdId');
+  const { createScopedRepositories } = require('../src/infrastructure/repositories/ScopedRepositoryFacade');
+  const scoped = createScopedRepositories(repos, 'root-owner');
+  const membershipRead = jest.spyOn(repos.memberships, 'getByUser');
+  expect(await scoped.members.getCountsByHouseholds(ids)).toEqual(counts);
+  expect(membershipRead).toHaveBeenCalledTimes(1);
+  const forbidden = jest.spyOn(repos.members, 'getCountsByHouseholds');
+  await expect(createScopedRepositories(repos, 'intruder').members.getCountsByHouseholds(ids)).rejects.toThrow();
+  expect(forbidden).not.toHaveBeenCalled();
+  const membership = await repos.memberships.getByUserAndHousehold('root-owner', ids[0]);
+  await repos.memberships.delete(membership!.id);
+  await expect(scoped.members.getCountsByHouseholds(ids)).rejects.toThrow();
+  read.mockRestore(); membershipRead.mockRestore(); forbidden.mockRestore();
+});

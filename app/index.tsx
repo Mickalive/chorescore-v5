@@ -34,7 +34,8 @@ export default function HomeScreen() {
     loadHouseholds,
     createHousehold,
     setCurrentHouseholdId,
-    getMembersForHousehold,
+    repos,
+    subscribeToDataChanges,
   } = useApp();
   const [startingLocal, setStartingLocal] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
@@ -62,22 +63,18 @@ export default function HomeScreen() {
       setMemberCounts({});
       return;
     }
-    Promise.all(
-      households.map(async (group) => {
-        try {
-          const members = await getMembersForHousehold(group.id);
-          return [group.id, members.length] as const;
-        } catch {
-          return [group.id, 0] as const;
-        }
-      }),
-    ).then((entries) => {
-      if (!cancelled) setMemberCounts(Object.fromEntries(entries));
+    const refresh = () => repos.members.getCountsByHouseholds(households.map(group => group.id))
+      .then(counts => { if (!cancelled) setMemberCounts(counts); })
+      .catch(() => { if (!cancelled) setMemberCounts({}); });
+    void refresh();
+    const unsubscribe = subscribeToDataChanges(type => {
+      if (type === 'member' || type === 'household') void refresh();
     });
     return () => {
       cancelled = true;
+      unsubscribe();
     };
-  }, [households, getMembersForHousehold]);
+  }, [households, repos, subscribeToDataChanges]);
 
   const openHousehold = async (id: string) => {
     setCurrentHouseholdId(id);

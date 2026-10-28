@@ -60,6 +60,7 @@ export default function GeneralOptionsScreen() {
   const { currentUser, signOut, services, households, repos } = useApp();
   const { t, locale, setLocale } = useI18n();
   const [privacyConsent, setPrivacyConsent] = useState(false);
+  const researchAvailable = services.analytics?.isAvailable() === true;
   const [remindersEnabled, setRemindersEnabled] = useState<boolean | null>(null);
   const [savingReminders, setSavingReminders] = useState(false);
   const [reminderError, setReminderError] = useState(false);
@@ -75,12 +76,17 @@ export default function GeneralOptionsScreen() {
       if (active && failed) setReminderError(true);
     }).catch(() => undefined);
     AsyncStorage.getItem(PRIVACY_CONSENT_KEY)
-      .then((value) => setPrivacyConsent(value === 'true'))
+      .then((value) => {
+        if (!active) return;
+        const enabled = researchAvailable && value === 'true';
+        services.analytics?.setEnabled(enabled);
+        setPrivacyConsent(enabled);
+      })
       .catch(() => {
         // Preference is best-effort.
       });
     return () => { active = false; };
-  }, [services.notifications, t]);
+  }, [services.notifications, services.analytics, researchAvailable, t]);
 
   const handleRemindersChange = async (enabled: boolean) => {
     if (savingReminders) return;
@@ -113,9 +119,13 @@ export default function GeneralOptionsScreen() {
   };
 
   const handleConsentChange = (next: boolean) => {
+    if (!researchAvailable) return;
+    services.analytics.setEnabled(next);
     setPrivacyConsent(next);
     AsyncStorage.setItem(PRIVACY_CONSENT_KEY, next ? 'true' : 'false').catch(() => {
-      // Ignore persistence failure; the in-memory preference still applies.
+      services.analytics.setEnabled(false);
+      setPrivacyConsent(false);
+      Alert.alert(t('state.error'), t('options.privacySaveError'));
     });
   };
 
@@ -220,6 +230,9 @@ export default function GeneralOptionsScreen() {
             {t('options.privacyConsent')}
           </Text>
           <Switch
+            testID="options.privacyConsent"
+            accessibilityLabel={t('options.privacyConsent')}
+            disabled={!researchAvailable}
             value={privacyConsent}
             onValueChange={handleConsentChange}
             trackColor={{ false: colors.border, true: colors.primaryLight }}

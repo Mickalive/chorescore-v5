@@ -128,6 +128,14 @@ export default function BalancesScreen() {
   const [historyFilter, setHistoryFilter] = useState<ActivityFilter>('all');
   const [historyPage, setHistoryPage] = useState<ActivityLogPage | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState(false);
+  const historyRequestRef = useRef(0);
+  useLayoutEffect(() => {
+    historyRequestRef.current += 1;
+    setHistoryPage(null);
+    setHistoryError(false);
+    return () => { historyRequestRef.current += 1; };
+  }, [currentHouseholdId, historyFilter, period]);
 
   // Entry action sheet (Edit / Delete / Share) — historical entries are
   // modified or removed here under Balances, never in the past-only ledger.
@@ -332,12 +340,12 @@ export default function BalancesScreen() {
 
   // ── History pagination ─────────────────────────────────────
 
-  const historyRequestRef = useRef(0);
   const loadHistoryPage = useCallback(async (filter: ActivityFilter, cursor?: string | null) => {
     if (!currentHouseholdId) return;
     const request = historyRequestRef.current + 1;
     historyRequestRef.current = request;
     setHistoryLoading(true);
+    setHistoryError(false);
     try {
       const page = await loadActivityHistoryPage(repos, currentHouseholdId, {
         limit: HISTORY_PAGE_SIZE,
@@ -345,7 +353,9 @@ export default function BalancesScreen() {
         cursor: cursor ?? null,
         after: period === 'all-time' ? undefined : periodBoundary(period),
       });
-      if (request === historyRequestRef.current) setHistoryPage(page);
+      if (request === historyRequestRef.current && activeGroupRef.current === currentHouseholdId) setHistoryPage(page);
+    } catch {
+      if (request === historyRequestRef.current && activeGroupRef.current === currentHouseholdId) setHistoryError(true);
     } finally {
       if (request === historyRequestRef.current) setHistoryLoading(false);
     }
@@ -652,6 +662,8 @@ export default function BalancesScreen() {
           ))}
         </View>
         <Card style={styles.historyCard}>
+          {historyError && <ErrorState title={t('state.errorTitle')} message={t('balances.historyError')}
+            onRetry={() => { void loadHistoryPage(historyFilter); }} retryLabel={t('action.retry')} />}
           {historyPage && historyPage.entries.length > 0 ? (
             <>
               {historyPage.entries.map((entry, index) => (
@@ -677,7 +689,8 @@ export default function BalancesScreen() {
               {historyPage.hasMore && (
                 <TouchableOpacity
                   style={styles.loadMoreBtn}
-                  onPress={() => loadHistoryPage(historyFilter, historyPage.cursor)}
+                  disabled={historyLoading}
+                  onPress={() => { void loadHistoryPage(historyFilter, historyPage.cursor); }}
                 >
                   <Text variant="caption" color={colors.textSecondary}>
                     {historyLoading ? t('state.loading') : t('action.loadMore')}
@@ -687,7 +700,7 @@ export default function BalancesScreen() {
             </>
           ) : (
             <Text variant="body" style={styles.emptyText}>
-              {t('balances.emptyActivity')}
+              {historyLoading ? t('state.loading') : historyError ? '' : t('balances.emptyActivity')}
             </Text>
           )}
         </Card>

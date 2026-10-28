@@ -1,6 +1,6 @@
 # Vérification de la mission V5 — en cours
 
-Aucune déclaration de produit terminé. Dernier état : **195 tests applicatifs réussis**, TypeScript, 3 tests serveur et parcours Chromium/SQLite complet réussis ; 1 scénario officiel Firestore ignoré hors émulateur. Les captures Android de Groupes et de la catégorie correspondent au candidat `9a04a392` ; le parcours natif complet a été interrompu par l’arrêt graphique de l’émulateur. Le candidat avec aperçu photo et balances persistées compile, sans nouvelle validation native. Firebase de production et deux téléphones restent non vérifiés.
+Aucune déclaration de produit terminé. Dernier état : **209 tests applicatifs réussis**, TypeScript, 3 tests serveur et parcours Chromium/SQLite complet réussis ; 1 scénario officiel Firestore ignoré hors émulateur. Les captures Android de Groupes et de la catégorie correspondent au candidat `9a04a392` ; le parcours natif complet a été interrompu par l’arrêt graphique de l’émulateur. Le candidat avec aperçu photo et balances persistées compile, sans nouvelle validation native. Firebase de production et deux téléphones restent non vérifiés.
 
 Sources lues : `AGENTS.md`, `CODEX_MISSION.md`, `PRODUCT.md`, les deux documents V3/V4 présents dans `docs/`, la [constitution V3 originale](https://github.com/Mickalive/chorescore-v3/blob/f922d347bc9989a717101bce274ca459902f6ff0/docs/V3_CONSTITUTION.md) et la [constitution V4 originale](https://github.com/Mickalive/chorescore-v3/blob/24041c9ff0adc9d88af534ef7e019699915d6ebe/docs/V4_CONSTITUTION.md). La copie V4 du dépôt est identique à cette source. Référence visuelle : composants et écran principal de `Mickalive/Chorescore`.
 
@@ -19,6 +19,53 @@ Sources lues : `AGENTS.md`, `CODEX_MISSION.md`, `PRODUCT.md`, les deux documents
 | OAuth | Connexion Google native + Firebase Auth REST, SecureStore, rafraîchissement sérialisé et protection contre résurrection après déconnexion | Projet Firebase `chorescore-a75b1` créé ; fournisseur Google, clé API, client OAuth Web/Android et empreinte de signature non fournis/validés ; vrais comptes non testés ; Apple/Facebook indisponibles |
 | Synchronisation/invitations | Outbox atomique bornée à 100, curseurs/reprise persistés, conflits exposés et résolus, invitations ciblées, tombstones et photos privées implémentés. Deux bases SQLite distinctes avec vrai serveur HTTP : droits, redémarrages, réponse perdue, création/catégories/complétions hors ligne et passage d’identité locale à Google testés. Transport Firestore et règles présents | Déploiement/authentification Firebase, scénario officiel des règles à rejouer sur le dernier code, et deux comptes/appareils réels |
 | Interface FR/EN | Groupes remanié, composants réutilisables, icônes et hauteur des onglets avec safe area, touches de 48 px ; clés FR/EN vérifiées ; langue conservée après rechargement en 360×800 et 412×915 | Pas de revue visuelle Android/iOS ; les grands formulaires restent partiellement monolithiques |
+
+## Réaudit croisé des spécifications — 28 octobre 2026
+
+**Verdict : conformité complète non acquise.** Les exigences ci-dessous sont retenues cumulativement selon PRODUCT / mission V5, puis V4, puis les dispositions V3 et V1/V2 non remplacées. Les anciennes fonctions explicitement abandonnées ne sont pas à réintroduire : chrono, classement, paiement, limites de groupes, archive payante, démo publique et historique sous Ajouter. Les conversations privées ChatGPT ne sont pas une source accessible.
+
+Recontrôle Git distant effectué sur les cinq dépôts : V1 `lab/chorescore=6e4c7f7`, V2 `lab/chorescore-v2=e847f87`, V3 `lab/chorescore-v3=f922d34`, V4 dans V3 `lab/chorescore-v4=24041c9` ; ces références originales restent inchangées. `chorescore-v4` ne renvoie toujours aucune branche. V5 main `6fc7977`, branche intégrée actuelle de PR nº 2. Les **34 snapshots** du [manifeste](docs/source-history/manifest.json) ont été rehashés : **0 divergence SHA-256**. Cette vérification concerne les sources épinglées et les branches pertinentes, pas une prétendue lecture de conversations privées.
+
+Dans la colonne Preuve, « composant » utilise des services simulés ; « SQLite » utilise une vraie base sur disque via Node ; « HTTP » utilise la vraie autorité locale. Aucun de ces mots ne signifie « validé sur téléphone ».
+
+| Exigence retenue / source | Code ou parcours vérifié | Preuve / écart restant |
+| --- | --- | --- |
+| V1/V2 saisie libre, fait par/fait pour ; V4 §7 | `add.tsx`, `addEntryService`, allocateurs | Navigateur, domaine, SQLite ; parcours Android complet ouvert |
+| V1 composition visuelle ; V5 PRODUCT | thème, GroupCard/GroupsHeader, formulaires, onglets | Captures navigateur 412×915 et 360×800 ; captures Android limitées Groupes/catégorie ; grands textes et revue native complète ouverts |
+| V2/V3 identité fixe, V4 §3 session persistée | LocalAuth/FirebaseAuth, SecureStore, restauration AppContext | Tests session/races ; Google production non raccordé, Apple/Facebook non implémentés |
+| V4 §4–5 plusieurs groupes, noms initiaux, minutes/points | `groupMembers`, racine et options | SQLite + navigateur ; création réelle Android ancien candidat |
+| V4 §5 membres nommés/renommage, identité permanente | `groupMembers`, sync membres | Tests identité/isolation, navigateur ; invitation sur deux téléphones ouverte |
+| V4 §5/annexe invitation ciblée, expirable/révocable, deep link | `invite.tsx`, `join/[token]`, autorités HTTP/Firestore | Composants + deux clients HTTP, même memberId ; Google/deep link natifs entre appareils ouverts |
+| V4 §6 trois onglets, safe areas/clavier | layouts, ScreenContainer | Contrôles de composants et navigateur ; claviers et grands textes natifs incomplets |
+| V4 §7.1 tâche, unité, ratios, date, note/photo | Ajouter + allocateurs + DateTimeField | Navigateur/SQLite ; sélection photo et cycle natif ouverts |
+| V4 §7.2 dépense, cents, devise et parts custom | Ajouter + parser/expenseLedger | Navigateur/SQLite/autorités ; parcours natif complet ouvert |
+| V4 §7.3 membres au lieu d’historique sous Ajouter | Ajouter et liens Options/invitation | Navigateur et réception de changements de membres testés |
+| V4 §8 catégories libres, création/renommage/suppression | CategoryManager, snapshot de catégorie/ratio | Navigateur + SQLite/HTTP ; catégorie ratio créée réellement sur Android ancien candidat |
+| V3 §5A PersistentTask/raccourcis et §9 filtres stables | modèle/repos/sync et sélection existante dans Ajouter/À faire | **Partiel : création/gestion de raccourcis absente du parcours normal ; filtres PersistentTask/Autres absents de Balances.** Les catégories ne prouvent pas ces fonctions |
+| V3 §9 visualisation/statistiques de contributions héritées | Balances affiche soldes et transferts | **Graphes/statistiques par membre non implémentés dans cette vue.** V5 ne doit pas les compter comme livrés |
+| V3 §6–7, V4 §10 deux ledgers perpétuels par unité/devise | projections persistées + calculateurs purs | SQLite, égalité avec rejeu, edits/deletes/rollback, navigateur ; aucune conversion implicite |
+| V4 §10 périodes, pagination, edit/delete/share | activityHistory + route édition | Navigateur et tests repository ; erreur de lecture désormais visible/réessayable ; partage natif actuel non rejoué |
+| V3 §8, V4 §10/14 compensation explicite et auditable | group-options, groupBalances, autorités | Avant/après, taux snapshoté, surcompensation et concurrence testés ; validation native ouverte |
+| V4 §11 todo tâche ET dépense, assignation, note/catégorie/échéance | Todos et complétion atomique | Deux parcours navigateur, vraie SQLite et concurrence HTTP ; validation native ouverte |
+| V4 §11 exactement une écriture, offline et double appui | completeTodoAtomic + identifiant déterministe + transports | Rollback, deux clients, réponse perdue et redémarrage testés ; double appui réel Android ouvert |
+| V4 §9 photos privées, remplacement, GC, aperçu/restart | attachments, photo files/cache/ACL, PhotoField | SQLite et autorités, rendu composant ; sélection/réouverture/transfert natifs non prouvés |
+| V4 §12 share sheet invitation/tâche/dépense | LocalSystemShareAdapter | Adaptateur réel ; aucune preuve native récente sur le dernier APK |
+| V4 §11/13 rappel reçu, permission, annulation/préférence | LocalNotificationAdapter + réconciliation | Tests de contrat et reprise ; **notification réellement reçue non prouvée** |
+| V4 §13 profil, langue, confidentialité, légal, signout | GeneralOptions, legal, i18n, AppContext | FR/EN et navigation navigateur ; identité légale/contact éditorial à confirmer avant distribution publique |
+| V4 §15 SQLite indexé, sans N+1 racine | getCountsByHouseholds + façade autorisée | Réaudit : 25 groupes → une requête COUNT groupée, aucun transfert de tous les membres ; refus non-membre/révocation testés |
+| V3 frugal §5–6 50 000 écritures, vues incrémentales | balance_totals/triggers, historique/todos indexés | Stress SQLite, migration par 100, lecture de totaux après reopen ; budget cloud global non mesuré |
+| V3 frugal §3/7/9 delta, tombstone, outbox, conflits | RemoteSyncAdapter, SyncRecording/Materializer | HTTP + deux bases SQLite : offline/reprise, pagination, versions, conflits explicites, réponses perdues |
+| V3 frugal §10 sécurité autoritaire | serveur HTTP + Firestore rules/transport | Tests HTTP hostiles et doubles clients ; scénario officiel Firestore actuel **ignoré**, émulateur non téléchargé car réseau 403 |
+| V3 frugal §11–12 instrumentation/bytes/budgets | costInstrumentation et tests ciblés de bornes | **Partiel : tracker générique non raccordé aux appels réels ; pas de mesure globale lectures/bytes/fonctions ni alertes cloud.** Budgets déclarés ≠ preuve |
+| V2 privacy / V3 §15–18 / V4 §16 | modules analytics conservés, transform/cache/gate | Réaudit corrige IDs/notes/photos imbriqués et enveloppes invalides ; aucun export recherche activé |
+| V3 frugal §13–18 traitement asynchrone/versionné | pipeline/cache/checkpoint comme modules de bibliothèque | **Pas de pipeline applicatif persistant branché, ni checkpoint/cache persistant de bout en bout, ni consentements par finalité reliés.** Service de recherche indisponible et interrupteur désactivé honnêtement |
+| V4 §18 Android/iOS, preuve complète et médias | build direct + scripts de vérification | APK compilé ≠ produit accepté ; export JS iOS distinct d’un build iPhone ; parcours native/deux appareils toujours ouvert |
+
+Corrections effectuées pendant ce réaudit : contrôle récursif de confidentialité incluant métadonnées et tableaux, refus sans exception des releases mal formées/vides ou cohortes non finies ; préférence de recherche impossible à activer sur le service indisponible ; comptage groupé autorisé pour Groupes ; erreur/reprise de l’historique et invalidation des réponses lors du changement de groupe/filtre. Régression privacy reproduite avant correctif : **8 tests en échec** ; après correctif : **11 réussis**. Tests supplémentaires SQLite/Options/historique passent.
+
+Validation exécutée : TypeScript, **209 tests / 33 suites**, **3 tests serveur**, parcours Chromium/SQLite complet réussis. **1 scénario officiel Firestore ignoré** ; aucune autorisation Google de production ni preuve de deux téléphones déduite de ces résultats. Deux captures navigateur courantes inspectées : Balances et Options EN petit écran, sans débordement visible sur ces captures ; ce n’est pas une revue complète d’accessibilité.
+
+Verrou externe recontrôlé : `auth.firebase.tools/attest` et le téléchargement officiel Firestore depuis `storage.googleapis.com` sont refusés par le proxy réseau (`CONNECT 403`), avant toute connexion au projet. Aucun changement de facturation, déploiement, service payant ou automatisation GitHub. La configuration réseau d’environnement doit autoriser `auth.firebase.tools`, `*.googleapis.com` et `api.github.com` en conservant sa liste existante ; l’autorisation du compte Google vient ensuite dans un vrai écran de connexion. **Cette étape externe n’explique pas les écarts applicatifs ci-dessus : ils restent explicitement ouverts.**
 
 ## Contrôles initiaux exécutés — historique
 

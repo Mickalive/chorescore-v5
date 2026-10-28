@@ -36,7 +36,7 @@ import {
   AllRepositories,
 } from '../../infrastructure/repositories/RepositoryFactory';
 import { createScopedRepositories } from '../../infrastructure/repositories/ScopedRepositoryFacade';
-import { AuthUser, AttachmentGateway, MediaGateway, SystemShareGateway, SyncGateway } from '../../application/ports';
+import { AuthUser, AttachmentGateway, MediaGateway, SystemShareGateway, SyncGateway, ResearchAnalyticsGateway } from '../../application/ports';
 import { resolveString } from '../../i18n/catalog';
 import { ContributionUnit, Household, Member } from '../../domain/entities';
 import {
@@ -105,6 +105,7 @@ interface AppState {
     /** Private cloud media; unavailable in local-only builds. */
     media: MediaGateway;
     sync: SyncGateway;
+    analytics: ResearchAnalyticsGateway;
   };
 }
 
@@ -531,6 +532,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       attachments: servicesRef.current.attachments,
       media: servicesRef.current.media,
       sync: servicesRef.current.sync,
+      analytics: servicesRef.current.analytics,
     },
   };
 
