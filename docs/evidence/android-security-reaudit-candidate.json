@@ -1,0 +1,25 @@
+{
+  "sourceCommit": "958d9bdc57832b17ada42e5d6988d1a0e1fd4933",
+  "package": "app.chorescore.v5",
+  "apkSha256": "a9e1e53b46e93dcda5e657c33ad3ea8bb5443eda7a027a3182e68c5190412c60",
+  "architectures": [
+    "arm64-v8a",
+    "x86_64"
+  ],
+  "buildSucceeded": true,
+  "installed": false,
+  "appTestsPassed": 229,
+  "appTestsSkipped": 2,
+  "backendTestsPassed": 3,
+  "webSqliteJourneyPassed": true,
+  "iosJavaScriptExportPassed": true,
+  "iosNativeBuildPassed": false,
+  "fullNativeJourneyPassed": false,
+  "productionFirebaseVerified": false,
+  "twoPhysicalPhonesVerified": false,
+  "officialFirestoreRulesVerified": false,
+  "evidenceDirectory": "/workspace/chorescore-evidence/candidate-a9e1e53b",
+  "photoRegressionTestsFailedBeforeFix": 3,
+  "photoAdapterTestsPassedAfterFix": 5,
+  "historicalSourcesVerified": 34
+}
