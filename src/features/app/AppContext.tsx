@@ -1,3 +1,4 @@
+import { FirebaseAuthAdapter, firebaseAuthConfig } from '../../infrastructure/cloud/FirebaseAuthAdapter';
 /**
  * ChoreScore V3 — App Context
  *
@@ -14,14 +15,17 @@
  * instead of performing a full re-read + full replay on every focus.
  */
 
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { LocalAuthAdapter } from '../../infrastructure/local/LocalAuthAdapter';
+import { adoptLocalGroups } from '../../application/use-cases/adoptLocalGroups';
 import { LocalSystemShareAdapter } from '../../infrastructure/local/LocalSystemShareAdapter';
 import { E2EShareAdapter } from '../../infrastructure/local/E2EShareAdapter';
 import { LocalNotificationAdapter } from '../../infrastructure/local/LocalNotificationAdapter';
 import { LocalCalendarAdapter } from '../../infrastructure/local/LocalCalendarAdapter';
 import { LocalSecureStorageAdapter } from '../../infrastructure/local/LocalSecureStorageAdapter';
-import { LocalSyncAdapter } from '../../infrastructure/local/LocalSyncAdapter';
+import { createCollaborationServices } from '../../infrastructure/collaboration/createCollaborationServices';
+import { RemoteSyncAdapter } from '../../infrastructure/sync/RemoteSyncAdapter';
 import { LocalResearchAnalyticsAdapter } from '../../infrastructure/local/LocalResearchAnalyticsAdapter';
 import { LocalAttachmentAdapter } from '../../infrastructure/local/LocalAttachmentAdapter';
 import { E2EAttachmentAdapter } from '../../infrastructure/local/E2EAttachmentAdapter';
@@ -32,16 +36,18 @@ import {
   AllRepositories,
 } from '../../infrastructure/repositories/RepositoryFactory';
 import { createScopedRepositories } from '../../infrastructure/repositories/ScopedRepositoryFacade';
-import { AuthUser, AttachmentGateway, SystemShareGateway, SyncGateway } from '../../application/ports';
-import { Household, Member } from '../../domain/entities';
+import { AuthUser, AttachmentGateway, MediaGateway, SystemShareGateway, SyncGateway, ResearchAnalyticsGateway } from '../../application/ports';
+import { resolveString } from '../../i18n/catalog';
+import { ContributionUnit, Household, Member } from '../../domain/entities';
 import {
   addGroupMember,
   createGroupWithMembers,
+  renameGroupMember,
 } from '../../application/use-cases/groupMembers';
 import { loadHouseholdsForUser } from './demoFixture';
 
 /** Types of data-change events that screens can emit. */
-export type DataChangeType = 'contribution' | 'expense' | 'settlement' | 'household' | 'member' | 'todo';
+export type DataChangeType = 'contribution' | 'expense' | 'settlement' | 'household' | 'member' | 'todo' | 'category' | 'shortcut';
 
 /** Callback signature for data-change subscribers. */
 export type DataChangeCallback = (type: DataChangeType, householdId: string) => void;
@@ -68,13 +74,15 @@ interface AppState {
   households: Household[];
   currentHouseholdId: string | null;
   setCurrentHouseholdId: (id: string | null) => void;
-  createHousehold: (name: string, memberNames?: string[]) => Promise<Household>;
+  createHousehold: (name: string, memberNames?: string[], contributionUnit?: ContributionUnit) => Promise<Household>;
   loadHouseholds: (userId?: string) => Promise<void>;
 
   // Members
   getMembersForHousehold: (householdId: string) => Promise<Member[]>;
   /** Add a named member to an existing group (post-creation). */
   addMember: (householdId: string, name: string) => Promise<Member>;
+  /** Rename a member while preserving its id and ledger history. */
+  renameMember: (householdId: string, memberId: string, name: string) => Promise<Member>;
 
   // Repositories (exposed for screens — scoped to current user)
   repos: AllRepositories;
@@ -94,7 +102,10 @@ interface AppState {
     calendar: LocalCalendarAdapter;
     /** V4-01: photo attachments behind an honest port (no provider faked). */
     attachments: AttachmentGateway;
+    /** Private cloud media; unavailable in local-only builds. */
+    media: MediaGateway;
     sync: SyncGateway;
+    analytics: ResearchAnalyticsGateway;
   };
 }
 
@@ -113,8 +124,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [persistenceDegraded, setPersistenceDegraded] = useState(false);
   const [households, setHouseholds] = useState<Household[]>([]);
-  const [currentHouseholdId, setCurrentHouseholdId] = useState<string | null>(null);
+  const [currentHouseholdId, setCurrentHouseholdState] = useState<string | null>(null);
+  const selectedGroupRef = useRef<{ userId: string | null; id: string | null }>({ userId: null, id: null });
+  const selectionWritesRef = useRef<Promise<void>>(Promise.resolve());
+  const discoveryJobsRef = useRef(new Map<string, Promise<void>>());
+  const reminderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [reposReady, setReposReady] = useState(false);
+  const [authRestored, setAuthRestored] = useState(false);
 
   // Start with a real (in-memory) repository set so screens always receive a
   // working provider; it is replaced by the SQLite-backed set once ready.
@@ -152,25 +168,83 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => { cancelled = true; };
   }, [ensureReposReady]);
 
-  const servicesRef = useRef({
-    auth: new LocalAuthAdapter({ secureStorage: new LocalSecureStorageAdapter() }),
+  const servicesRef = useRef((() => {
+    const firebaseConfig = !isE2EAuthEnabled() ? firebaseAuthConfig() : null;
+    const auth = firebaseConfig
+      ? new FirebaseAuthAdapter(firebaseConfig, new LocalSecureStorageAdapter())
+      : new LocalAuthAdapter({ secureStorage: new LocalSecureStorageAdapter() });
+    const cloudAuth = auth instanceof FirebaseAuthAdapter ? auth : null;
+    const collaboration = createCollaborationServices({
+      getRepos: () => rawReposRef.current,
+      getAccessToken: () => (cloudAuth ? cloudAuth.getIdToken() : Promise.resolve(null)),
+      hasCloudIdentity: cloudAuth !== null,
+      collaborationUrl: process.env.EXPO_PUBLIC_COLLAB_URL,
+      firebase: cloudAuth && firebaseConfig
+        ? {
+            projectId: firebaseConfig.projectId,
+            getUid: () => cloudAuth.getCurrentUserId(),
+          }
+        : undefined,
+    });
+    return {
+    auth,
     // V4-09: the normal build uses the real native share sheet. The explicit,
     // secretless E2E build gets a deterministic adapter so the share journey
     // can be driven without a SystemUI sheet the harness cannot dismiss.
     share: isE2EAuthEnabled() ? new E2EShareAdapter(true) : new LocalSystemShareAdapter(),
-    notifications: new LocalNotificationAdapter(),
+    notifications: new LocalNotificationAdapter(() => auth.getCurrentUserId()),
     calendar: new LocalCalendarAdapter(),
     secureStorage: new LocalSecureStorageAdapter(),
-    sync: new LocalSyncAdapter(),
+    sync: collaboration.sync,
+    media: collaboration.media,
     analytics: new LocalResearchAnalyticsAdapter(),
     // V4-01/V4-04: honest adapter in a normal build — reports unavailable
     // until a real photo provider is configured; the UI then hides the photo
     // action instead of faking a pick. The explicit, secretless E2E build gets
     // a deterministic offline source so the real photo journey can be driven.
-    attachments: isE2EAuthEnabled()
+    attachments: (isE2EAuthEnabled()
       ? new E2EAttachmentAdapter(true)
-      : new LocalAttachmentAdapter(),
-  });
+      : new LocalAttachmentAdapter()) as AttachmentGateway,
+    };
+  })());
+
+  const refreshReminders = useCallback(() => {
+    if (!servicesRef.current.notifications.isAvailable()) return;
+    if (reminderTimerRef.current !== null) clearTimeout(reminderTimerRef.current);
+    reminderTimerRef.current = setTimeout(() => {
+      reminderTimerRef.current = null;
+      void servicesRef.current.notifications.reconcile(async () => {
+        const uid = servicesRef.current.auth.getCurrentUserId();
+        if (!uid) return [];
+        const repos = reposRef.current;
+        const groups = await loadHouseholdsForUser(repos, uid);
+        const now = new Date().toISOString();
+        const todos = (await Promise.all(groups.map(group => repos.todos.getFutureReminders(group.id, now)))).flat();
+        const locale = await AsyncStorage.getItem('chorescore.locale.v4');
+        if (servicesRef.current.auth.getCurrentUserId() !== uid) return [];
+        return todos.map(todo => ({
+          title: resolveString(locale === 'en' ? 'en' : 'fr', 'todos.reminderNotificationTitle', { title: todo.title }),
+          body: todo.notes || resolveString(locale === 'en' ? 'en' : 'fr', 'todos.reminderNotificationBody'),
+          scheduledAt: todo.reminderAt!, data: { todoId: todo.id, householdId: todo.householdId, userId: uid },
+        }));
+      }).catch(() => undefined); // Durable repair error is visible in Options.
+    }, 300);
+    (reminderTimerRef.current as unknown as { unref?: () => void }).unref?.();
+  }, []);
+
+  useEffect(() => () => {
+    if (reminderTimerRef.current !== null) clearTimeout(reminderTimerRef.current);
+  }, []);
+
+  const setCurrentHouseholdId = useCallback((id: string | null) => {
+    const userId = servicesRef.current.auth.getCurrentUserId();
+    selectedGroupRef.current = { userId, id };
+    setCurrentHouseholdState(id);
+    if (!userId) return;
+    const key = `chorescore.selectedGroup.${userId}`;
+    selectionWritesRef.current = selectionWritesRef.current.then(() => id
+      ? AsyncStorage.setItem(key, id) : AsyncStorage.removeItem(key)).catch(() => undefined);
+  }, []);
 
   // ── Data-change signal (pub/sub) ──────────────────────────────
   // Lightweight mechanism so screens can notify each other of writes
@@ -178,19 +252,84 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // and the affected householdId so it can decide whether to refresh.
   const dataChangeListenersRef = useRef<Set<DataChangeCallback>>(new Set());
 
+  const syncTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const schedulePush = useCallback((householdId: string) => {
+    const sync = servicesRef.current.sync;
+    if (!sync.isAvailable()) return;
+    const previous = syncTimersRef.current.get(householdId);
+    if (previous) clearTimeout(previous);
+    const timer = setTimeout(() => {
+      syncTimersRef.current.delete(householdId);
+      void (async () => {
+        try {
+          await sync.pushChanges(householdId);
+          await sync.pullChanges(householdId);
+        } catch {
+          // The adapter stores a durable error/pending batch for the next retry.
+        }
+      })();
+    }, 500);
+    (timer as unknown as { unref?: () => void }).unref?.();
+    syncTimersRef.current.set(householdId, timer);
+  }, []);
+
   const emitDataChange = useCallback((type: DataChangeType, householdId: string) => {
+    // Cleanup uses indexed reference metadata; failures retain a durable queue.
+    void ensureReposReady().then(() => rawReposRef.current.withTransaction(async () => {
+      await servicesRef.current.attachments.collectGarbage?.();
+    })).catch(() => undefined);
     for (const listener of dataChangeListenersRef.current) {
       try { listener(type, householdId); } catch { /* swallow */ }
     }
-  }, []);
+    schedulePush(householdId);
+    if (type === 'todo' || type === 'household' || type === 'member') refreshReminders();
+  }, [schedulePush, refreshReminders]);
 
   const subscribeToDataChanges = useCallback((callback: DataChangeCallback): (() => void) => {
     dataChangeListenersRef.current.add(callback);
     return () => { dataChangeListenersRef.current.delete(callback); };
   }, []);
 
+  const loadHouseholdsRef = useRef<(userId?: string) => Promise<void>>(async () => undefined);
+
+  useEffect(() => {
+    const sync = servicesRef.current.sync;
+    if (!(sync instanceof RemoteSyncAdapter)) return;
+    sync.setOnRemoteChange((signal) => {
+      const types = new Set<DataChangeType>();
+      for (const collection of signal.collections) {
+        if (collection === 'contribution_entries') types.add('contribution');
+        else if (collection === 'expense_entries') types.add('expense');
+        else if (collection === 'settlements') types.add('settlement');
+        else if (collection === 'categories') types.add('category');
+        else if (collection === 'households') types.add('household');
+        else if (collection === 'members' || collection === 'memberships') types.add('member');
+        else if (collection === 'todo_items') types.add('todo');
+        else if (collection === 'persistent_tasks') types.add('shortcut');
+      }
+      if (types.has('todo') || types.has('household') || types.has('member')) refreshReminders();
+      for (const type of types) {
+        for (const listener of dataChangeListenersRef.current) {
+          try { listener(type, signal.householdId); } catch { /* swallow */ }
+        }
+      }
+      if (
+        signal.collections.includes('households') ||
+        signal.collections.includes('members') ||
+        signal.collections.includes('memberships')
+      ) {
+        void loadHouseholdsRef.current();
+      }
+    });
+    return () => { sync.setOnRemoteChange(() => undefined); };
+  }, []);
+
   // Auth state listener
   useEffect(() => {
+    servicesRef.current.notifications.initialize();
+    void ensureReposReady().then(() => rawReposRef.current.withTransaction(async () => {
+      await servicesRef.current.attachments.collectGarbage?.();
+    })).catch(() => undefined);
     const unsubscribe = servicesRef.current.auth.onAuthStateChanged((user) => {
       setCurrentUser(user);
     });
@@ -201,25 +340,59 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   // repositories are initialized, so an early sign-in can never race the
   // local store (reposReady is consumed here and by signIn/loadHouseholds).
   useEffect(() => {
-    if (reposReady) {
+    if (reposReady && authRestored) {
       setIsLoading(false);
     }
-  }, [reposReady]);
+  }, [reposReady, authRestored]);
 
   const loadHouseholds = useCallback(async (userId?: string) => {
-    // Gate on repository readiness so the local store is always available.
     await ensureReposReady();
     const repos = reposRef.current;
     const uid = userId ?? currentUser?.userId;
     if (!uid || !repos) return;
-    const loaded = await loadHouseholdsForUser(repos, uid);
-    setHouseholds(loaded);
-    if (loaded.length > 0 && !currentHouseholdId) {
-      setCurrentHouseholdId(loaded[0].id);
+    const sync = servicesRef.current.sync;
+    const refreshLocal = async () => {
+      const loaded = await loadHouseholdsForUser(repos, uid);
+      await selectionWritesRef.current;
+      const remembered = await AsyncStorage.getItem(`chorescore.selectedGroup.${uid}`).catch(() => null);
+      if (servicesRef.current.auth.getCurrentUserId() !== uid) return;
+      const current = selectedGroupRef.current.userId === uid ? selectedGroupRef.current.id : null;
+      const candidate = current ?? remembered;
+      // Never silently switch an open form to another household when its
+      // selected group disappears remotely. The group chooser must reopen.
+      const selected = candidate ? loaded.find(group => group.id === candidate)?.id ?? null
+        : loaded[0]?.id ?? null;
+      selectedGroupRef.current = { userId: uid, id: selected };
+      setHouseholds(loaded);
+      setCurrentHouseholdState(selected);
+      refreshReminders();
+      if (sync.isAvailable()) {
+        for (const household of loaded) void sync.startSync(household.id).catch(() => undefined);
+      }
+    };
+    // SQLite is usable immediately. An offline refresh/token request must not
+    // keep the loading screen open or delay the creation of a local group.
+    await refreshLocal();
+    if (sync.isAvailable() && sync.discoverGroups && !discoveryJobsRef.current.has(uid)) {
+      const job = Promise.resolve().then(() => sync.discoverGroups!(uid))
+        .then(refreshLocal).catch(() => undefined).finally(() => {
+          if (discoveryJobsRef.current.get(uid) === job) discoveryJobsRef.current.delete(uid);
+        });
+      discoveryJobsRef.current.set(uid, job);
     }
-  }, [currentUser, currentHouseholdId, ensureReposReady]);
+  }, [currentUser, ensureReposReady]);
+
+  useEffect(() => {
+    loadHouseholdsRef.current = loadHouseholds;
+  }, [loadHouseholds]);
 
   const applySignedInUser = useCallback(async (user: AuthUser) => {
+    await ensureReposReady();
+    if (servicesRef.current.auth instanceof FirebaseAuthAdapter) {
+      await adoptLocalGroups(rawReposRef.current, servicesRef.current.secureStorage, user.userId,
+        () => servicesRef.current.auth.getCurrentUserId());
+    }
+    if (servicesRef.current.auth.getCurrentUserId() !== user.userId) return;
     // V3-06 REPAIR: Always wrap from the RAW repos, never from an
     // already-scoped set. This prevents stale callerUserId from a
     // previous session leaking into the new session's scope.
@@ -227,9 +400,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // A real or deterministic session must never fabricate household data.
     // New users land on an empty Groups screen and create their own group,
     // including the member names, through the normal creation flow.
-    setCurrentHouseholdId(null);
+    selectedGroupRef.current = { userId: user.userId, id: null };
+    setCurrentHouseholdState(null);
     await loadHouseholds(user.userId);
-  }, [loadHouseholds]);
+  }, [loadHouseholds, ensureReposReady]);
 
   // Keep the latest session-activation callback reachable from the one-shot
   // restore effect without making that effect re-run on every render.
@@ -246,12 +420,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     (async () => {
       await ensureReposReady();
       const token = await servicesRef.current.auth.restoreSession().catch(() => null);
-      if (cancelled || !token) return;
+      if (cancelled) return;
+      if (!token) { setAuthRestored(true); return; }
       const user = servicesRef.current.auth.getCurrentUser();
       if (user) {
         await applySignedInUserRef.current(user);
       }
+      if (!cancelled) setAuthRestored(true);
     })().catch(() => {
+      if (!cancelled) setAuthRestored(true);
       // A failed restore must never block the app: the sign-in screen remains.
     });
     return () => { cancelled = true; };
@@ -287,17 +464,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     // V3-06 REPAIR: Reset scoped repos to raw repos so the next signIn
     // wraps from the unscoped set, not from the previous user's scoped set.
     reposRef.current = rawReposRef.current;
+    for (const household of households) void servicesRef.current.sync.stopSync(household.id);
+    for (const timer of syncTimersRef.current.values()) clearTimeout(timer);
+    syncTimersRef.current.clear();
     setHouseholds([]);
     setCurrentHouseholdId(null);
-  }, []);
+    if (reminderTimerRef.current !== null) clearTimeout(reminderTimerRef.current);
+    reminderTimerRef.current = null;
+    await servicesRef.current.notifications.reconcile(async () => []).catch(() => undefined);
+  }, [households]);
 
-  const createHousehold = useCallback(async (name: string, memberNames: string[] = []) => {
+  const createHousehold = useCallback(async (name: string, memberNames: string[] = [], contributionUnit: ContributionUnit = 'minutes') => {
     if (!currentUser) throw new Error('Not authenticated');
     await ensureReposReady();
     const result = await createGroupWithMembers(reposRef.current, {
       name,
       owner: { userId: currentUser.userId, displayName: currentUser.displayName || 'Membre' },
       memberNames,
+      contributionUnit,
     });
     emitDataChange('household', result.household.id);
     emitDataChange('member', result.household.id);
@@ -316,6 +500,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return member;
   }, [ensureReposReady, emitDataChange]);
 
+  const renameMember = useCallback(async (householdId: string, memberId: string, name: string) => {
+    await ensureReposReady();
+    const member = await renameGroupMember(reposRef.current, householdId, memberId, name);
+    emitDataChange('member', householdId);
+    return member;
+  }, [ensureReposReady, emitDataChange]);
+
   const value: AppState = {
     currentUser,
     isLoading,
@@ -330,6 +521,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     loadHouseholds,
     getMembersForHousehold,
     addMember,
+    renameMember,
     repos: reposRef.current,
     rawRepos: rawReposRef.current,
     emitDataChange,
@@ -339,7 +531,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       notifications: servicesRef.current.notifications,
       calendar: servicesRef.current.calendar,
       attachments: servicesRef.current.attachments,
+      media: servicesRef.current.media,
       sync: servicesRef.current.sync,
+      analytics: servicesRef.current.analytics,
     },
   };
 

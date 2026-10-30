@@ -12,11 +12,13 @@ interface CardProps {
   children: React.ReactNode;
   variant?: 'default' | 'highlighted';
   style?: ViewStyle;
+  testID?: string;
 }
 
-export function Card({ children, variant = 'default', style }: CardProps) {
+export function Card({ children, variant = 'default', style, testID }: CardProps) {
   return (
     <View
+      testID={testID}
       style={[
         styles.base,
         variant === 'highlighted' && styles.highlighted,

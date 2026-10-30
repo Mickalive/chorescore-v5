@@ -89,6 +89,18 @@ export function validateSettlementPreconditions(
   priorSettlements: CrossLedgerSettlement[] = [],
   validateStructure: boolean = true
 ): SettlementPreconditionResult {
+  return validateSettlementBalancePreconditions(settlement,
+    calculateContributionBalances(contributions, settlement.contributionUnit, priorSettlements, allMemberIds),
+    calculateFinancialBalances(expenses, settlement.currency, priorSettlements, allMemberIds), validateStructure);
+}
+
+/** Same guards for a current, transactional projection; no history replay. */
+export function validateSettlementBalancePreconditions(
+  settlement: CrossLedgerSettlement,
+  contributionBalances: Map<string, number>,
+  moneyBalances: Map<string, number>,
+  validateStructure: boolean = true,
+): SettlementPreconditionResult {
   const errors: string[] = [];
 
   // 1. Structural validation (rate snapshot, amounts, members)
@@ -102,12 +114,6 @@ export function validateSettlementPreconditions(
 
   // 2. Check contribution creditor has sufficient contribution credit
   //    Include prior settlements so accumulated consumption is accounted for.
-  const contributionBalances = calculateContributionBalances(
-    contributions,
-    settlement.contributionUnit,
-    priorSettlements,
-    allMemberIds
-  );
   const creditorContribution = contributionBalances.get(settlement.contributionCreditorMemberId) ?? 0;
   const contribCheck = checkContributionSufficient(
     creditorContribution,
@@ -122,12 +128,6 @@ export function validateSettlementPreconditions(
 
   // 3. Check counterparty has sufficient money receivable
   //    Include prior settlements so accumulated consumption is accounted for.
-  const moneyBalances = calculateFinancialBalances(
-    expenses,
-    settlement.currency,
-    priorSettlements,
-    allMemberIds
-  );
   const counterpartyMoney = moneyBalances.get(settlement.counterpartyMemberId) ?? 0;
   const moneyCheck = checkMoneyDebtSufficient(
     counterpartyMoney,

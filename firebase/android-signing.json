@@ -1,0 +1,6 @@
+{
+  "package": "app.chorescore.v5",
+  "sha1": "5e8f16062ea3cd2c4a0d547876baa6f38cabf625",
+  "sha256": "fac61745dc0903786fb9ede62a962b399f7348f0bb6f899b8332667591033b9c",
+  "purpose": "Development-signed release candidate; verified from the actual local APK. Reverify after any signing-key change."
+}

@@ -1,3 +1,4 @@
+import { activityBoundary, ContributionActivityQuery, ContributionActivityTotal } from '../../domain/calculations/contributionActivity';
 /**
  * ChoreScore V3 — SQLite Repositories
  *
@@ -7,6 +8,7 @@
  */
 
 import {
+  ContributionUnit,
   User,
   Membership,
   Household,
@@ -25,8 +27,12 @@ import {
   SyncCursor,
   SyncRecord,
   SyncCollection,
+  SyncGroupState,
+  SyncConflict,
+  PendingSyncMutation,
 } from '../../domain/entities';
 import {
+  BalanceProjectionRepository,
   UserRepository,
   MembershipRepository,
   HouseholdRepository,
@@ -43,12 +49,24 @@ import {
   PaginatedResult,
   PaginatedQuery,
 } from './index';
-import { getDatabase, parseJsonArray, toJsonArray } from '../local/SqliteStorage';
+import { getDatabase as openDatabase, parseJsonArray, toJsonArray } from '../local/SqliteStorage';
+import type { SQLiteDatabase } from 'expo-sqlite';
+import { generateRecordId as generateId } from './recordIdentity';
+import { contributionBalanceImpact, expenseBalanceImpact, settlementBalanceImpact, BalanceImpact } from '../../domain/calculations/balanceImpact';
+import type { BalanceSnapshot } from '../../domain/calculations/materializedBalances';
 
-let idCounter = 0;
-function generateId(prefix: string): string {
-  idCounter += 1;
-  return `${prefix}-${idCounter}-${Date.now()}`;
+export type SqliteDatabaseProvider = () => Promise<SQLiteDatabase>;
+
+/**
+ * Repository set bound to one database name. The application uses the default
+ * install database; isolated tests can inject another provider and restart
+ * that file without touching the production store.
+ */
+class SqliteDatabaseBound {
+  constructor(protected readonly databaseProvider: SqliteDatabaseProvider = openDatabase) {}
+  protected db(): Promise<SQLiteDatabase> {
+    return this.databaseProvider();
+  }
 }
 
 /**
@@ -70,9 +88,9 @@ function decodeMemberUserId(userId: string | null | undefined): string | null {
 
 // ── User Repository ────────────────────────────────────────────
 
-export class SqliteUserRepository implements UserRepository {
+export class SqliteUserRepository extends SqliteDatabaseBound implements UserRepository {
   async seed(users: User[]): Promise<void> {
-    const db = await getDatabase();
+    const db = await this.db();
     for (const user of users) {
       await db.runAsync(
         'INSERT OR REPLACE INTO users (id, email, displayName, createdAt) VALUES (?, ?, ?, ?)',
@@ -82,7 +100,7 @@ export class SqliteUserRepository implements UserRepository {
   }
 
   async getById(id: string): Promise<User | null> {
-    const db = await getDatabase();
+    const db = await this.db();
     const row = await db.getFirstAsync<{ id: string; email: string; displayName: string; createdAt: string }>(
       'SELECT * FROM users WHERE id = ?',
       [id]
@@ -92,7 +110,7 @@ export class SqliteUserRepository implements UserRepository {
   }
 
   async getByEmail(email: string): Promise<User | null> {
-    const db = await getDatabase();
+    const db = await this.db();
     const row = await db.getFirstAsync<{ id: string; email: string; displayName: string; createdAt: string }>(
       'SELECT * FROM users WHERE email = ?',
       [email]
@@ -102,7 +120,7 @@ export class SqliteUserRepository implements UserRepository {
   }
 
   async create(data: Omit<User, 'id' | 'createdAt'>): Promise<User> {
-    const db = await getDatabase();
+    const db = await this.db();
     const user: User = {
       ...data,
       id: generateId('user'),
@@ -119,7 +137,7 @@ export class SqliteUserRepository implements UserRepository {
     const existing = await this.getById(id);
     if (!existing) throw new Error(`User ${id} not found`);
     const updated = { ...existing, ...data };
-    const db = await getDatabase();
+    const db = await this.db();
     await db.runAsync(
       'UPDATE users SET email = ?, displayName = ? WHERE id = ?',
       [updated.email, updated.displayName, id]
@@ -128,7 +146,7 @@ export class SqliteUserRepository implements UserRepository {
   }
 
   async getAll(): Promise<User[]> {
-    const db = await getDatabase();
+    const db = await this.db();
     const rows = await db.getAllAsync<{ id: string; email: string; displayName: string; createdAt: string }>(
       'SELECT * FROM users'
     );
@@ -138,9 +156,9 @@ export class SqliteUserRepository implements UserRepository {
 
 // ── Membership Repository ──────────────────────────────────────
 
-export class SqliteMembershipRepository implements MembershipRepository {
+export class SqliteMembershipRepository extends SqliteDatabaseBound implements MembershipRepository {
   async seed(memberships: Membership[]): Promise<void> {
-    const db = await getDatabase();
+    const db = await this.db();
     for (const m of memberships) {
       await db.runAsync(
         'INSERT OR REPLACE INTO memberships (id, userId, householdId, role, joinedAt) VALUES (?, ?, ?, ?, ?)',
@@ -150,7 +168,7 @@ export class SqliteMembershipRepository implements MembershipRepository {
   }
 
   async getByUser(userId: string): Promise<Membership[]> {
-    const db = await getDatabase();
+    const db = await this.db();
     const rows = await db.getAllAsync<{ id: string; userId: string; householdId: string; role: string; joinedAt: string }>(
       'SELECT * FROM memberships WHERE userId = ?',
       [userId]
@@ -165,7 +183,7 @@ export class SqliteMembershipRepository implements MembershipRepository {
   }
 
   async getByHousehold(householdId: string): Promise<Membership[]> {
-    const db = await getDatabase();
+    const db = await this.db();
     const rows = await db.getAllAsync<{ id: string; userId: string; householdId: string; role: string; joinedAt: string }>(
       'SELECT * FROM memberships WHERE householdId = ?',
       [householdId]
@@ -180,7 +198,7 @@ export class SqliteMembershipRepository implements MembershipRepository {
   }
 
   async getByUserAndHousehold(userId: string, householdId: string): Promise<Membership | null> {
-    const db = await getDatabase();
+    const db = await this.db();
     const row = await db.getFirstAsync<{ id: string; userId: string; householdId: string; role: string; joinedAt: string }>(
       'SELECT * FROM memberships WHERE userId = ? AND householdId = ?',
       [userId, householdId]
@@ -196,7 +214,7 @@ export class SqliteMembershipRepository implements MembershipRepository {
   }
 
   async create(data: Omit<Membership, 'id' | 'joinedAt'>): Promise<Membership> {
-    const db = await getDatabase();
+    const db = await this.db();
     const membership: Membership = {
       ...data,
       id: generateId('membership'),
@@ -210,16 +228,16 @@ export class SqliteMembershipRepository implements MembershipRepository {
   }
 
   async delete(id: string): Promise<void> {
-    const db = await getDatabase();
+    const db = await this.db();
     await db.runAsync('DELETE FROM memberships WHERE id = ?', [id]);
   }
 }
 
 // ── Household Repository ───────────────────────────────────────
 
-export class SqliteHouseholdRepository implements HouseholdRepository {
+export class SqliteHouseholdRepository extends SqliteDatabaseBound implements HouseholdRepository {
   async seed(households: Household[]): Promise<void> {
-    const db = await getDatabase();
+    const db = await this.db();
     for (const h of households) {
       await db.runAsync(
         'INSERT OR REPLACE INTO households (id, name, ownerId, contributionUnit, crossLedgerCompensationEnabled, contributionToMoneyRateJson, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)',
@@ -237,20 +255,20 @@ export class SqliteHouseholdRepository implements HouseholdRepository {
   }
 
   async getAll(): Promise<Household[]> {
-    const db = await getDatabase();
+    const db = await this.db();
     const rows = await db.getAllAsync<HouseholdRow>('SELECT * FROM households');
     return rows.map(householdFromRow);
   }
 
   async getById(id: string): Promise<Household | null> {
-    const db = await getDatabase();
+    const db = await this.db();
     const row = await db.getFirstAsync<HouseholdRow>('SELECT * FROM households WHERE id = ?', [id]);
     if (!row) return null;
     return householdFromRow(row);
   }
 
   async create(data: Omit<Household, 'id' | 'createdAt'>): Promise<Household> {
-    const db = await getDatabase();
+    const db = await this.db();
     const household: Household = {
       ...data,
       id: generateId('household'),
@@ -275,7 +293,7 @@ export class SqliteHouseholdRepository implements HouseholdRepository {
     const existing = await this.getById(id);
     if (!existing) throw new Error(`Household ${id} not found`);
     const updated = { ...existing, ...data };
-    const db = await getDatabase();
+    const db = await this.db();
     await db.runAsync(
       'UPDATE households SET name = ?, ownerId = ?, contributionUnit = ?, crossLedgerCompensationEnabled = ?, contributionToMoneyRateJson = ? WHERE id = ?',
       [
@@ -291,7 +309,14 @@ export class SqliteHouseholdRepository implements HouseholdRepository {
   }
 
   async delete(id: string): Promise<void> {
-    const db = await getDatabase();
+    const db = await this.db();
+    // Caller owns the transaction. Child deletion fires photo-link triggers;
+    // file garbage collection then removes only unreferenced managed files.
+    for (const table of ['contribution_entries','expense_entries','todo_items','persistent_tasks',
+      'settlements','balance_totals','activity_lifetime','activity_days','activity_minutes','categories','invitations','memberships','members','sync_records','sync_cursors',
+      'sync_sequences','sync_remote_versions','sync_pending_mutations','sync_conflicts','sync_groups']) {
+      await db.runAsync(`DELETE FROM ${table} WHERE householdId = ?`, [id]);
+    }
     await db.runAsync('DELETE FROM households WHERE id = ?', [id]);
   }
 }
@@ -322,9 +347,23 @@ function householdFromRow(row: HouseholdRow): Household {
 
 // ── Member Repository ──────────────────────────────────────────
 
-export class SqliteMemberRepository implements MemberRepository {
+export class SqliteMemberRepository extends SqliteDatabaseBound implements MemberRepository {
+  async getCountsByHouseholds(householdIds: string[]): Promise<Record<string, number>> {
+    const ids = [...new Set(householdIds)];
+    const counts = Object.fromEntries(ids.map(id => [id, 0]));
+    if (ids.length === 0) return counts;
+    const db = await this.db();
+    for (let offset = 0; offset < ids.length; offset += 400) {
+      const batch = ids.slice(offset, offset + 400);
+      const rows = await db.getAllAsync<{ householdId: string; count: number }>(
+        `SELECT householdId, COUNT(*) AS count FROM members WHERE householdId IN (${batch.map(() => '?').join(',')}) GROUP BY householdId`, batch);
+      for (const row of rows) counts[row.householdId] = row.count;
+    }
+    return counts;
+  }
+
   async seed(members: Member[]): Promise<void> {
-    const db = await getDatabase();
+    const db = await this.db();
     for (const m of members) {
       await db.runAsync(
         'INSERT OR REPLACE INTO members (id, householdId, name, userId, joinedAt) VALUES (?, ?, ?, ?, ?)',
@@ -334,7 +373,7 @@ export class SqliteMemberRepository implements MemberRepository {
   }
 
   async getByHousehold(householdId: string): Promise<Member[]> {
-    const db = await getDatabase();
+    const db = await this.db();
     const rows = await db.getAllAsync<{ id: string; householdId: string; name: string; userId: string; joinedAt: string }>(
       'SELECT * FROM members WHERE householdId = ?',
       [householdId]
@@ -350,7 +389,7 @@ export class SqliteMemberRepository implements MemberRepository {
 
   async getByHouseholdPaginated(householdId: string, query: PaginatedQuery = {}): Promise<PaginatedResult<Member>> {
     const limit = query.limit ?? 20;
-    const db = await getDatabase();
+    const db = await this.db();
 
     let sql = 'SELECT * FROM members WHERE householdId = ?';
     const params: (string | number)[] = [householdId];
@@ -385,7 +424,7 @@ export class SqliteMemberRepository implements MemberRepository {
   }
 
   async getById(id: string): Promise<Member | null> {
-    const db = await getDatabase();
+    const db = await this.db();
     const row = await db.getFirstAsync<{ id: string; householdId: string; name: string; userId: string; joinedAt: string }>(
       'SELECT * FROM members WHERE id = ?',
       [id]
@@ -401,7 +440,7 @@ export class SqliteMemberRepository implements MemberRepository {
   }
 
   async create(data: Omit<Member, 'id' | 'joinedAt'>): Promise<Member> {
-    const db = await getDatabase();
+    const db = await this.db();
     const member: Member = {
       ...data,
       id: generateId('member'),
@@ -417,7 +456,7 @@ export class SqliteMemberRepository implements MemberRepository {
   async update(id: string, data: Partial<Member>): Promise<Member> {
     const existing = await this.getById(id);
     if (!existing) throw new Error(`Member ${id} not found`);
-    const db = await getDatabase();
+    const db = await this.db();
     const updated: Member = { ...existing, ...data, id: existing.id };
     await db.runAsync(
       'UPDATE members SET householdId = ?, name = ?, userId = ?, joinedAt = ? WHERE id = ?',
@@ -443,9 +482,9 @@ export class SqliteMemberRepository implements MemberRepository {
  * only removes the row — ledger entries keep their `categoryId` plus the label
  * snapshot captured at creation, so history is never rewritten.
  */
-export class SqliteCategoryRepository implements CategoryRepository {
+export class SqliteCategoryRepository extends SqliteDatabaseBound implements CategoryRepository {
   async seed(categories: Category[]): Promise<void> {
-    const db = await getDatabase();
+    const db = await this.db();
     for (const category of categories) {
       await db.runAsync(
         'INSERT OR REPLACE INTO categories (id, householdId, name, defaultTaskRatioJson, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)',
@@ -462,7 +501,7 @@ export class SqliteCategoryRepository implements CategoryRepository {
   }
 
   async getByHousehold(householdId: string): Promise<Category[]> {
-    const db = await getDatabase();
+    const db = await this.db();
     const rows = await db.getAllAsync<CategoryRow>(
       'SELECT * FROM categories WHERE householdId = ? ORDER BY createdAt ASC',
       [householdId]
@@ -472,7 +511,7 @@ export class SqliteCategoryRepository implements CategoryRepository {
 
   async getByHouseholdPaginated(householdId: string, query: PaginatedQuery = {}): Promise<PaginatedResult<Category>> {
     const limit = query.limit ?? 20;
-    const db = await getDatabase();
+    const db = await this.db();
 
     let sql = 'SELECT * FROM categories WHERE householdId = ?';
     const params: (string | number)[] = [householdId];
@@ -501,13 +540,13 @@ export class SqliteCategoryRepository implements CategoryRepository {
   }
 
   async getById(id: string): Promise<Category | null> {
-    const db = await getDatabase();
+    const db = await this.db();
     const row = await db.getFirstAsync<CategoryRow>('SELECT * FROM categories WHERE id = ?', [id]);
     return row ? categoryFromRow(row) : null;
   }
 
   async create(data: Omit<Category, 'id' | 'createdAt' | 'updatedAt'>): Promise<Category> {
-    const db = await getDatabase();
+    const db = await this.db();
     const now = new Date().toISOString();
     const created: Category = {
       ...data,
@@ -547,7 +586,7 @@ export class SqliteCategoryRepository implements CategoryRepository {
       createdAt: existing.createdAt,
       updatedAt: new Date().toISOString(),
     };
-    const db = await getDatabase();
+    const db = await this.db();
     await db.runAsync(
       'UPDATE categories SET name = ?, defaultTaskRatioJson = ?, updatedAt = ? WHERE id = ?',
       [
@@ -561,7 +600,7 @@ export class SqliteCategoryRepository implements CategoryRepository {
   }
 
   async delete(id: string): Promise<void> {
-    const db = await getDatabase();
+    const db = await this.db();
     // Ledger entries referencing this id are intentionally untouched.
     await db.runAsync('DELETE FROM categories WHERE id = ?', [id]);
   }
@@ -598,20 +637,25 @@ function categoryFromRow(row: CategoryRow): Category {
  */
 const CONTRIBUTION_COLUMNS =
   'id, householdId, label, performedByMemberId, beneficiaryMemberIds, value, unit, persistentTaskId, occurredAt, createdBy, modifiedBy, ' +
-  'categoryId, categoryLabelSnapshot, note, attachmentsJson, splitMode, splitWeightsJson, splitSource';
+  'categoryId, categoryLabelSnapshot, note, attachmentsJson, splitMode, splitWeightsJson, splitSource, balanceImpactJson';
 
 /** One placeholder per column, generated so SQL and params cannot drift apart. */
-const contributionPlaceholders = Array(18).fill('?').join(', ');
+const contributionPlaceholders = Array(19).fill('?').join(', ');
+
+function upsertColumns(columns: string): string {
+  return columns.split(',').map(column => column.trim()).filter(column => column !== 'id')
+    .map(column => `${column}=excluded.${column}`).join(',');
+}
 
 const CONTRIBUTION_INSERT_SQL =
   `INSERT INTO contribution_entries (${CONTRIBUTION_COLUMNS}) VALUES (${contributionPlaceholders})`;
 
 const CONTRIBUTION_UPSERT_SQL =
-  `INSERT OR REPLACE INTO contribution_entries (${CONTRIBUTION_COLUMNS}) VALUES (${contributionPlaceholders})`;
+  `${CONTRIBUTION_INSERT_SQL} ON CONFLICT(id) DO UPDATE SET ${upsertColumns(CONTRIBUTION_COLUMNS)}`;
 
 const CONTRIBUTION_UPDATE_SQL =
   'UPDATE contribution_entries SET label = ?, performedByMemberId = ?, beneficiaryMemberIds = ?, value = ?, unit = ?, persistentTaskId = ?, occurredAt = ?, modifiedBy = ?, ' +
-  'categoryId = ?, categoryLabelSnapshot = ?, note = ?, attachmentsJson = ?, splitMode = ?, splitWeightsJson = ?, splitSource = ? WHERE id = ?';
+  'categoryId = ?, categoryLabelSnapshot = ?, note = ?, attachmentsJson = ?, splitMode = ?, splitWeightsJson = ?, splitSource = ?, balanceImpactJson = ? WHERE id = ?';
 
 function contributionParams(entry: ContributionEntry): (string | number | null)[] {
   return [
@@ -633,19 +677,47 @@ function contributionParams(entry: ContributionEntry): (string | number | null)[
     entry.splitMode ?? null,
     entry.splitWeights && entry.splitWeights.length > 0 ? toJsonArray(entry.splitWeights) : null,
     entry.splitSource ?? null,
+    JSON.stringify(contributionBalanceImpact(entry)),
   ];
 }
 
-export class SqliteContributionEntryRepository implements ContributionEntryRepository {
+export class SqliteContributionEntryRepository extends SqliteDatabaseBound implements ContributionEntryRepository {
+  async getActivitySummary(householdId: string, query: ContributionActivityQuery): Promise<ContributionActivityTotal[]> {
+    const db = await this.db();
+    const after = activityBoundary(query);
+    const shortcut = query.persistentTaskId === undefined ? '' : ' AND shortcut=?';
+    const params: (string|number)[] = [householdId,query.unit];
+    if (query.persistentTaskId !== undefined) params.push(query.persistentTaskId ?? '');
+    let sql: string;
+    let bindings: (string|number)[];
+    if (!after) {
+      sql = `SELECT memberId,SUM(value) AS value,SUM(count) AS count FROM activity_lifetime WHERE householdId=? AND unit=?${shortcut} GROUP BY memberId ORDER BY memberId`;
+      bindings = params;
+    } else {
+      // Period boundaries use local midnight. UTC day summaries cover the
+      // interior; only the first UTC day's minute buckets cover its edge.
+      const day = after.slice(0,10), minute = after.slice(0,16);
+      const nextDay = new Date(Date.parse(day+'T00:00:00.000Z')+86400000).toISOString().slice(0,10);
+      sql = `SELECT memberId,SUM(value) AS value,SUM(count) AS count FROM (
+        SELECT memberId,value,count FROM activity_days WHERE householdId=? AND unit=?${shortcut} AND bucket>?
+        UNION ALL SELECT memberId,value,count FROM activity_minutes WHERE householdId=? AND unit=?${shortcut} AND bucket>=? AND bucket<?
+        ) GROUP BY memberId ORDER BY memberId`;
+      bindings = [...params,day,...params,minute,nextDay];
+    }
+    const rows = await db.getAllAsync<ContributionActivityTotal>(sql,bindings);
+    if (rows.some(row => !Number.isFinite(row.value) || !Number.isSafeInteger(row.count))) throw new Error('Invalid activity summary');
+    return rows;
+  }
+
   async seed(entries: ContributionEntry[]): Promise<void> {
-    const db = await getDatabase();
+    const db = await this.db();
     for (const entry of entries) {
       await db.runAsync(CONTRIBUTION_UPSERT_SQL, contributionParams(entry));
     }
   }
 
   async getByHousehold(householdId: string): Promise<ContributionEntry[]> {
-    const db = await getDatabase();
+    const db = await this.db();
     const rows = await db.getAllAsync<ContributionEntryRow>(
       'SELECT * FROM contribution_entries WHERE householdId = ? ORDER BY occurredAt DESC',
       [householdId]
@@ -655,10 +727,16 @@ export class SqliteContributionEntryRepository implements ContributionEntryRepos
 
   async getByHouseholdPaginated(householdId: string, query: PaginatedQuery = {}): Promise<PaginatedResult<ContributionEntry>> {
     const limit = query.limit ?? 20;
-    const db = await getDatabase();
+    const db = await this.db();
 
     let sql = 'SELECT * FROM contribution_entries WHERE householdId = ?';
     const params: (string | number)[] = [householdId];
+
+    if (query.persistentTaskId === null) sql += ' AND persistentTaskId IS NULL';
+    else if (query.persistentTaskId !== undefined) {
+      sql += ' AND persistentTaskId = ?';
+      params.push(query.persistentTaskId);
+    }
 
     if (query.after) {
       sql += ' AND occurredAt >= ?';
@@ -684,7 +762,7 @@ export class SqliteContributionEntryRepository implements ContributionEntryRepos
   }
 
   async getById(id: string): Promise<ContributionEntry | null> {
-    const db = await getDatabase();
+    const db = await this.db();
     const row = await db.getFirstAsync<ContributionEntryRow>(
       'SELECT * FROM contribution_entries WHERE id = ?',
       [id]
@@ -694,10 +772,10 @@ export class SqliteContributionEntryRepository implements ContributionEntryRepos
   }
 
   async create(entry: Omit<ContributionEntry, 'id'>): Promise<ContributionEntry> {
-    const db = await getDatabase();
+    const db = await this.db();
     const created: ContributionEntry = {
       ...entry,
-      id: generateId('contribution'),
+      id: (entry as Partial<ContributionEntry>).id || generateId('contribution'),
     };
     await db.runAsync(CONTRIBUTION_INSERT_SQL, contributionParams(created));
     return created;
@@ -707,7 +785,7 @@ export class SqliteContributionEntryRepository implements ContributionEntryRepos
     const existing = await this.getById(id);
     if (!existing) throw new Error(`ContributionEntry ${id} not found`);
     const updated = { ...existing, ...data };
-    const db = await getDatabase();
+    const db = await this.db();
     await db.runAsync(CONTRIBUTION_UPDATE_SQL, [
       updated.label,
       updated.performedByMemberId,
@@ -724,13 +802,14 @@ export class SqliteContributionEntryRepository implements ContributionEntryRepos
       updated.splitMode ?? null,
       updated.splitWeights && updated.splitWeights.length > 0 ? toJsonArray(updated.splitWeights) : null,
       updated.splitSource ?? null,
+      JSON.stringify(contributionBalanceImpact(updated)),
       id,
     ]);
     return updated;
   }
 
   async delete(id: string): Promise<void> {
-    const db = await getDatabase();
+    const db = await this.db();
     await db.runAsync('DELETE FROM contribution_entries WHERE id = ?', [id]);
   }
 }
@@ -794,9 +873,9 @@ function contributionFromRow(row: ContributionEntryRow): ContributionEntry {
 
 // ── Persistent Task Repository ─────────────────────────────────
 
-export class SqlitePersistentTaskRepository implements PersistentTaskRepository {
+export class SqlitePersistentTaskRepository extends SqliteDatabaseBound implements PersistentTaskRepository {
   async seed(tasks: PersistentTask[]): Promise<void> {
-    const db = await getDatabase();
+    const db = await this.db();
     for (const task of tasks) {
       await db.runAsync(
         'INSERT OR REPLACE INTO persistent_tasks (id, householdId, name, defaultValue, defaultUnit, defaultBeneficiaryMemberIds, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)',
@@ -814,7 +893,7 @@ export class SqlitePersistentTaskRepository implements PersistentTaskRepository 
   }
 
   async getByHousehold(householdId: string): Promise<PersistentTask[]> {
-    const db = await getDatabase();
+    const db = await this.db();
     const rows = await db.getAllAsync<PersistentTaskRow>(
       'SELECT * FROM persistent_tasks WHERE householdId = ?',
       [householdId]
@@ -824,7 +903,7 @@ export class SqlitePersistentTaskRepository implements PersistentTaskRepository 
 
   async getByHouseholdPaginated(householdId: string, query: PaginatedQuery = {}): Promise<PaginatedResult<PersistentTask>> {
     const limit = query.limit ?? 20;
-    const db = await getDatabase();
+    const db = await this.db();
 
     let sql = 'SELECT * FROM persistent_tasks WHERE householdId = ?';
     const params: (string | number)[] = [householdId];
@@ -853,7 +932,7 @@ export class SqlitePersistentTaskRepository implements PersistentTaskRepository 
   }
 
   async getById(id: string): Promise<PersistentTask | null> {
-    const db = await getDatabase();
+    const db = await this.db();
     const row = await db.getFirstAsync<PersistentTaskRow>(
       'SELECT * FROM persistent_tasks WHERE id = ?',
       [id]
@@ -863,7 +942,7 @@ export class SqlitePersistentTaskRepository implements PersistentTaskRepository 
   }
 
   async create(task: Omit<PersistentTask, 'id' | 'createdAt'>): Promise<PersistentTask> {
-    const db = await getDatabase();
+    const db = await this.db();
     const created: PersistentTask = {
       ...task,
       id: generateId('persistent-task'),
@@ -885,7 +964,7 @@ export class SqlitePersistentTaskRepository implements PersistentTaskRepository 
   }
 
   async delete(id: string): Promise<void> {
-    const db = await getDatabase();
+    const db = await this.db();
     await db.runAsync('DELETE FROM persistent_tasks WHERE id = ?', [id]);
   }
 }
@@ -951,16 +1030,32 @@ function todoParams(todo: TodoItem): (string | number | null)[] {
   ];
 }
 
-export class SqliteTodoRepository implements TodoRepository {
+export class SqliteTodoRepository extends SqliteDatabaseBound implements TodoRepository {
+  async getOpenByHousehold(householdId: string): Promise<TodoItem[]> {
+    const db=await this.db();
+    const rows=await db.getAllAsync<TodoRow>(
+      "SELECT * FROM todo_items WHERE householdId=? AND status != 'completed' ORDER BY createdAt DESC,id DESC",[householdId]);
+    return rows.map(todoFromRow);
+  }
+
   async seed(todos: TodoItem[]): Promise<void> {
-    const db = await getDatabase();
+    const db = await this.db();
     for (const todo of todos) {
       await db.runAsync(TODO_UPSERT_SQL, todoParams(todo));
     }
   }
 
+  async getFutureReminders(householdId: string, after: string): Promise<TodoItem[]> {
+    const db = await this.db();
+    const rows = await db.getAllAsync<TodoRow>(
+      "SELECT * FROM todo_items WHERE householdId = ? AND status != 'completed' AND reminderAt IS NOT NULL AND reminderAt > ? ORDER BY reminderAt, id",
+      [householdId, after],
+    );
+    return rows.map(todoFromRow);
+  }
+
   async getByHousehold(householdId: string): Promise<TodoItem[]> {
-    const db = await getDatabase();
+    const db = await this.db();
     const rows = await db.getAllAsync<TodoRow>(
       'SELECT * FROM todo_items WHERE householdId = ? ORDER BY createdAt DESC',
       [householdId]
@@ -970,7 +1065,7 @@ export class SqliteTodoRepository implements TodoRepository {
 
   async getByHouseholdPaginated(householdId: string, query: PaginatedQuery = {}): Promise<PaginatedResult<TodoItem>> {
     const limit = query.limit ?? 20;
-    const db = await getDatabase();
+    const db = await this.db();
 
     let sql = 'SELECT * FROM todo_items WHERE householdId = ?';
     const params: (string | number)[] = [householdId];
@@ -999,14 +1094,14 @@ export class SqliteTodoRepository implements TodoRepository {
   }
 
   async getById(id: string): Promise<TodoItem | null> {
-    const db = await getDatabase();
+    const db = await this.db();
     const row = await db.getFirstAsync<TodoRow>('SELECT * FROM todo_items WHERE id = ?', [id]);
     if (!row) return null;
     return todoFromRow(row);
   }
 
   async create(todo: Omit<TodoItem, 'id' | 'createdAt'>): Promise<TodoItem> {
-    const db = await getDatabase();
+    const db = await this.db();
     const created: TodoItem = {
       ...todo,
       id: generateId('todo'),
@@ -1020,7 +1115,7 @@ export class SqliteTodoRepository implements TodoRepository {
     const existing = await this.getById(id);
     if (!existing) throw new Error(`Todo ${id} not found`);
     const updated = { ...existing, ...data };
-    const db = await getDatabase();
+    const db = await this.db();
     await db.runAsync(TODO_UPDATE_SQL, [
       updated.title,
       updated.assigneeMemberId ?? null,
@@ -1041,7 +1136,7 @@ export class SqliteTodoRepository implements TodoRepository {
   }
 
   async delete(id: string): Promise<void> {
-    const db = await getDatabase();
+    const db = await this.db();
     await db.runAsync('DELETE FROM todo_items WHERE id = ?', [id]);
   }
 }
@@ -1099,16 +1194,16 @@ function todoFromRow(row: TodoRow): TodoItem {
 /** V4-01: user-created category reference + snapshot + attachments. */
 const EXPENSE_COLUMNS =
   'id, householdId, title, amountMinor, currency, paidByMemberId, participantMemberIds, splitMode, customSharesJson, note, category, occurredAt, createdBy, modifiedBy, ' +
-  'categoryId, categoryLabelSnapshot, attachmentsJson';
+  'categoryId, categoryLabelSnapshot, attachmentsJson, balanceImpactJson';
 
-const expensePlaceholders = Array(17).fill('?').join(', ');
+const expensePlaceholders = Array(18).fill('?').join(', ');
 
 const EXPENSE_INSERT_SQL = `INSERT INTO expense_entries (${EXPENSE_COLUMNS}) VALUES (${expensePlaceholders})`;
-const EXPENSE_UPSERT_SQL = `INSERT OR REPLACE INTO expense_entries (${EXPENSE_COLUMNS}) VALUES (${expensePlaceholders})`;
+const EXPENSE_UPSERT_SQL = `${EXPENSE_INSERT_SQL} ON CONFLICT(id) DO UPDATE SET ${upsertColumns(EXPENSE_COLUMNS)}`;
 
 const EXPENSE_UPDATE_SQL =
   'UPDATE expense_entries SET title = ?, amountMinor = ?, currency = ?, paidByMemberId = ?, participantMemberIds = ?, splitMode = ?, customSharesJson = ?, note = ?, category = ?, occurredAt = ?, modifiedBy = ?, ' +
-  'categoryId = ?, categoryLabelSnapshot = ?, attachmentsJson = ? WHERE id = ?';
+  'categoryId = ?, categoryLabelSnapshot = ?, attachmentsJson = ?, balanceImpactJson = ? WHERE id = ?';
 
 function expenseParams(entry: ExpenseEntry): (string | number | null)[] {
   return [
@@ -1129,19 +1224,20 @@ function expenseParams(entry: ExpenseEntry): (string | number | null)[] {
     entry.categoryId ?? null,
     entry.categoryLabelSnapshot ?? null,
     entry.attachments && entry.attachments.length > 0 ? toJsonArray(entry.attachments) : null,
+    JSON.stringify(expenseBalanceImpact(entry)),
   ];
 }
 
-export class SqliteExpenseEntryRepository implements ExpenseEntryRepository {
+export class SqliteExpenseEntryRepository extends SqliteDatabaseBound implements ExpenseEntryRepository {
   async seed(entries: ExpenseEntry[]): Promise<void> {
-    const db = await getDatabase();
+    const db = await this.db();
     for (const entry of entries) {
       await db.runAsync(EXPENSE_UPSERT_SQL, expenseParams(entry));
     }
   }
 
   async getByHousehold(householdId: string): Promise<ExpenseEntry[]> {
-    const db = await getDatabase();
+    const db = await this.db();
     const rows = await db.getAllAsync<ExpenseEntryRow>(
       'SELECT * FROM expense_entries WHERE householdId = ? ORDER BY occurredAt DESC',
       [householdId]
@@ -1151,7 +1247,7 @@ export class SqliteExpenseEntryRepository implements ExpenseEntryRepository {
 
   async getByHouseholdPaginated(householdId: string, query: PaginatedQuery = {}): Promise<PaginatedResult<ExpenseEntry>> {
     const limit = query.limit ?? 20;
-    const db = await getDatabase();
+    const db = await this.db();
 
     let sql = 'SELECT * FROM expense_entries WHERE householdId = ?';
     const params: (string | number)[] = [householdId];
@@ -1180,7 +1276,7 @@ export class SqliteExpenseEntryRepository implements ExpenseEntryRepository {
   }
 
   async getById(id: string): Promise<ExpenseEntry | null> {
-    const db = await getDatabase();
+    const db = await this.db();
     const row = await db.getFirstAsync<ExpenseEntryRow>(
       'SELECT * FROM expense_entries WHERE id = ?',
       [id]
@@ -1190,10 +1286,10 @@ export class SqliteExpenseEntryRepository implements ExpenseEntryRepository {
   }
 
   async create(entry: Omit<ExpenseEntry, 'id'>): Promise<ExpenseEntry> {
-    const db = await getDatabase();
+    const db = await this.db();
     const created: ExpenseEntry = {
       ...entry,
-      id: generateId('expense'),
+      id: (entry as Partial<ExpenseEntry>).id || generateId('expense'),
     };
     await db.runAsync(EXPENSE_INSERT_SQL, expenseParams(created));
     return created;
@@ -1203,7 +1299,7 @@ export class SqliteExpenseEntryRepository implements ExpenseEntryRepository {
     const existing = await this.getById(id);
     if (!existing) throw new Error(`ExpenseEntry ${id} not found`);
     const updated = { ...existing, ...data };
-    const db = await getDatabase();
+    const db = await this.db();
     await db.runAsync(EXPENSE_UPDATE_SQL, [
       updated.title,
       updated.amountMinor,
@@ -1219,13 +1315,14 @@ export class SqliteExpenseEntryRepository implements ExpenseEntryRepository {
       updated.categoryId ?? null,
       updated.categoryLabelSnapshot ?? null,
       updated.attachments && updated.attachments.length > 0 ? toJsonArray(updated.attachments) : null,
+      JSON.stringify(expenseBalanceImpact(updated)),
       id,
     ]);
     return updated;
   }
 
   async delete(id: string): Promise<void> {
-    const db = await getDatabase();
+    const db = await this.db();
     await db.runAsync('DELETE FROM expense_entries WHERE id = ?', [id]);
   }
 }
@@ -1280,31 +1377,26 @@ function expenseFromRow(row: ExpenseEntryRow): ExpenseEntry {
 
 // ── Settlement Repository ──────────────────────────────────────
 
-export class SqliteSettlementRepository implements SettlementRepository {
+const SETTLEMENT_COLUMNS = 'id,householdId,contributionCreditorMemberId,counterpartyMemberId,contributionValue,contributionUnit,moneyAmountMinor,currency,rateSnapshotJson,occurredAt,createdBy,balanceImpactJson';
+const SETTLEMENT_INSERT_SQL = `INSERT INTO settlements (${SETTLEMENT_COLUMNS}) VALUES (${Array(12).fill('?').join(',')})`;
+
+function settlementParams(entry: CrossLedgerSettlement): (string | number)[] {
+  return [entry.id,entry.householdId,entry.contributionCreditorMemberId,entry.counterpartyMemberId,
+    entry.contributionValue,entry.contributionUnit,entry.moneyAmountMinor,entry.currency,
+    JSON.stringify(entry.rateSnapshot),entry.occurredAt,entry.createdBy,JSON.stringify(settlementBalanceImpact(entry))];
+}
+
+export class SqliteSettlementRepository extends SqliteDatabaseBound implements SettlementRepository {
   async seed(settlements: CrossLedgerSettlement[]): Promise<void> {
-    const db = await getDatabase();
+    const db = await this.db();
     for (const settlement of settlements) {
-      await db.runAsync(
-        'INSERT OR REPLACE INTO settlements (id, householdId, contributionCreditorMemberId, counterpartyMemberId, contributionValue, contributionUnit, moneyAmountMinor, currency, rateSnapshotJson, occurredAt, createdBy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [
-          settlement.id,
-          settlement.householdId,
-          settlement.contributionCreditorMemberId,
-          settlement.counterpartyMemberId,
-          settlement.contributionValue,
-          settlement.contributionUnit,
-          settlement.moneyAmountMinor,
-          settlement.currency,
-          JSON.stringify(settlement.rateSnapshot),
-          settlement.occurredAt,
-          settlement.createdBy,
-        ]
-      );
+      await db.runAsync(`${SETTLEMENT_INSERT_SQL} ON CONFLICT(id) DO UPDATE SET ${upsertColumns(SETTLEMENT_COLUMNS)}`,
+        settlementParams(settlement));
     }
   }
 
   async getByHousehold(householdId: string): Promise<CrossLedgerSettlement[]> {
-    const db = await getDatabase();
+    const db = await this.db();
     const rows = await db.getAllAsync<SettlementRow>(
       'SELECT * FROM settlements WHERE householdId = ? ORDER BY occurredAt DESC',
       [householdId]
@@ -1314,7 +1406,7 @@ export class SqliteSettlementRepository implements SettlementRepository {
 
   async getByHouseholdPaginated(householdId: string, query: PaginatedQuery = {}): Promise<PaginatedResult<CrossLedgerSettlement>> {
     const limit = query.limit ?? 20;
-    const db = await getDatabase();
+    const db = await this.db();
 
     let sql = 'SELECT * FROM settlements WHERE householdId = ?';
     const params: (string | number)[] = [householdId];
@@ -1343,7 +1435,7 @@ export class SqliteSettlementRepository implements SettlementRepository {
   }
 
   async getById(id: string): Promise<CrossLedgerSettlement | null> {
-    const db = await getDatabase();
+    const db = await this.db();
     const row = await db.getFirstAsync<SettlementRow>(
       'SELECT * FROM settlements WHERE id = ?',
       [id]
@@ -1353,32 +1445,17 @@ export class SqliteSettlementRepository implements SettlementRepository {
   }
 
   async create(settlement: Omit<CrossLedgerSettlement, 'id'>): Promise<CrossLedgerSettlement> {
-    const db = await getDatabase();
+    const db = await this.db();
     const created: CrossLedgerSettlement = {
       ...settlement,
       id: generateId('settlement'),
     };
-    await db.runAsync(
-      'INSERT INTO settlements (id, householdId, contributionCreditorMemberId, counterpartyMemberId, contributionValue, contributionUnit, moneyAmountMinor, currency, rateSnapshotJson, occurredAt, createdBy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [
-        created.id,
-        created.householdId,
-        created.contributionCreditorMemberId,
-        created.counterpartyMemberId,
-        created.contributionValue,
-        created.contributionUnit,
-        created.moneyAmountMinor,
-        created.currency,
-        JSON.stringify(created.rateSnapshot),
-        created.occurredAt,
-        created.createdBy,
-      ]
-    );
+    await db.runAsync(SETTLEMENT_INSERT_SQL, settlementParams(created));
     return created;
   }
 
   async delete(id: string): Promise<void> {
-    const db = await getDatabase();
+    const db = await this.db();
     await db.runAsync('DELETE FROM settlements WHERE id = ?', [id]);
   }
 }
@@ -1413,11 +1490,54 @@ function settlementFromRow(row: SettlementRow): CrossLedgerSettlement {
   };
 }
 
+/** Stored totals are local derived data. Each legacy page crosses the native
+ * bridge at most once; following opens read member totals, not ledger payloads.
+ */
+export class SqliteBalanceProjectionRepository extends SqliteDatabaseBound implements BalanceProjectionRepository {
+  private async backfill<Row extends { id: string }>(
+    db: SQLiteDatabase, table: string, householdId: string, impact: (row: Row) => BalanceImpact[],
+  ): Promise<void> {
+    for (;;) {
+      const page = await db.getAllAsync<Row>(
+        `SELECT * FROM ${table} WHERE householdId=? AND balanceImpactJson IS NULL ORDER BY id LIMIT 100`, [householdId]);
+      if (!page.length) return;
+      // One atomic SQL update per page, rather than one native round-trip per
+      // historic entry. Conditional writes cannot overwrite a concurrent edit.
+      const params: (string | number)[] = [];
+      for (const row of page) params.push(row.id, JSON.stringify(impact(row)));
+      params.push(householdId, ...page.map(row => row.id));
+      await db.runAsync(`UPDATE ${table} SET balanceImpactJson=CASE id ${page.map(() => 'WHEN ? THEN ?').join(' ')} END
+        WHERE householdId=? AND balanceImpactJson IS NULL AND id IN (${page.map(() => '?').join(',')})`, params);
+    }
+  }
+
+  async getByHousehold(householdId: string, unit: ContributionUnit, memberIds: string[]): Promise<BalanceSnapshot> {
+    const db = await this.db();
+    await this.backfill<ContributionEntryRow>(db, 'contribution_entries', householdId, row => contributionBalanceImpact(contributionFromRow(row)));
+    await this.backfill<ExpenseEntryRow>(db, 'expense_entries', householdId, row => expenseBalanceImpact(expenseFromRow(row)));
+    await this.backfill<SettlementRow>(db, 'settlements', householdId, row => settlementBalanceImpact(settlementFromRow(row)));
+    const totals = await db.getAllAsync<{ ledger: string; bucket: string; memberId: string; amount: number }>(
+      "SELECT ledger,bucket,memberId,amount FROM balance_totals WHERE householdId=? AND supportCount>0 AND (ledger='money' OR bucket=?)", [householdId,unit]);
+    const contribution = new Map(memberIds.map(id => [id, 0]));
+    const moneyByCurrency = new Map<string, Map<string, number>>();
+    for (const row of totals) {
+      if (row.ledger === 'contribution') contribution.set(row.memberId,row.amount);
+      else {
+        if (!Number.isSafeInteger(row.amount)) throw new Error('Money balance exceeds safe integer precision');
+        let balances = moneyByCurrency.get(row.bucket);
+        if (!balances) { balances=new Map(memberIds.map(id => [id,0])); moneyByCurrency.set(row.bucket,balances); }
+        balances.set(row.memberId,row.amount);
+      }
+    }
+    return { contribution, moneyByCurrency };
+  }
+}
+
 // ── V3-06: SQLite Invitation Repository ────────────────────────
 
-export class SqliteInvitationRepository implements InvitationRepository {
+export class SqliteInvitationRepository extends SqliteDatabaseBound implements InvitationRepository {
   async seed(items: Invitation[]): Promise<void> {
-    const db = await getDatabase();
+    const db = await this.db();
     for (const inv of items) {
       await db.runAsync(
         'INSERT OR REPLACE INTO invitations (id, householdId, invitedByUserId, invitedEmail, role, status, linkToken, targetMemberId, createdAt, expiresAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -1427,7 +1547,7 @@ export class SqliteInvitationRepository implements InvitationRepository {
   }
 
   async getById(id: string): Promise<Invitation | null> {
-    const db = await getDatabase();
+    const db = await this.db();
     const row = await db.getFirstAsync<InvitationRow>(
       'SELECT * FROM invitations WHERE id = ?',
       [id],
@@ -1436,7 +1556,7 @@ export class SqliteInvitationRepository implements InvitationRepository {
   }
 
   async getByLinkToken(token: string): Promise<Invitation | null> {
-    const db = await getDatabase();
+    const db = await this.db();
     const row = await db.getFirstAsync<InvitationRow>(
       'SELECT * FROM invitations WHERE linkToken = ?',
       [token],
@@ -1445,7 +1565,7 @@ export class SqliteInvitationRepository implements InvitationRepository {
   }
 
   async getByHousehold(householdId: string): Promise<Invitation[]> {
-    const db = await getDatabase();
+    const db = await this.db();
     const rows = await db.getAllAsync<InvitationRow>(
       'SELECT * FROM invitations WHERE householdId = ? ORDER BY createdAt DESC',
       [householdId],
@@ -1455,7 +1575,7 @@ export class SqliteInvitationRepository implements InvitationRepository {
 
   async getByHouseholdPaginated(householdId: string, query: PaginatedQuery = {}): Promise<PaginatedResult<Invitation>> {
     const limit = query.limit ?? 20;
-    const db = await getDatabase();
+    const db = await this.db();
 
     let sql = 'SELECT * FROM invitations WHERE householdId = ?';
     const params: (string | number)[] = [householdId];
@@ -1484,7 +1604,7 @@ export class SqliteInvitationRepository implements InvitationRepository {
   }
 
   async getPendingByEmail(email: string): Promise<Invitation[]> {
-    const db = await getDatabase();
+    const db = await this.db();
     const rows = await db.getAllAsync<InvitationRow>(
       "SELECT * FROM invitations WHERE invitedEmail = ? AND status = 'pending'",
       [email],
@@ -1493,7 +1613,7 @@ export class SqliteInvitationRepository implements InvitationRepository {
   }
 
   async create(data: Omit<Invitation, 'id' | 'createdAt'>): Promise<Invitation> {
-    const db = await getDatabase();
+    const db = await this.db();
     const invitation: Invitation = {
       ...data,
       id: generateId('invitation'),
@@ -1509,7 +1629,7 @@ export class SqliteInvitationRepository implements InvitationRepository {
   async updateStatus(id: string, status: Invitation['status']): Promise<Invitation> {
     const existing = await this.getById(id);
     if (!existing) throw new Error(`Invitation ${id} not found`);
-    const db = await getDatabase();
+    const db = await this.db();
     await db.runAsync(
       'UPDATE invitations SET status = ? WHERE id = ?',
       [status, id],
@@ -1518,7 +1638,7 @@ export class SqliteInvitationRepository implements InvitationRepository {
   }
 
   async delete(id: string): Promise<void> {
-    const db = await getDatabase();
+    const db = await this.db();
     await db.runAsync('DELETE FROM invitations WHERE id = ?', [id]);
   }
 }
@@ -1553,9 +1673,23 @@ function invitationFromRow(row: InvitationRow): Invitation {
 
 // ── V3-06: SQLite Sync State Repository ────────────────────────
 
-export class SqliteSyncStateRepository implements SyncStateRepository {
+export class SqliteSyncStateRepository extends SqliteDatabaseBound implements SyncStateRepository {
+  async nextLocalRevision(householdId: string, collection: SyncCollection): Promise<number> {
+    const db = await this.db();
+    const row = await db.getFirstAsync<{ revision: number }>(`
+      INSERT INTO sync_sequences(householdId, collection, revision)
+      VALUES (?, ?, MAX(
+        COALESCE((SELECT MAX(revision) FROM sync_records WHERE householdId = ? AND collection = ?), 0),
+        COALESCE((SELECT lastRevision FROM sync_cursors WHERE householdId = ? AND collection = ?), 0)
+      ) + 1)
+      ON CONFLICT(householdId, collection) DO UPDATE SET revision = sync_sequences.revision + 1
+      RETURNING revision`, [householdId, collection, householdId, collection, householdId, collection]);
+    if (!row) throw new Error('Could not reserve local sync sequence');
+    return row.revision;
+  }
+
   async getCursor(householdId: string, collection: SyncCollection): Promise<SyncCursor | null> {
-    const db = await getDatabase();
+    const db = await this.db();
     const row = await db.getFirstAsync<SyncCursorRow>(
       'SELECT * FROM sync_cursors WHERE householdId = ? AND collection = ?',
       [householdId, collection],
@@ -1571,7 +1705,7 @@ export class SqliteSyncStateRepository implements SyncStateRepository {
   }
 
   async setCursor(cursor: SyncCursor): Promise<void> {
-    const db = await getDatabase();
+    const db = await this.db();
     await db.runAsync(
       'INSERT OR REPLACE INTO sync_cursors (householdId, collection, lastRevision, lastSyncedAt) VALUES (?, ?, ?, ?)',
       [cursor.householdId, cursor.collection, cursor.lastRevision, cursor.lastSyncedAt],
@@ -1584,7 +1718,7 @@ export class SqliteSyncStateRepository implements SyncStateRepository {
     records: SyncRecord[],
     pullCursorToAdvance?: SyncCursor,
   ): Promise<SyncRecord[]> {
-    const db = await getDatabase();
+    const db = await this.db();
     const applied: SyncRecord[] = [];
 
     for (const record of records) {
@@ -1618,7 +1752,7 @@ export class SqliteSyncStateRepository implements SyncStateRepository {
     collection: SyncCollection,
     records: SyncRecord[],
   ): Promise<void> {
-    const db = await getDatabase();
+    const db = await this.db();
 
     for (const record of records) {
       await db.runAsync(
@@ -1629,15 +1763,29 @@ export class SqliteSyncStateRepository implements SyncStateRepository {
     // NOTE: cursor is NOT advanced — records still need to be pushed.
   }
 
+  async countDirtyRecords(householdId: string, collection: SyncCollection, sinceRevision: number): Promise<number> {
+    const db = await this.db();
+    const row = await db.getFirstAsync<{ count: number }>(
+      'SELECT COUNT(*) AS count FROM sync_records WHERE householdId = ? AND collection = ? AND revision > ?',
+      [householdId, collection, sinceRevision],
+    );
+    return row?.count ?? 0;
+  }
+
   async getDirtyRecords(
     householdId: string,
     collection: SyncCollection,
     sinceRevision: number,
+    limit?: number,
   ): Promise<SyncRecord[]> {
-    const db = await getDatabase();
+    if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 0)) {
+      throw new Error('Invalid outbox page limit');
+    }
+    const db = await this.db();
     const rows = await db.getAllAsync<SyncRecordRow>(
-      'SELECT * FROM sync_records WHERE householdId = ? AND collection = ? AND revision > ? ORDER BY revision ASC',
-      [householdId, collection, sinceRevision],
+      'SELECT * FROM sync_records WHERE householdId = ? AND collection = ? AND revision > ? ORDER BY revision ASC'
+        + (limit === undefined ? '' : ' LIMIT ?'),
+      limit === undefined ? [householdId, collection, sinceRevision] : [householdId, collection, sinceRevision, limit],
     );
     return rows.map((r) => ({
       id: r.id,
@@ -1647,6 +1795,157 @@ export class SqliteSyncStateRepository implements SyncStateRepository {
       updatedAt: r.updatedAt,
       deletedAt: r.deletedAt,
       payload: r.payload,
+    }));
+  }
+
+  async getGroupState(householdId: string): Promise<SyncGroupState | null> {
+    const db = await this.db();
+    const row = await db.getFirstAsync<SyncGroupRow>(
+      'SELECT * FROM sync_groups WHERE householdId = ?',
+      [householdId],
+    );
+    return row
+      ? {
+          householdId: row.householdId,
+          remoteKnown: row.remoteKnown === 1,
+          lastRevision: row.lastRevision,
+          lastSyncedAt: row.lastSyncedAt,
+          lastError: row.lastError,
+        }
+      : null;
+  }
+
+  async setGroupState(state: SyncGroupState): Promise<void> {
+    const db = await this.db();
+    await db.runAsync(
+      `INSERT OR REPLACE INTO sync_groups
+        (householdId, remoteKnown, lastRevision, lastSyncedAt, lastError)
+       VALUES (?, ?, ?, ?, ?)`,
+      [state.householdId, state.remoteKnown ? 1 : 0, state.lastRevision, state.lastSyncedAt, state.lastError],
+    );
+  }
+
+  async getRemoteVersion(
+    householdId: string,
+    collection: SyncCollection,
+    entityId: string,
+  ): Promise<number> {
+    const db = await this.db();
+    const row = await db.getFirstAsync<{ version: number }>(
+      'SELECT version FROM sync_remote_versions WHERE householdId = ? AND collection = ? AND entityId = ?',
+      [householdId, collection, entityId],
+    );
+    return row?.version ?? 0;
+  }
+
+  async setRemoteVersion(
+    householdId: string,
+    collection: SyncCollection,
+    entityId: string,
+    version: number,
+  ): Promise<void> {
+    const db = await this.db();
+    await db.runAsync(
+      `INSERT INTO sync_remote_versions (householdId, collection, entityId, version)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(householdId, collection, entityId) DO UPDATE SET version = excluded.version`,
+      [householdId, collection, entityId, version],
+    );
+  }
+
+  async getPendingMutation(householdId: string): Promise<PendingSyncMutation | null> {
+    const db = await this.db();
+    const row = await db.getFirstAsync<PendingSyncMutationRow>(
+      'SELECT * FROM sync_pending_mutations WHERE householdId = ?',
+      [householdId],
+    );
+    return row
+      ? {
+          householdId: row.householdId,
+          operationId: row.operationId,
+          changesJson: row.changesJson,
+          sentJson: row.sentJson,
+          createdAt: row.createdAt,
+        }
+      : null;
+  }
+
+  async savePendingMutation(mutation: PendingSyncMutation): Promise<void> {
+    const db = await this.db();
+    await db.runAsync(
+      `INSERT OR REPLACE INTO sync_pending_mutations
+        (householdId, operationId, changesJson, sentJson, createdAt)
+       VALUES (?, ?, ?, ?, ?)`,
+      [
+        mutation.householdId,
+        mutation.operationId,
+        mutation.changesJson,
+        mutation.sentJson,
+        mutation.createdAt,
+      ],
+    );
+  }
+
+  async deletePendingMutation(householdId: string): Promise<void> {
+    const db = await this.db();
+    await db.runAsync('DELETE FROM sync_pending_mutations WHERE householdId = ?', [householdId]);
+  }
+
+  async recordConflict(conflict: SyncConflict): Promise<void> {
+    const db = await this.db();
+    await db.runAsync(
+      `INSERT OR REPLACE INTO sync_conflicts
+        (id, householdId, collection, entityId, localRevision, remoteVersion,
+         detectedAt, localPayload, remotePayload, resolvedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        conflict.id,
+        conflict.householdId,
+        conflict.collection,
+        conflict.entityId,
+        conflict.localRevision,
+        conflict.remoteVersion,
+        conflict.detectedAt,
+        conflict.localPayload,
+        conflict.remotePayload,
+        conflict.resolvedAt,
+      ],
+    );
+  }
+
+  async resolveConflicts(householdId: string, collection: SyncCollection, entityId: string): Promise<void> {
+    const db = await this.db();
+    await db.runAsync(
+      'UPDATE sync_conflicts SET resolvedAt = ? WHERE householdId = ? AND collection = ? AND entityId = ? AND resolvedAt IS NULL',
+      [new Date().toISOString(), householdId, collection, entityId],
+    );
+  }
+
+  async discardLocalRecord(householdId: string, collection: SyncCollection, entityId: string): Promise<void> {
+    const db = await this.db();
+    await db.runAsync(
+      'DELETE FROM sync_records WHERE householdId = ? AND collection = ? AND id = ?',
+      [householdId, collection, entityId],
+    );
+  }
+
+  async getConflicts(householdId: string): Promise<SyncConflict[]> {
+    const db = await this.db();
+    const rows = await db.getAllAsync<SyncConflictRow>(
+      'SELECT * FROM sync_conflicts WHERE householdId = ? ORDER BY detectedAt DESC',
+      [householdId],
+    );
+    return rows.map((row) => ({
+      id: row.id,
+      householdId: row.householdId,
+      collection: row.collection as SyncCollection,
+      entityId: row.entityId,
+      localRevision: row.localRevision,
+      remoteVersion: row.remoteVersion,
+      detectedAt: row.detectedAt,
+      localPayload: row.localPayload,
+      remotePayload: row.remotePayload,
+      resolvedAt: row.resolvedAt,
     }));
   }
 }
@@ -1666,4 +1965,33 @@ interface SyncRecordRow {
   updatedAt: string;
   deletedAt: string | null;
   payload: string | null;
+}
+
+interface SyncGroupRow {
+  householdId: string;
+  remoteKnown: number;
+  lastRevision: number;
+  lastSyncedAt: string | null;
+  lastError: string | null;
+}
+
+interface PendingSyncMutationRow {
+  householdId: string;
+  operationId: string;
+  changesJson: string;
+  sentJson: string;
+  createdAt: string;
+}
+
+interface SyncConflictRow {
+  id: string;
+  householdId: string;
+  collection: string;
+  entityId: string;
+  localRevision: number;
+  remoteVersion: number;
+  detectedAt: string;
+  localPayload: string | null;
+  remotePayload: string | null;
+  resolvedAt: string | null;
 }

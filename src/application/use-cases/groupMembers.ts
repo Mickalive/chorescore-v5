@@ -158,5 +158,37 @@ export async function addGroupMember(
     throw new Error('householdId is required');
   }
   const name = normalizeMemberName(rawName);
-  return repos.members.create({ householdId, name, userId: null });
+  return repos.withTransaction(() => repos.members.create({ householdId, name, userId: null }));
+}
+
+/**
+ * Rename an existing member without touching its identity. Ledgers reference
+ * the member id, never the display name, so historical entries keep pointing
+ * at the same person. Two members may deliberately share a name: this
+ * operation never merges identities.
+ */
+export async function renameGroupMember(
+  repos: AllRepositories,
+  householdId: string,
+  memberId: string,
+  rawName: string,
+): Promise<Member> {
+  if (!householdId) {
+    throw new Error('householdId is required');
+  }
+  if (!memberId) {
+    throw new Error('memberId is required');
+  }
+  const name = normalizeMemberName(rawName);
+
+  return repos.withTransaction(async () => {
+    const member = await repos.members.getById(memberId);
+    if (!member || member.householdId !== householdId) {
+      throw new Error('Member not found in this group');
+    }
+    if (member.name === name) {
+      return member;
+    }
+    return repos.members.update(member.id, { name });
+  });
 }

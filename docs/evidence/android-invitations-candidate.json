@@ -1,0 +1,21 @@
+{
+  "package": "app.chorescore.v5",
+  "versionName": "0.5.0",
+  "architectures": [
+    "arm64-v8a",
+    "x86_64"
+  ],
+  "apkSha256": "ead45f14b91831ba7722b5b605154418bc22d56aab5457fbbaca48c0dd1e1360",
+  "signerSha1": "5e8f16062ea3cd2c4a0d547876baa6f38cabf625",
+  "buildSucceeded": true,
+  "installed": false,
+  "appTestsPassed": 195,
+  "backendTestsPassed": 3,
+  "officialFirestoreScenarioSkipped": true,
+  "webSqliteJourneyPassed": true,
+  "fullNativeJourneyPassed": false,
+  "productionFirebaseVerified": false,
+  "twoPhysicalPhonesVerified": false,
+  "previousNativeEvidence": "android-candidate.json",
+  "sourceCommit": "018dbec"
+}

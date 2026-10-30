@@ -6,8 +6,8 @@
  * subscription surface.
  */
 
-import React, { useEffect, useState } from 'react';
-import { View, StyleSheet, TouchableOpacity, Switch } from 'react-native';
+import React, { useEffect, useState, useRef, useLayoutEffect } from 'react';
+import { View, StyleSheet, TouchableOpacity, Switch, Alert, Linking } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import { ScreenContainer } from '../src/ui/components/ScreenContainer';
@@ -57,26 +57,89 @@ function SettingRow({
 
 export default function GeneralOptionsScreen() {
   const router = useRouter();
-  const { currentUser, signOut, services } = useApp();
+  const { currentUser, signOut, services, households, repos } = useApp();
   const { t, locale, setLocale } = useI18n();
   const [privacyConsent, setPrivacyConsent] = useState(false);
+  const researchAvailable = services.analytics?.isAvailable() === true;
+  const [remindersEnabled, setRemindersEnabled] = useState<boolean | null>(null);
+  const [savingReminders, setSavingReminders] = useState(false);
+  const savingRemindersRef = useRef(false);
+  const activeUser = useRef<string | null>(currentUser?.userId ?? null);
+  useLayoutEffect(() => {
+    activeUser.current = currentUser?.userId ?? null;
+    return () => { activeUser.current = null; };
+  }, [currentUser?.userId]);
+  const [reminderError, setReminderError] = useState(false);
 
   useEffect(() => {
+    let active = true;
+    services.notifications.getEnabled().then(enabled => {
+      if (active) setRemindersEnabled(enabled);
+    }).catch(() => {
+      if (active) Alert.alert(t('state.error'), t('options.notificationsError'));
+    });
+    services.notifications.getReconciliationError().then(failed => {
+      if (active && failed) setReminderError(true);
+    }).catch(() => undefined);
     AsyncStorage.getItem(PRIVACY_CONSENT_KEY)
-      .then((value) => setPrivacyConsent(value === 'true'))
+      .then((value) => {
+        if (!active) return;
+        const enabled = researchAvailable && value === 'true';
+        services.analytics?.setEnabled(enabled);
+        setPrivacyConsent(enabled);
+      })
       .catch(() => {
         // Preference is best-effort.
       });
-  }, []);
+    return () => { active = false; };
+  }, [services.notifications, services.analytics, researchAvailable, t]);
+
+  const handleRemindersChange = async (enabled: boolean) => {
+    if (savingRemindersRef.current) return;
+    const owner = currentUser?.userId ?? null;
+    if (activeUser.current !== owner) return;
+    savingRemindersRef.current = true;
+    setSavingReminders(true);
+    try {
+      const todos = enabled && owner
+        ? (await Promise.all(households.map(async household => (await repos.todos.getFutureReminders(household.id, new Date().toISOString()))
+          .map(todo => ({ ...todo, householdId: household.id }))))).flat()
+        : [];
+      if (activeUser.current !== owner) return;
+      await services.notifications.setEnabled(enabled, todos
+        .filter(todo => todo.status !== 'completed' && todo.reminderAt && Date.parse(todo.reminderAt) > Date.now())
+        .map(todo => ({
+          title: t('todos.reminderNotificationTitle', { title: todo.title }),
+          body: todo.notes || t('todos.reminderNotificationBody'),
+          scheduledAt: todo.reminderAt!,
+          data: { todoId: todo.id, householdId: todo.householdId, userId: owner! },
+        })));
+      if (activeUser.current !== owner) return;
+      setRemindersEnabled(enabled);
+      setReminderError(false);
+    } catch {
+      if (activeUser.current !== owner) return;
+      setReminderError(true);
+      setRemindersEnabled(await services.notifications.getEnabled().catch(() => false));
+      Alert.alert(t('state.error'), t('options.notificationsError'));
+    } finally {
+      savingRemindersRef.current = false;
+      setSavingReminders(false);
+    }
+  };
 
   const handleLocale = (next: SupportedLocale) => {
     setLocale(next);
   };
 
   const handleConsentChange = (next: boolean) => {
+    if (!researchAvailable) return;
+    services.analytics.setEnabled(next);
     setPrivacyConsent(next);
     AsyncStorage.setItem(PRIVACY_CONSENT_KEY, next ? 'true' : 'false').catch(() => {
-      // Ignore persistence failure; the in-memory preference still applies.
+      services.analytics.setEnabled(false);
+      setPrivacyConsent(false);
+      Alert.alert(t('state.error'), t('options.privacySaveError'));
     });
   };
 
@@ -144,14 +207,26 @@ export default function GeneralOptionsScreen() {
         {t('options.notifications')}
       </Text>
       <Card style={styles.card}>
-        <SettingRow
-          label={
-            services.notifications.isAvailable()
-              ? t('options.notificationsAvailable')
-              : t('options.notificationsUnavailable')
-          }
-          last
-        />
+        {services.notifications.isAvailable() ? <>
+          <View style={[styles.row, styles.rowLast]}>
+            <Text variant="body" style={styles.consentLabel}>{t('options.remindersEnabled')}</Text>
+            <Switch testID="options.remindersEnabled"
+              accessibilityLabel={t('options.remindersEnabled')}
+              value={remindersEnabled === true}
+              disabled={savingReminders || remindersEnabled === null}
+              onValueChange={handleRemindersChange}
+              trackColor={{ false: colors.border, true: colors.primaryLight }}
+              thumbColor={remindersEnabled ? colors.primary : colors.surface} />
+          </View>
+          <Text variant="caption" style={styles.privacyBody}>{t('options.remindersHelp')}</Text>
+          {reminderError ? <>
+            <View accessibilityRole="alert"><Text variant="caption">{t('options.notificationsError')}</Text></View>
+            <Button title={t('action.retry')} variant="secondary" disabled={savingReminders}
+              onPress={() => { void handleRemindersChange(remindersEnabled === true); }} />
+          </> : null}
+          <Button title={t('options.notificationSettings')} variant="ghost"
+            onPress={() => { void Linking.openSettings().catch(() => Alert.alert(t('state.error'), t('options.notificationsError'))); }} />
+        </> : <SettingRow label={t('options.notificationsUnavailable')} last />}
       </Card>
 
       <Text variant="caption" style={styles.sectionLabel}>
@@ -169,6 +244,9 @@ export default function GeneralOptionsScreen() {
             {t('options.privacyConsent')}
           </Text>
           <Switch
+            testID="options.privacyConsent"
+            accessibilityLabel={t('options.privacyConsent')}
+            disabled={!researchAvailable}
             value={privacyConsent}
             onValueChange={handleConsentChange}
             trackColor={{ false: colors.border, true: colors.primaryLight }}

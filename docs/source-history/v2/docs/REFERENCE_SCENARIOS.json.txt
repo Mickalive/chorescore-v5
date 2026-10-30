@@ -1,0 +1,163 @@
+{
+  "schemaVersion": 2,
+  "purpose": "Canonical deterministic fixtures for domain, UI, Score and release smoke tests. Test/demo only; never production user data.",
+  "demoEntitlement": {
+    "mode": "demo-premium",
+    "description": "Default testable/demo state: all implemented Premium capabilities unlocked without a real purchase.",
+    "plan": "standard",
+    "isTestEntitlement": true,
+    "billingIsReal": false,
+    "scoreArchiveAccess": true,
+    "historyArchiveAccess": true,
+    "weightingEnabled": true,
+    "todoPlanningEnabled": true,
+    "advancedExportEnabled": true
+  },
+  "freeEntitlement": {
+    "mode": "demo-free",
+    "description": "Deterministic Free state used only to verify restrictions, month rollover and contextual upsell.",
+    "plan": "free",
+    "isTestEntitlement": true,
+    "billingIsReal": false,
+    "scoreArchiveAccess": false,
+    "historyArchiveAccess": false,
+    "weightingEnabled": false,
+    "todoPlanningEnabled": false
+  },
+  "scenarios": [
+    {
+      "id": "two-member-core",
+      "household": {"id": "h-core", "name": "Appartement démo"},
+      "members": [
+        {"id": "m-alex", "name": "Alex"},
+        {"id": "m-sam", "name": "Sam"}
+      ],
+      "persistentTasks": [
+        {"id": "pt-dishes", "name": "Vaisselle", "defaultWeight": 1}
+      ],
+      "entries": [
+        {
+          "id": "e1",
+          "label": "Vaisselle du soir",
+          "persistentTaskId": "pt-dishes",
+          "performedByMemberId": "m-alex",
+          "beneficiaryMemberIds": ["m-alex", "m-sam"],
+          "durationMinutes": 60,
+          "weight": 1,
+          "occurredAt": "2026-08-24T18:00:00+02:00"
+        },
+        {
+          "id": "e2",
+          "label": "Nettoyer le balcon",
+          "persistentTaskId": null,
+          "performedByMemberId": "m-sam",
+          "beneficiaryMemberIds": ["m-alex", "m-sam"],
+          "durationMinutes": 30,
+          "weight": 1.5,
+          "occurredAt": "2026-08-25T10:00:00+02:00"
+        }
+      ],
+      "todos": [
+        {
+          "id": "t1",
+          "title": "Sortir les cartons",
+          "assigneeMemberId": "m-sam",
+          "beneficiaryMemberIds": ["m-alex", "m-sam"],
+          "dueAt": null,
+          "status": "todo"
+        }
+      ],
+      "expected": {
+        "filters": ["Toutes", "Vaisselle", "Autres"],
+        "realBalancesMinutes": {"m-alex": 15, "m-sam": -15},
+        "realCompensations": [{"fromMemberId": "m-sam", "toMemberId": "m-alex", "minutes": 15}],
+        "performedMinutes": {"m-alex": 60, "m-sam": 30},
+        "weightedBalancesMinutes": {"m-alex": 7.5, "m-sam": -7.5},
+        "realFilterBalancesMinutes": {
+          "Vaisselle": {"m-alex": 30, "m-sam": -30},
+          "Autres": {"m-alex": -15, "m-sam": 15}
+        },
+        "weightedFilterBalancesMinutes": {
+          "Vaisselle": {"m-alex": 30, "m-sam": -30},
+          "Autres": {"m-alex": -22.5, "m-sam": 22.5}
+        }
+      }
+    },
+    {
+      "id": "three-member-beneficiaries",
+      "household": {"id": "h-three", "name": "Colocation démo"},
+      "members": [
+        {"id": "m-a", "name": "Ari"},
+        {"id": "m-b", "name": "Noa"},
+        {"id": "m-c", "name": "Lou"}
+      ],
+      "entries": [
+        {
+          "id": "e3",
+          "label": "Courses communes",
+          "persistentTaskId": null,
+          "performedByMemberId": "m-a",
+          "beneficiaryMemberIds": ["m-a", "m-b", "m-c"],
+          "durationMinutes": 90,
+          "weight": 1,
+          "occurredAt": "2026-08-26T18:00:00+02:00"
+        },
+        {
+          "id": "e4",
+          "label": "Aide pour Lou",
+          "persistentTaskId": null,
+          "performedByMemberId": "m-b",
+          "beneficiaryMemberIds": ["m-c"],
+          "durationMinutes": 30,
+          "weight": 1,
+          "occurredAt": "2026-08-27T18:00:00+02:00"
+        }
+      ],
+      "expected": {
+        "realBalancesMinutes": {"m-a": 60, "m-b": 0, "m-c": -60},
+        "realCompensations": [{"fromMemberId": "m-c", "toMemberId": "m-a", "minutes": 60}],
+        "sumOfBalances": 0
+      }
+    },
+    {
+      "id": "free-month-rollover",
+      "household": {"id": "h-free-rollover", "name": "Foyer gratuit démo"},
+      "currentDate": "2026-09-02T12:00:00+02:00",
+      "entries": [
+        {"id": "august-old", "label": "Cuisine août", "performedByMemberId": "m-alex", "beneficiaryMemberIds": ["m-alex", "m-sam"], "durationMinutes": 40, "weight": 1, "occurredAt": "2026-08-29T18:00:00+02:00"},
+        {"id": "september-current", "label": "Cuisine septembre", "performedByMemberId": "m-sam", "beneficiaryMemberIds": ["m-alex", "m-sam"], "durationMinutes": 20, "weight": 1, "occurredAt": "2026-09-01T18:00:00+02:00"}
+      ],
+      "expectedFree": {
+        "visibleEntryIds": ["september-current"],
+        "persistedEntryIds": ["august-old", "september-current"],
+        "archiveExists": true,
+        "archiveMessageIntent": "new-month-history-safe-premium-restores",
+        "automaticPaywall": false
+      },
+      "expectedAfterPremiumUpgrade": {
+        "visibleEntryIds": ["august-old", "september-current"]
+      }
+    }
+  ],
+  "goldenPath": {
+    "scenarioId": "two-member-core",
+    "defaultEntitlement": "demo-premium",
+    "steps": [
+      "Open Appartement démo with Premium test entitlement already unlocked",
+      "Verify no real-purchase paywall interrupts startup",
+      "Verify household tabs Ajouter une tâche, Score, To-do",
+      "Add a 20 minute one-off entry performed by Alex for Sam",
+      "Verify the new entry appears in history",
+      "Open Score and verify balances update according to performed-by/beneficiaries math",
+      "Open To-do and complete Sortir les cartons as Sam in 10 minutes for Alex and Sam",
+      "Verify Todo is completed and exactly one new CompletedEntry is created",
+      "Verify history and Score both update",
+      "Invoke native system share from a supported Score/history context",
+      "Switch deterministic entitlement to demo-free",
+      "Verify premium-only actions use contextual upsell rather than startup paywall",
+      "Run free-month-rollover and verify old entries remain persisted but hidden",
+      "Verify the gentle archive message is visible and non-blocking",
+      "Switch back to demo-premium and verify the archived entries reappear"
+    ]
+  }
+}

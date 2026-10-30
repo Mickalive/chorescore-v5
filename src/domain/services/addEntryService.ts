@@ -68,30 +68,35 @@ export type AddDraftResult<T> =
 
 /** Parse a strictly positive decimal, tolerant of a comma decimal separator. */
 export function parsePositiveNumber(raw: string): number | null {
-  if (typeof raw !== 'string' || raw.includes('-')) return null;
-  const cleaned = raw.replace(/[^0-9.,]/g, '').replace(',', '.');
-  if (!cleaned) return null;
-  const value = Number(cleaned);
+  if (typeof raw !== 'string') return null;
+  const text = raw.trim();
+  if (!/^(?:\d+|\d{1,3}(?:[ \u00a0\u202f]\d{3})+)(?:[.,]\d+)?$/.test(text)) return null;
+  const value = Number(text.replace(/[ \u00a0\u202f]/g, '').replace(',', '.'));
   if (!Number.isFinite(value) || value <= 0) return null;
   return value;
 }
 
-/** Parse a money string into positive integer minor units. */
-export function parseAmountToMinor(raw: string): number | null {
-  const value = parsePositiveNumber(raw);
-  if (value === null) return null;
-  const minor = Math.round(value * 100);
-  return minor > 0 ? minor : null;
+/** Parse decimal money without binary floating-point rounding or silent
+ * truncation. The currency field is separate; reject stray text and fractions
+ * smaller than a cent. Spaces may separate conventional groups of 3 digits.
+ */
+function parseDecimalMinor(raw: string): number | null {
+  if (typeof raw !== 'string') return null;
+  const text = raw.trim();
+  if (!/^(?:\d+|\d{1,3}(?:[ \u00a0\u202f]\d{3})+)(?:[.,]\d{1,2})?$/.test(text)) return null;
+  const [whole, fraction = ''] = text.replace(/[ \u00a0\u202f]/g, '').split(/[.,]/);
+  const minor = Number(whole) * 100 + Number(fraction.padEnd(2, '0'));
+  return Number.isSafeInteger(minor) && minor >= 0 ? minor : null;
 }
 
-/** Parse a custom-share string into non-negative integer minor units (empty = 0). */
+export function parseAmountToMinor(raw: string): number | null {
+  const minor = parseDecimalMinor(raw);
+  return minor !== null && minor > 0 ? minor : null;
+}
+
+/** Empty custom shares mean zero; malformed shares never silently become zero. */
 export function parseShareToMinor(raw: string): number | null {
-  if (typeof raw !== 'string' || raw.includes('-')) return null;
-  const cleaned = raw.replace(/[^0-9.,]/g, '').replace(',', '.');
-  if (!cleaned) return 0;
-  const value = Number(cleaned);
-  if (!Number.isFinite(value) || value < 0) return null;
-  return Math.round(value * 100);
+  return typeof raw === 'string' && raw.trim() === '' ? 0 : parseDecimalMinor(raw);
 }
 
 /** Build one task weight per member, each defaulting to 1 (equal ratio). */
@@ -304,7 +309,7 @@ export function buildExpenseDraft(
   const title = normalizeLabel(input.title, 'label-required');
   if (!title.ok) return title;
 
-  if (!Number.isInteger(input.amountMinor) || input.amountMinor <= 0) {
+  if (!Number.isSafeInteger(input.amountMinor) || input.amountMinor <= 0) {
     return { ok: false, error: 'amount-invalid' };
   }
   if (typeof input.paidByMemberId !== 'string' || input.paidByMemberId.length === 0) {
