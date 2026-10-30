@@ -249,7 +249,7 @@ export default function TodosScreen() {
             title: t('todos.reminderNotificationTitle', { title: createForm.title.trim() }),
             body: createForm.notes.trim() || t('todos.reminderNotificationBody'),
             scheduledAt: createForm.reminderAt.toISOString(),
-            data: { todoId: created.id },
+            data: { todoId: created.id, householdId: currentHouseholdId, userId: currentUser?.userId },
           });
         } catch (error) {
           await repos.withTransaction(async () => repos.todos.delete(created.id));

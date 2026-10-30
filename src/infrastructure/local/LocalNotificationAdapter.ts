@@ -75,7 +75,15 @@ export class LocalNotificationAdapter implements NotificationGateway {
 
   /** Disabling cancels native requests; enabling restores future pending todos. */
   setEnabled(enabled: boolean, reminders: NotificationOptions[] = []): Promise<void> {
+    const owner = this.getActiveUserId?.();
+    const checkAccount = () => {
+      if (enabled && this.getActiveUserId && (this.getActiveUserId() !== owner ||
+          reminders.some(reminder => reminder.data?.userId !== undefined && reminder.data.userId !== owner))) {
+        throw new Error('Account changed while restoring reminders');
+      }
+    };
     return this.serialize(async () => {
+      checkAccount();
       if (!enabled) {
         // Persist first so no later scheduling call can undo a user's opt-out.
         await AsyncStorage.setItem(ENABLED_KEY, 'false');
@@ -92,19 +100,23 @@ export class LocalNotificationAdapter implements NotificationGateway {
         return;
       }
       if (!(await this.requestPermission())) throw new Error('Notification permission denied');
+      checkAccount();
       const desiredIds = new Set(reminders.filter(reminder => reminder.scheduledAt && Date.parse(reminder.scheduledAt) > Date.now())
         .map(reminder => typeof reminder.data?.todoId === 'string' ? todoNotificationId(reminder.data.todoId) : null));
       const obsolete = (await Notifications.getAllScheduledNotificationsAsync())
         .filter(request => request.identifier.startsWith('chorescore-todo:') && !desiredIds.has(request.identifier));
+      checkAccount();
       const cancelled = await Promise.allSettled(obsolete.map(request => Notifications.cancelScheduledNotificationAsync(request.identifier)));
       if (cancelled.some(result => result.status === 'rejected')) throw new Error('Some native reminders could not be cancelled');
       const restored: string[] = [];
       try {
         for (const reminder of reminders) {
+          checkAccount();
           if (reminder.scheduledAt && Date.parse(reminder.scheduledAt) > Date.now()) {
             restored.push(await this.scheduleNative(reminder));
           }
         }
+        checkAccount();
         await AsyncStorage.setItem(ENABLED_KEY, 'true');
         await AsyncStorage.removeItem(RECONCILIATION_ERROR_KEY);
       } catch (error) {

@@ -253,3 +253,22 @@ test('a permission response arriving after an account switch cannot schedule the
   await expect(scheduled).rejects.toThrow('Account changed');
   expect(Notifications.scheduleNotificationAsync).not.toHaveBeenCalled();
 });
+
+test('restoring reminders rejects another account before cancelling or scheduling any native request', async () => {
+  const adapter = new LocalNotificationAdapter(() => 'new-account');
+  await expect(adapter.setEnabled(true,[{title:'Old private task',body:'Old private note',scheduledAt:new Date(Date.now()+3600000).toISOString(),
+    data:{todoId:'old-todo',householdId:'old-group',userId:'old-account'}}])).rejects.toThrow('Account changed');
+  expect(Notifications.requestPermissionsAsync).not.toHaveBeenCalled();
+  expect(Notifications.cancelScheduledNotificationAsync).not.toHaveBeenCalled();
+  expect(Notifications.scheduleNotificationAsync).not.toHaveBeenCalled();
+});
+
+test('an account change during the restore permission prompt cannot reassign private reminders', async () => {
+  let uid='old-account';
+  const adapter = new LocalNotificationAdapter(() => uid);
+  jest.mocked(Notifications.getPermissionsAsync).mockImplementationOnce(async()=>{ uid='new-account';return {granted:true} as any; });
+  await expect(adapter.setEnabled(true,[{title:'Old private task',body:'Private',scheduledAt:new Date(Date.now()+3600000).toISOString(),
+    data:{todoId:'old-todo',householdId:'old-group',userId:'old-account'}}])).rejects.toThrow('Account changed');
+  expect(Notifications.cancelScheduledNotificationAsync).not.toHaveBeenCalled();
+  expect(Notifications.scheduleNotificationAsync).not.toHaveBeenCalled();
+});

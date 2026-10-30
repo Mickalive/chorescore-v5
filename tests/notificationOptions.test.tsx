@@ -27,7 +27,7 @@ beforeEach(() => {
   notifications.getEnabled.mockResolvedValue(false);
   notifications.setEnabled.mockResolvedValue(undefined);
   mockApp.mockReturnValue({
-    currentUser: null, signOut: jest.fn(), households: [{ id: 'h1' }, { id: 'h2' }],
+    currentUser: { userId: 'settings-owner' }, signOut: jest.fn(), households: [{ id: 'h1' }, { id: 'h2' }],
     repos: { todos: { getFutureReminders } }, services: { notifications },
   });
 });
@@ -47,8 +47,8 @@ test('enabling restores future unfinished reminders across groups and excludes c
   await act(async () => { await reminderSwitch().props.onValueChange(true); });
   expect(getFutureReminders.mock.calls).toEqual([['h1', expect.any(String)], ['h2', expect.any(String)]]);
   expect(notifications.setEnabled).toHaveBeenCalledWith(true, [
-    { title: 'Courses', body: 'Pain', scheduledAt: future, data: { todoId: 'pending' } },
-    { title: 'Ménage', body: 'todos.reminderNotificationBody', scheduledAt: future, data: { todoId: 'working' } },
+    { title: 'Courses', body: 'Pain', scheduledAt: future, data: { todoId: 'pending', householdId: 'h1', userId: 'settings-owner' } },
+    { title: 'Ménage', body: 'todos.reminderNotificationBody', scheduledAt: future, data: { todoId: 'working', householdId: 'h2', userId: 'settings-owner' } },
   ]);
   expect(reminderSwitch().props.value).toBe(true);
 });
@@ -95,4 +95,17 @@ test('an unavailable research service cannot be enabled by the privacy control o
   expect(control.props.value).toBe(false);
   await act(async () => control.props.onValueChange(true));
   expect(analytics.isEnabled()).toBe(false);
+});
+
+test('an old account reminder query cannot restore its todos after another account signs in', async () => {
+  let finish!:(todos:any[])=>void;
+  getFutureReminders.mockReturnValue(new Promise(resolve=>{finish=resolve;}));
+  const app=mockApp();
+  await act(async()=>{tree=renderer.create(<GeneralOptionsScreen/>);});
+  let pending!:Promise<void>;
+  await act(async()=>{pending=reminderSwitch().props.onValueChange(true);});
+  mockApp.mockReturnValue({...app,currentUser:{userId:'new-account'}});
+  await act(async()=>tree.update(<GeneralOptionsScreen/>));
+  await act(async()=>{finish([{id:'old-todo',title:'Old private note',status:'todo',reminderAt:new Date(Date.now()+3600000).toISOString()}]);await pending;});
+  expect(notifications.setEnabled).not.toHaveBeenCalled();
 });

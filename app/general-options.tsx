@@ -6,7 +6,7 @@
  * subscription surface.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef, useLayoutEffect } from 'react';
 import { View, StyleSheet, TouchableOpacity, Switch, Alert, Linking } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
@@ -63,6 +63,12 @@ export default function GeneralOptionsScreen() {
   const researchAvailable = services.analytics?.isAvailable() === true;
   const [remindersEnabled, setRemindersEnabled] = useState<boolean | null>(null);
   const [savingReminders, setSavingReminders] = useState(false);
+  const savingRemindersRef = useRef(false);
+  const activeUser = useRef<string | null>(currentUser?.userId ?? null);
+  useLayoutEffect(() => {
+    activeUser.current = currentUser?.userId ?? null;
+    return () => { activeUser.current = null; };
+  }, [currentUser?.userId]);
   const [reminderError, setReminderError] = useState(false);
 
   useEffect(() => {
@@ -89,27 +95,35 @@ export default function GeneralOptionsScreen() {
   }, [services.notifications, services.analytics, researchAvailable, t]);
 
   const handleRemindersChange = async (enabled: boolean) => {
-    if (savingReminders) return;
+    if (savingRemindersRef.current) return;
+    const owner = currentUser?.userId ?? null;
+    if (activeUser.current !== owner) return;
+    savingRemindersRef.current = true;
     setSavingReminders(true);
     try {
-      const todos = enabled
-        ? (await Promise.all(households.map(household => repos.todos.getFutureReminders(household.id, new Date().toISOString())))).flat()
+      const todos = enabled && owner
+        ? (await Promise.all(households.map(async household => (await repos.todos.getFutureReminders(household.id, new Date().toISOString()))
+          .map(todo => ({ ...todo, householdId: household.id }))))).flat()
         : [];
+      if (activeUser.current !== owner) return;
       await services.notifications.setEnabled(enabled, todos
         .filter(todo => todo.status !== 'completed' && todo.reminderAt && Date.parse(todo.reminderAt) > Date.now())
         .map(todo => ({
           title: t('todos.reminderNotificationTitle', { title: todo.title }),
           body: todo.notes || t('todos.reminderNotificationBody'),
           scheduledAt: todo.reminderAt!,
-          data: { todoId: todo.id },
+          data: { todoId: todo.id, householdId: todo.householdId, userId: owner! },
         })));
+      if (activeUser.current !== owner) return;
       setRemindersEnabled(enabled);
       setReminderError(false);
     } catch {
+      if (activeUser.current !== owner) return;
       setReminderError(true);
       setRemindersEnabled(await services.notifications.getEnabled().catch(() => false));
       Alert.alert(t('state.error'), t('options.notificationsError'));
     } finally {
+      savingRemindersRef.current = false;
       setSavingReminders(false);
     }
   };
