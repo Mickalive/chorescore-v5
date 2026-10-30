@@ -143,6 +143,33 @@ service cloud.firestore {
         && getAfter(groupPath(groupId)).data.revision == get(groupPath(groupId)).data.revision + 1;
     }
 
+    // A client can call Firestore directly. Transport-side validation does
+    // not enforce immutable compensation or truthful authorship on its own.
+    function validSettlement(groupId) {
+      let v = request.resource.data.value;
+      let h = getAfter(groupPath(groupId)).data.household;
+      let rate = h.get('contributionToMoneyRate', null);
+      return request.resource.data.collection != 'settlements' || (
+        v != null && v.createdBy == request.auth.uid
+        && h.get('crossLedgerCompensationEnabled', false) == true
+        && rate != null
+        && v.contributionValue is number && v.contributionValue > 0
+        && v.moneyAmountMinor is int && v.moneyAmountMinor > 0
+        && v.moneyAmountMinor <= 9007199254740991
+        && rate.contributionValue is number && rate.contributionValue > 0
+        && rate.moneyAmountMinor is int && rate.moneyAmountMinor > 0
+        && v.contributionUnit == h.contributionUnit
+        && v.contributionUnit == rate.contributionUnit
+        && v.currency == rate.currency && v.rateSnapshot == rate
+        && v.moneyAmountMinor == int((v.contributionValue / rate.contributionValue) * rate.moneyAmountMinor + 0.5)
+        && v.contributionCreditorMemberId is string
+        && v.counterpartyMemberId is string
+        && v.contributionCreditorMemberId != v.counterpartyMemberId
+        && getAfter(recordPath(groupId, 'members:' + v.contributionCreditorMemberId)).data.value.householdId == groupId
+        && getAfter(recordPath(groupId, 'members:' + v.counterpartyMemberId)).data.value.householdId == groupId
+      );
+    }
+
     function validRecord(groupId, recordId) {
       return request.resource.data.keys().hasOnly([
           'id', 'collection', 'version', 'value', 'updatedAt', 'revision'
@@ -150,6 +177,7 @@ service cloud.firestore {
         && request.resource.data.id is string
         && request.resource.data.id.matches('^[A-Za-z0-9_-]{1,128}$')
         && writableCollection(request.resource.data.collection)
+        && validSettlement(groupId)
         && recordId == request.resource.data.collection + ':' + request.resource.data.id
         && request.resource.data.version is int
         && request.resource.data.version >= 1
@@ -292,6 +320,7 @@ service cloud.firestore {
           && request.resource.data.version == 1
           && memberIdentity(groupId, recordId);
         allow update: if canAppend(groupId)
+          && request.resource.data.collection != 'settlements'
           && exists(recordPath(groupId, recordId))
           && validRecord(groupId, recordId)
           && request.resource.data.version == resource.data.version + 1

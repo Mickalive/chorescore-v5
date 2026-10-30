@@ -414,4 +414,39 @@ describeEmulator('real Firestore rules and collaboration journey', () => {
     const deletedGroup = await alice.firestore.getDocument(`groups/${hid}`);
     expect(deletedGroup?.fields.deleted).toBe(true);
   });
+  test('direct Firestore clients cannot rewrite a settlement or forge its author, rate or converted amount', async () => {
+    const suffix=randomUUID().slice(0,8);
+    const alice=await client(`settlement-owner-${suffix}`);
+    const {household,ownerMember,namedMembers}=await createGroupWithMembers(alice.repos,{
+      name:`Compensation ${suffix}`,owner:{userId:alice.uid,displayName:'Alice'},memberNames:['Bob'],contributionUnit:'points'});
+    const rate={contributionValue:1,contributionUnit:'points' as const,moneyAmountMinor:100,currency:'CHF'};
+    await alice.repos.households.update(household.id,{crossLedgerCompensationEnabled:true,contributionToMoneyRate:rate});
+    await alice.sync.ensureRemoteGroup(household.id,alice.uid);
+    const ids=[ownerMember.id,namedMembers[0].id];
+    await alice.repos.contributions.create({householdId:household.id,label:'Travail',value:10,unit:'points',performedByMemberId:ids[0],
+      beneficiaryMemberIds:ids,persistentTaskId:null,occurredAt:new Date().toISOString(),createdBy:alice.uid});
+    await alice.repos.expenses.create({householdId:household.id,title:'Avance',amountMinor:1000,currency:'CHF',paidByMemberId:ids[1],
+      participantMemberIds:ids,splitMode:'equal',occurredAt:new Date().toISOString(),createdBy:alice.uid});
+    await alice.sync.pushChanges(household.id);
+    const settlement=await alice.repos.settlements.create({householdId:household.id,contributionCreditorMemberId:ids[0],counterpartyMemberId:ids[1],
+      contributionValue:3,contributionUnit:'points',moneyAmountMinor:300,currency:'CHF',rateSnapshot:rate,occurredAt:new Date().toISOString(),createdBy:alice.uid});
+    await alice.sync.pushChanges(household.id);
+    const path=`groups/${household.id}/records/settlements:${settlement.id}`;
+    const original=await alice.firestore.getDocument(path);
+    if(!original)throw new Error('The valid settlement must actually commit before the hostile tests');
+    const attack=async(id:string,patch:Record<string,unknown>,existing=false)=>alice.firestore.runTransaction(async transaction=>{
+      const group=await transaction.get(`groups/${household.id}`);
+      if(!group)throw new Error('Group missing');
+      const revision=Number(group.fields.revision)+1;
+      transaction.set(`groups/${household.id}`,{...group.fields,revision});
+      transaction.set(`groups/${household.id}/records/settlements:${id}`,{...original.fields,id,revision,version:existing?Number(original.fields.version)+1:1,
+        value:{...(original.fields.value as Record<string,any>),id,...patch} as any});
+    });
+    await expect(attack(settlement.id,{moneyAmountMinor:301},true)).rejects.toMatchObject({status:403});
+    await expect(attack(`forged-author-${suffix}`,{createdBy:'another-account'})).rejects.toMatchObject({status:403});
+    await expect(attack(`forged-rate-${suffix}`,{rateSnapshot:{...rate,moneyAmountMinor:500}})).rejects.toMatchObject({status:403});
+    await expect(attack(`forged-amount-${suffix}`,{moneyAmountMinor:999})).rejects.toMatchObject({status:403});
+    expect(await alice.firestore.getDocument(path)).toEqual(original);
+  });
+
 });
