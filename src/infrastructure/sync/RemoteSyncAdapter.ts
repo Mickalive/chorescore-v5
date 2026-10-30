@@ -1,3 +1,4 @@
+import { NetworkCost, NetworkMetrics } from '../../domain/services/networkCost';
 /**
  * RemoteSyncAdapter — real HTTP collaboration against the frugal server.
  *
@@ -61,6 +62,7 @@ const BATCH_LIMIT = 100;
 export type RemoteRequest = (method: 'GET' | 'POST', path: string, body?: unknown) => Promise<unknown>;
 
 export interface RemoteSyncConfig {
+  getNetworkMetrics?: () => NetworkMetrics | undefined;
   /** Empty when a custom `request` authority (e.g. Firestore) is supplied. */
   baseUrl?: string;
   /** Optional non-HTTP authority implementing the same bounded contract. */
@@ -109,6 +111,8 @@ interface SyncSession {
 }
 
 export class RemoteSyncAdapter implements SyncGateway {
+  private readonly networkCost = new NetworkCost();
+  getNetworkMetrics() { return this.config.request ? this.config.getNetworkMetrics?.() : this.networkCost.snapshot(); }
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
   private readonly sessions = new Map<string, SyncSession>();
@@ -153,17 +157,22 @@ export class RemoteSyncAdapter implements SyncGateway {
     }
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 20_000);
+    let finishCost: ReturnType<NetworkCost['begin']> | undefined;
     try {
+      const token = await this.token();
+      const encodedBody = body === undefined ? undefined : JSON.stringify(body);
+      finishCost = this.networkCost.begin('collaboration-request',encodedBody);
       const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
         method,
         headers: {
-          Authorization: `Bearer ${await this.token()}`,
+          Authorization: `Bearer ${token}`,
           ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
         },
-        body: body === undefined ? undefined : JSON.stringify(body),
+        body: encodedBody,
         signal: controller.signal,
       });
       const text = await response.text();
+      finishCost(text,response.ok);
       let parsed: unknown = null;
       try {
         parsed = text ? JSON.parse(text) : null;
@@ -179,6 +188,7 @@ export class RemoteSyncAdapter implements SyncGateway {
       }
       return parsed as T;
     } catch (error) {
+      finishCost?.();
       if (error instanceof RemoteHttpError) throw error;
       if ((error as { name?: string }).name === 'AbortError') {
         throw new Error('Délai de synchronisation dépassé');

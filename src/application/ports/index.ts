@@ -1,3 +1,4 @@
+import type { NetworkMetrics } from '../../domain/services/networkCost';
 /**
  * ChoreScore V3 — Application Ports (Interfaces)
  *
@@ -102,6 +103,8 @@ export interface SecureStorageGateway {
 }
 
 export interface SyncGateway {
+  /** Session-level HTTP body counters, not a cloud billing estimate. */
+  getNetworkMetrics?(): NetworkMetrics | undefined;
   isAvailable(): boolean;
   startSync(householdId: string): Promise<void>;
   stopSync(householdId: string): Promise<void>;

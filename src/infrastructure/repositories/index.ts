@@ -1,3 +1,4 @@
+import type { ContributionActivityQuery, ContributionActivityTotal } from '../../domain/calculations/contributionActivity';
 /**
  * ChoreScore V3 — Repository Interfaces
  *
@@ -133,6 +134,7 @@ export interface PaginatedQuery {
 }
 
 export interface ContributionEntryRepository extends SeedableRepository<ContributionEntry> {
+  getActivitySummary(householdId: string, query: ContributionActivityQuery): Promise<ContributionActivityTotal[]>;
   getByHousehold(householdId: string): Promise<ContributionEntry[]>;
   getByHouseholdPaginated(householdId: string, query?: PaginatedQuery): Promise<PaginatedResult<ContributionEntry>>;
   getById(id: string): Promise<ContributionEntry | null>;

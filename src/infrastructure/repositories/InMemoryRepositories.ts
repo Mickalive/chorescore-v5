@@ -1,3 +1,4 @@
+import { calculateContributionActivity, ContributionActivityQuery } from '../../domain/calculations/contributionActivity';
 /**
  * ChoreScore V3 — In-Memory Repositories
  *
@@ -401,6 +402,9 @@ export class InMemoryCategoryRepository implements CategoryRepository {
 }
 
 export class InMemoryContributionEntryRepository implements ContributionEntryRepository {
+  async getActivitySummary(householdId: string, query: ContributionActivityQuery) {
+    return calculateContributionActivity([...this.items.values()].filter(entry => entry.householdId === householdId), query);
+  }
   private items = new Map<string, ContributionEntry>();
 
   /** Snapshot internal state for transactional rollback. */

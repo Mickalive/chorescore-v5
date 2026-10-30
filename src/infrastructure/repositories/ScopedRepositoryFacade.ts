@@ -1,3 +1,4 @@
+import type { ContributionActivityQuery } from '../../domain/calculations/contributionActivity';
 /**
  * ChoreScore V3 — Scoped Repository Facade
  *
@@ -176,6 +177,10 @@ function extractHouseholdId(
  * Authorization-enforcing facade for a contribution entry repository.
  */
 export class ScopedContributionRepository implements ContributionEntryRepository {
+  async getActivitySummary(householdId: string, query: ContributionActivityQuery) {
+    await this.checkMembership(householdId);
+    return this.inner.getActivitySummary(householdId, query);
+  }
   constructor(
     private inner: ContributionEntryRepository,
     private callerUserId: string,

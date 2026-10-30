@@ -1,3 +1,4 @@
+import { initializeActivityProjections } from './ActivityProjections';
 /**
  * ChoreScore V3 — SQLite Storage
  *
@@ -30,6 +31,7 @@ export function getDatabase(name: string = DEFAULT_DATABASE_NAME): Promise<SQLit
       await applyV4ColumnMigrations(database);
       await initializeAttachmentLinks(database);
       await initializeBalanceProjections(database);
+      await initializeActivityProjections(database);
       return database;
     } catch (error) {
       await database.closeAsync();

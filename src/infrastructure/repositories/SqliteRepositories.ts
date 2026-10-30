@@ -1,3 +1,4 @@
+import { activityBoundary, ContributionActivityQuery, ContributionActivityTotal } from '../../domain/calculations/contributionActivity';
 /**
  * ChoreScore V3 — SQLite Repositories
  *
@@ -312,7 +313,7 @@ export class SqliteHouseholdRepository extends SqliteDatabaseBound implements Ho
     // Caller owns the transaction. Child deletion fires photo-link triggers;
     // file garbage collection then removes only unreferenced managed files.
     for (const table of ['contribution_entries','expense_entries','todo_items','persistent_tasks',
-      'settlements','balance_totals','categories','invitations','memberships','members','sync_records','sync_cursors',
+      'settlements','balance_totals','activity_lifetime','activity_days','activity_minutes','categories','invitations','memberships','members','sync_records','sync_cursors',
       'sync_sequences','sync_remote_versions','sync_pending_mutations','sync_conflicts','sync_groups']) {
       await db.runAsync(`DELETE FROM ${table} WHERE householdId = ?`, [id]);
     }
@@ -681,6 +682,33 @@ function contributionParams(entry: ContributionEntry): (string | number | null)[
 }
 
 export class SqliteContributionEntryRepository extends SqliteDatabaseBound implements ContributionEntryRepository {
+  async getActivitySummary(householdId: string, query: ContributionActivityQuery): Promise<ContributionActivityTotal[]> {
+    const db = await this.db();
+    const after = activityBoundary(query);
+    const shortcut = query.persistentTaskId === undefined ? '' : ' AND shortcut=?';
+    const params: (string|number)[] = [householdId,query.unit];
+    if (query.persistentTaskId !== undefined) params.push(query.persistentTaskId ?? '');
+    let sql: string;
+    let bindings: (string|number)[];
+    if (!after) {
+      sql = `SELECT memberId,SUM(value) AS value,SUM(count) AS count FROM activity_lifetime WHERE householdId=? AND unit=?${shortcut} GROUP BY memberId ORDER BY memberId`;
+      bindings = params;
+    } else {
+      // Period boundaries use local midnight. UTC day summaries cover the
+      // interior; only the first UTC day's minute buckets cover its edge.
+      const day = after.slice(0,10), minute = after.slice(0,16);
+      const nextDay = new Date(Date.parse(day+'T00:00:00.000Z')+86400000).toISOString().slice(0,10);
+      sql = `SELECT memberId,SUM(value) AS value,SUM(count) AS count FROM (
+        SELECT memberId,value,count FROM activity_days WHERE householdId=? AND unit=?${shortcut} AND bucket>?
+        UNION ALL SELECT memberId,value,count FROM activity_minutes WHERE householdId=? AND unit=?${shortcut} AND bucket>=? AND bucket<?
+        ) GROUP BY memberId ORDER BY memberId`;
+      bindings = [...params,day,...params,minute,nextDay];
+    }
+    const rows = await db.getAllAsync<ContributionActivityTotal>(sql,bindings);
+    if (rows.some(row => !Number.isFinite(row.value) || !Number.isSafeInteger(row.count))) throw new Error('Invalid activity summary');
+    return rows;
+  }
+
   async seed(entries: ContributionEntry[]): Promise<void> {
     const db = await this.db();
     for (const entry of entries) {

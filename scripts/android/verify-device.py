@@ -17,6 +17,7 @@ APK = Path(sys.argv[1]).resolve()
 EVIDENCE = Path(os.environ.get('ANDROID_EVIDENCE_DIR','android-evidence')).resolve()
 EVIDENCE.mkdir(parents=True,exist_ok=True)
 PACKAGE = 'app.chorescore.v5'
+GROUP_NAME = os.environ.get('ANDROID_TEST_GROUP_NAME', 'Maison CI')
 ADB = os.environ.get('ADB_BIN','adb')
 PHOTO_NAME = 'chorescore-photo.png'
 PHOTO_BYTES = (Path(__file__).resolve().parents[2] / 'assets' / 'icon.png').read_bytes()
@@ -733,7 +734,7 @@ def start():
     raise AssertionError(f'Groups screen did not open after launch: {last_error or "not visible"}')
 
 def open_group():
-    tap('Ouvrir le groupe Maison CI')
+    tap(f'Ouvrir le groupe {GROUP_NAME}')
     locate(resource='add.taskLabel')
 
 try:
@@ -766,12 +767,12 @@ try:
     scroll_to(resource='groups.newButton')
     scroll_top()
     locate(resource='groups.nameInput',timeout=20)
-    fill('groups.nameInput','Maison CI')
+    fill('groups.nameInput',GROUP_NAME)
     scroll_to(resource='groups.unit.points')
     add_member_at_creation('Camille')
     add_member_at_creation('Dominique')
     scroll_to(resource='groups.createButton')
-    locate('Ouvrir le groupe Maison CI')
+    locate(f'Ouvrir le groupe {GROUP_NAME}')
     screenshot('groups-filled-android')
     open_group()
     locate('Valeur (pts)')

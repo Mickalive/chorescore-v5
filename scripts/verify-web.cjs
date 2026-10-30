@@ -88,6 +88,13 @@ const server = createServer((req, res) => {
     await expect(page.getByText('+ 4,5 pts', { exact: true })).toBeVisible();
     await expect(page.getByText(/^\+ 0,50[\s\u00a0\u202f]CHF$/)).toBeVisible();
     await screenshot('balances-web');
+    await expect(field('activity.total')).toContainText('9 pts');
+    await expect(field('activity.total')).toContainText('1 tâche');
+    await field('activity.unit.minutes').click();
+    await expect(field('activity.total')).toContainText('0 min');
+    await field('activity.unit.points').click();
+    await expect(field('activity.total')).toContainText('9 pts');
+
     await field('balances.shortcut.other').click();
     await expect(page.getByText(/^Cuisine\s/)).toHaveCount(0);
     await expect(page.getByText('+ 4,5 pts', { exact: true })).toBeVisible();
@@ -217,13 +224,19 @@ const server = createServer((req, res) => {
     await expect(field('add.taskLabel')).toHaveValue('');
     await page.getByRole('tab', { name: 'Balances', exact: true }).click();
     await expect(page.getByText(/Historique ancien/)).toBeVisible();
+    const allTimeActivityText = await field('activity.total').innerText();
     await field('balances.period.week').click();
+    await expect(field('activity.total')).not.toHaveText(allTimeActivityText);
     await expect(page.getByText(/Historique ancien/)).toBeHidden();
     await expect(page.getByText('+ 22 pts', { exact: true })).toBeVisible();
     await expect(page.getByText(/^\+ 2,01[\s\u00a0\u202f]CHF$/)).toBeVisible();
     await field('balances.period.all-time').click();
     await expect(page.getByText(/Historique ancien/)).toBeVisible();
     await screenshot('history-period-perpetual-balances-web');
+    await expect(field('activity.total')).toHaveText(allTimeActivityText);
+    await field('activity.summary').scrollIntoViewIfNeeded();
+    await screenshot('activity-statistics-web');
+
 
     // Real settings + custom compensation: French decimals, agreed rate,
     // exact cents and persisted effects in both independent ledgers.
@@ -300,7 +313,7 @@ const server = createServer((req, res) => {
     await button('Open group Notre maison').waitFor();
     await screenshot('groups-en-small-web');
     assert.deepEqual(errors, []);
-    console.log('PASS: persisted reusable task shortcut and indexed history filters; custom compensation and agreed French decimal rate with exact persisted cents; history periods with perpetual balances, category defaults and historical snapshots, custom task weights and exact-cent shares, both todo kinds; owner group deletion with exact-name confirmation, cancel and reload; arbitrary local dates/times, invalid-date rejection and cancellation; points group + pending named member; exact-cent expense; task and notes; Balances edit; reload persistence; todo completion; zero-sum balances; FR/EN preference persistence and small-screen layout.');
+    console.log('PASS: incremental task activity totals/bars and original-unit selection; persisted reusable task shortcut and indexed history filters; custom compensation and agreed French decimal rate with exact persisted cents; history periods with perpetual balances, category defaults and historical snapshots, custom task weights and exact-cent shares, both todo kinds; owner group deletion with exact-name confirmation, cancel and reload; arbitrary local dates/times, invalid-date rejection and cancellation; points group + pending named member; exact-cent expense; task and notes; Balances edit; reload persistence; todo completion; zero-sum balances; FR/EN preference persistence and small-screen layout.');
     console.log('Screenshots:', evidence, '(web only; not Android evidence)');
   } catch (error) {
     await screenshot('failure-web').catch(() => {});

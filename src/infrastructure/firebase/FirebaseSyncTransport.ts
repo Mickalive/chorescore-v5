@@ -262,6 +262,8 @@ async function defaultToken(): Promise<string> {
 }
 
 export class FirebaseSyncTransport {
+  getNetworkMetrics() { return this.client instanceof FirestoreRestClient ? this.client.getNetworkMetrics() : undefined; }
+
   private readonly client: FirestorePort;
   private readonly getAccessToken: () => Promise<string | null>;
   private readonly getUid: () => string | null;

@@ -573,3 +573,31 @@ test('a reusable shortcut is shared between two real SQLite clients and its dele
   expect(await bob.repos.tasks.getById(shortcut.id)).toBeNull();
   expect(await bob.repos.contributions.getById(entry.id)).toEqual(entry);
 });
+
+test('measured HTTP costs stay bounded for three deltas while local activity and history reads make no requests', async () => {
+  const alice=await openClient('meter-alice','meter-alice.db');
+  const bob=await openClient('meter-bob','meter-bob.db');
+  const {household,ownerMember,namedMembers}=await createGroupWithMembers(alice.repos,{name:'Coût mesuré',owner:{userId:alice.uid,displayName:'Alice'},memberNames:['Bob'],contributionUnit:'points'});
+  await alice.sync.ensureRemoteGroup(household.id,alice.uid);
+  const invitation=await alice.sync.createInvitation(household.id,namedMembers[0].id);
+  await bob.sync.acceptInvitation(invitation.token);
+  const before=alice.sync.getNetworkMetrics()!;
+  for(let i=0;i<3;i++)await alice.repos.contributions.create({householdId:household.id,label:`Tâche café ${i}`,value:2,unit:'points',
+    performedByMemberId:ownerMember.id,beneficiaryMemberIds:[ownerMember.id,namedMembers[0].id],persistentTaskId:null,
+    occurredAt:new Date().toISOString(),createdBy:alice.uid});
+  await alice.repos.contributions.getActivitySummary(household.id,{unit:'points',period:'all-time'});
+  await alice.repos.contributions.getByHouseholdPaginated(household.id,{limit:20});
+  expect(alice.sync.getNetworkMetrics()).toEqual(before);
+  await alice.sync.pushChanges(household.id);
+  const sent=alice.sync.getNetworkMetrics()!;
+  expect(sent.requests-before.requests).toBeGreaterThan(0);
+  expect(sent.requests-before.requests).toBeLessThanOrEqual(12);
+  expect(sent.sentBytes-before.sentBytes).toBeLessThan(32768);
+  expect(sent.failures-before.failures).toBe(0);
+  const bobBefore=bob.sync.getNetworkMetrics()!;
+  await bob.sync.pullChanges(household.id);
+  const received=bob.sync.getNetworkMetrics()!;
+  expect(received.requests-bobBefore.requests).toBeLessThanOrEqual(12);
+  expect(received.receivedBytes-bobBefore.receivedBytes).toBeLessThan(32768);
+  expect((await bob.repos.contributions.getActivitySummary(household.id,{unit:'points',period:'all-time'}))[0]).toMatchObject({count:3,value:6});
+});

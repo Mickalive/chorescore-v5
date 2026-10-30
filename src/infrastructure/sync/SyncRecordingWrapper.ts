@@ -1,3 +1,4 @@
+import type { ContributionActivityQuery } from '../../domain/calculations/contributionActivity';
 /**
  * ChoreScore V3 — Sync Recording Wrapper
  *
@@ -65,6 +66,7 @@ export function resetRevisions(): void {}
 // ── Contribution Recording Wrapper ─────────────────────────────
 
 export class SyncRecordingContributionRepository implements ContributionEntryRepository {
+  getActivitySummary(householdId: string, query: ContributionActivityQuery) { return this.inner.getActivitySummary(householdId, query); }
   constructor(
     private inner: ContributionEntryRepository,
     private syncState: SyncStateRepository,

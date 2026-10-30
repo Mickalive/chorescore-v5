@@ -1,3 +1,4 @@
+import { combineNetworkMetrics } from '../../domain/services/networkCost';
 /**
  * Chooses the collaboration authority used by a normal build.
  *
@@ -98,6 +99,7 @@ export function createCollaborationServices(
       media,
       sync: new RemoteSyncAdapter({
         request: (method, path, body) => transport.request(method, path, body),
+        getNetworkMetrics: () => combineNetworkMetrics(transport.getNetworkMetrics(), media.getNetworkMetrics()),
         getAccessToken: config.getAccessToken,
         getRepos: config.getRepos,
         media,

@@ -169,6 +169,8 @@ export interface FirebaseMediaConfig {
 }
 
 export class FirebaseMediaGateway implements MediaGateway {
+  getNetworkMetrics() { return this.client instanceof FirestoreRestClient ? this.client.getNetworkMetrics() : undefined; }
+
   private readonly client: FirestorePort;
   private readonly readFile: (uri: string) => Promise<Uint8Array>;
   private readonly readCached: (householdId: string, remoteRef: string) => Promise<string | null>;

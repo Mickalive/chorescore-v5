@@ -1,3 +1,4 @@
+import { NetworkCost } from '../../domain/services/networkCost';
 /**
  * Real Firestore REST client (Firebase Spark friendly).
  *
@@ -135,6 +136,9 @@ class RestTransaction implements FirestoreTransaction {
 }
 
 export class FirestoreRestClient implements FirestorePort {
+  private readonly networkCost = new NetworkCost();
+  getNetworkMetrics() { return this.networkCost.snapshot(); }
+
   private readonly projectId: string;
   private readonly getAccessToken: () => Promise<string | null>;
   private readonly fetchImpl: typeof fetch;
@@ -171,6 +175,7 @@ export class FirestoreRestClient implements FirestorePort {
     if (!token) throw new FirestoreHttpError(401, 'Firebase authentication required');
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 25_000);
+    const finishCost = this.networkCost.begin('firestore-request', typeof init.body === 'string' ? init.body : '');
     try {
       const response = await this.fetchImpl(url, {
         ...init,
@@ -182,6 +187,7 @@ export class FirestoreRestClient implements FirestorePort {
         signal: controller.signal,
       });
       const text = await response.text();
+      finishCost(text,response.ok);
       let parsed: unknown = null;
       try {
         parsed = text ? JSON.parse(text) : null;
@@ -201,6 +207,7 @@ export class FirestoreRestClient implements FirestorePort {
       }
       return parsed as T;
     } catch (error) {
+      finishCost();
       if (error instanceof FirestoreConflictError || error instanceof FirestoreHttpError) throw error;
       if ((error as { name?: string }).name === 'AbortError') {
         throw new FirestoreHttpError(408, 'Firestore request timed out');

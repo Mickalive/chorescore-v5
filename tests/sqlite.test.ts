@@ -548,3 +548,63 @@ test('shortcut history filters paginate in SQL, preserve deleted shortcut histor
   expect(JSON.stringify(plan)).toContain('idx_contributions_shortcut_history');
   expect(fullRead).not.toHaveBeenCalled(); fullRead.mockRestore();
 });
+
+test('activity projection matches replay across edits, remote replay, rollback, periods and original units', async () => {
+  const { calculateContributionActivity } = require('../src/domain/calculations/contributionActivity');
+  const { periodBoundary } = require('../src/domain/calculations/periods');
+  const repos = (await createSqliteRepositories())!;
+  const { household, ownerMember, namedMembers } = await createGroupWithMembers(repos, { name: 'Statistiques',
+    owner: { userId: 'statistics-owner', displayName: 'Alice' }, memberNames: ['Bob'], contributionUnit: 'points' });
+  const referenceDate = new Date('2026-10-30T12:00:00.000Z');
+  const boundary = Date.parse(periodBoundary('month',referenceDate));
+  const entries: any[] = [];
+  for (const [i,occurredAt] of [boundary-60000,boundary,boundary+60000].entries()) entries.push(await repos.contributions.create({
+    householdId: household.id,label: `Tâche ${i}`,value: 2**i,unit: 'points',performedByMemberId: i===2 ? namedMembers[0].id : ownerMember.id,
+    beneficiaryMemberIds: [ownerMember.id,namedMembers[0].id],persistentTaskId: i===2 ? 'stable-template' : null,
+    occurredAt: new Date(occurredAt).toISOString(),createdBy: 'statistics-owner' }));
+  const compare = async () => {
+    const ledger = await repos.contributions.getByHousehold(household.id);
+    for (const period of ['week','month','year','all-time'] as const) for (const persistentTaskId of [undefined,null,'stable-template']) {
+      const query = { unit: 'points' as const,period,referenceDate,persistentTaskId };
+      expect(await repos.contributions.getActivitySummary(household.id,query)).toEqual(calculateContributionActivity(ledger,query));
+    }
+  };
+  await compare();
+  expect((await repos.contributions.getActivitySummary(household.id,{unit:'points',period:'month',referenceDate})).reduce((sum,row)=>sum+row.value,0)).toBe(6);
+  await repos.contributions.update(entries[0].id,{value: 7,occurredAt: new Date(boundary+120000).toISOString(),performedByMemberId: namedMembers[0].id});
+  await compare();
+  await repos.raw.contributions.seed([entries[1]]); await repos.raw.contributions.seed([entries[1]]);
+  await compare();
+  const before = await repos.contributions.getActivitySummary(household.id,{unit:'points',period:'all-time'});
+  await expect(repos.withTransaction(async () => { await repos.contributions.delete(entries[2].id); throw new Error('rollback'); })).rejects.toThrow('rollback');
+  expect(await repos.contributions.getActivitySummary(household.id,{unit:'points',period:'all-time'})).toEqual(before);
+  await repos.households.update(household.id,{contributionUnit:'minutes'});
+  expect(await repos.contributions.getActivitySummary(household.id,{unit:'minutes',period:'all-time'})).toEqual([]);
+  await compare();
+  await expect(createScopedRepositories(repos,'intruder').contributions.getActivitySummary(household.id,{unit:'points',period:'all-time'})).rejects.toThrow();
+  for (const entry of entries) await repos.contributions.delete(entry.id);
+  expect(await repos.contributions.getActivitySummary(household.id,{unit:'points',period:'all-time'})).toEqual([]);
+});
+
+test('activity projection backfills existing history once and reads compact totals for 50,000 entries', async () => {
+  const { initializeActivityProjections } = require('../src/infrastructure/local/ActivityProjections');
+  const repos = (await createSqliteRepositories())!;
+  const legacy = native.prepare("SELECT householdId FROM contribution_entries WHERE id='projection-legacy-0'").get();
+  expect(legacy).toBeDefined();
+  native.exec("DELETE FROM projection_metadata WHERE key='activity-v1'; DELETE FROM activity_lifetime; DELETE FROM activity_days; DELETE FROM activity_minutes;");
+  await initializeActivityProjections(mockDatabase);
+  const read = jest.spyOn(mockDatabase,'getAllAsync');
+  const totals = await repos.contributions.getActivitySummary(legacy.householdId,{unit:'points',period:'all-time'});
+  expect(totals).toHaveLength(1); expect(totals[0].count).toBe(50_000);
+  expect(read).toHaveBeenCalledTimes(1);
+  expect(read.mock.calls[0][0]).toContain('FROM activity_lifetime');
+  expect(read.mock.calls[0][0]).not.toContain('contribution_entries');
+  read.mockRestore();
+  const write = jest.spyOn(mockDatabase,'runAsync');
+  await initializeActivityProjections(mockDatabase);
+  expect(write).not.toHaveBeenCalled(); write.mockRestore();
+  native.close(); native = new sqlite.DatabaseSync(path);
+  expect(await repos.contributions.getActivitySummary(legacy.householdId,{unit:'points',period:'all-time'})).toEqual(totals);
+  const plan = native.prepare('EXPLAIN QUERY PLAN SELECT memberId,value,count FROM activity_days WHERE householdId=? AND unit=? AND bucket>?').all(legacy.householdId,'points','2026-01-01');
+  expect(JSON.stringify(plan)).toContain('activity_days_period');
+},30_000);

@@ -1,3 +1,4 @@
+import { ContributionActivity } from '../../src/features/balances/ContributionActivity';
 /**
  * ChoreScore V3 — Balances Tab
  *
@@ -693,6 +694,8 @@ export default function BalancesScreen() {
               <Text variant="caption" color={historyShortcut === option.id ? colors.textOnPrimary : colors.textSecondary}>{option.name}</Text>
             </TouchableOpacity>)}
         </View>
+        {currentHouseholdId && <ContributionActivity householdId={currentHouseholdId} unit={unit} members={members}
+          period={period} persistentTaskId={historyShortcut} revision={snapshot} />}
         <Card style={styles.historyCard}>
           {historyError && <ErrorState title={t('state.errorTitle')} message={t('balances.historyError')}
             onRetry={() => { void loadHistoryPage(historyFilter); }} retryLabel={t('action.retry')} />}
