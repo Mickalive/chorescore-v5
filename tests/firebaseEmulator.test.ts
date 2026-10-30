@@ -6,7 +6,7 @@
  * `FirestoreRestClient`, `FirebaseSyncTransport`, `RemoteSyncAdapter` and
  * `FirebaseMediaGateway`; no InMemoryFirestore or deployed project is used.
  *
- * The single workflow starts this file inside `firebase emulators:exec`, which
+ * Run this file locally inside `firebase emulators:exec`, which
  * supplies FIRESTORE_EMULATOR_HOST. A plain local `npm test` skips it because
  * there is no emulator to prove anything.
  */
@@ -361,6 +361,28 @@ describeEmulator('real Firestore rules and collaboration journey', () => {
       expect(await alice.repos.todos.getById(todo.id)).toMatchObject({ status: 'completed' });
       const ledger = kind === 'task' ? alice.repos.contributions : alice.repos.expenses;
       expect(await ledger.getById(await todoCompletionEntryId(todo.id))).not.toBeNull();
+      // Bypass the mobile transport: keeping status='completed' must not let
+      // another direct client silently rewrite an already completed todo.
+      const todoPath = `groups/${hid}/records/todo_items:${todo.id}`;
+      const completedRecord = await alice.firestore.getDocument(todoPath);
+      if (!completedRecord) throw new Error('Completed todo must exist before attacking it');
+      for (const patch of [{ title: 'Forged completed title' }, { status: 'todo' }, null]) {
+        await expect(alice.firestore.runTransaction(async transaction => {
+          const group = await transaction.get(`groups/${hid}`);
+          if (!group) throw new Error('Missing group');
+          const nextRevision = Number(group.fields.revision) + 1;
+          const value = patch === null ? null : { ...(completedRecord.fields.value as Record<string, any>), ...patch };
+          transaction.set(`groups/${hid}`, { ...group.fields, revision: nextRevision });
+          transaction.set(todoPath, { ...completedRecord.fields, revision: nextRevision,
+            version: Number(completedRecord.fields.version) + 1, value });
+          transaction.set(`groups/${hid}/events/${nextRevision}`, { revision: nextRevision,
+            groupId: hid, count: 1, createdAt: new Date(clock).toISOString() });
+          transaction.set(`groups/${hid}/events/${nextRevision}/changes/0`, { revision: nextRevision,
+            index: 0, collection: 'todo_items', id: todo.id,
+            version: Number(completedRecord.fields.version) + 1, value });
+        })).rejects.toMatchObject({ status: 403 });
+        expect(await alice.firestore.getDocument(todoPath)).toEqual(completedRecord);
+      }
       const revision = await householdRevision(alice, hid);
       await bob.sync.pushChanges(hid);
       expect(await householdRevision(alice, hid)).toBe(revision);

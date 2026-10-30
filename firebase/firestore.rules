@@ -2,10 +2,10 @@ rules_version = '2';
 
 // ChoreScore V5 — Firestore Spark authority.
 //
-// Every client write below is still subject to the application's domain
-// validation in FirebaseSyncTransport. These rules additionally make the
-// authority itself reject forged tenants, revisions, invitation identities,
-// completed-todo rewrites, event payloads and media deletion by other accounts.
+// FirebaseSyncTransport runs on the client: its domain validation is not a
+// security boundary. These candidate rules require official-emulator and
+// hostile direct-client validation before deployment. Credit sufficiency and
+// atomic completion proof are still open acceptance requirements.
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() {
@@ -240,11 +240,7 @@ service cloud.firestore {
       return request.resource.data.collection != 'todo_items'
         || !exists(recordPath(groupId, recordId))
         || resource.data.value == null
-        || resource.data.value.status != 'completed'
-        || (
-          request.resource.data.value != null
-          && request.resource.data.value.status == 'completed'
-        );
+        || resource.data.value.status != 'completed';
     }
 
     function validEventChange(groupId, revision, index) {

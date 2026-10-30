@@ -42,6 +42,36 @@ beforeAll(() => {
   files.set('file://local/photo.jpg', photo);
 });
 
+test('deleted groups cannot expose an already cached private photo', async () => {
+  const store = new InMemoryFirestore();
+  store.seed('groups/deleted', { deleted: true, access: { alice: { role: 'OWNER' } } });
+  const readCached = jest.fn(async () => 'file://private/cached.jpg');
+  const media = new FirebaseMediaGateway({ client: store, getAccessToken: async () => 'token',
+    getUid: () => 'alice', readCached });
+  await expect(media.download('deleted', 'photo')).rejects.toMatchObject({ status: 403 });
+  expect(readCached).not.toHaveBeenCalled();
+});
+
+test('an account switch while reading a cached photo never returns the previous account photo', async () => {
+  let uid = 'alice';
+  const store = new InMemoryFirestore();
+  store.seed('groups/private', { access: { alice: { role: 'OWNER' } } });
+  const media = new FirebaseMediaGateway({ client: store, getAccessToken: async () => 'token',
+    getUid: () => uid, readCached: async () => { uid = 'mallory'; return 'file://private/cached.jpg'; } });
+  await expect(media.download('private', 'photo')).rejects.toMatchObject({ status: 401 });
+});
+
+test('an account switch while loading an upload prevents any remote write', async () => {
+  let uid = 'alice';
+  const store = new InMemoryFirestore();
+  store.seed('groups/private', { access: { alice: { role: 'OWNER' }, mallory: { role: 'MEMBER' } } });
+  const media = new FirebaseMediaGateway({ client: store, getAccessToken: async () => 'token',
+    getUid: () => uid, readFile: async () => { uid = 'mallory'; return photo; } });
+  await expect(media.upload('private', { id: 'photo', ref: 'file://private.jpg' }))
+    .rejects.toMatchObject({ status: 401 });
+  expect(store.read('groups/private/media/photo')).toBeNull();
+});
+
 test('photos are private, bounded and downloaded byte-for-byte by members only', async () => {
   const alice = gateway('alice');
   const bob = gateway('bob');

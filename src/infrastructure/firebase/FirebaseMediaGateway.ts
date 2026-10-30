@@ -150,7 +150,7 @@ function isImage(bytes: Uint8Array): boolean {
 }
 
 function memberOf(document: FirestoreDocument | null, uid: string) {
-  if (!document) return false;
+  if (!document || document.fields.deleted === true) return false;
   const access = document.fields.access;
   return Boolean(access && typeof access === 'object' && !Array.isArray(access) && access[uid]);
 }
@@ -208,6 +208,12 @@ export class FirebaseMediaGateway implements MediaGateway {
     return uid;
   }
 
+  private requireSameAccount(uid: string): void {
+    if (this.config.getUid() !== uid) {
+      throw new FirebaseMediaError(401, 'Account changed during photo operation');
+    }
+  }
+
   private mediaPath(householdId: string, remoteRef: string): string {
     return `groups/${householdId}/media/${remoteRef}`;
   }
@@ -226,25 +232,32 @@ export class FirebaseMediaGateway implements MediaGateway {
     let uri = attachment.ref;
     let mimeType = attachment.mimeType && EXTENSIONS[attachment.mimeType] ? attachment.mimeType : 'image/jpeg';
     let bytes = await this.readFile(uri);
+    this.requireSameAccount(uid);
     if (attachment.byteSize !== undefined && attachment.byteSize !== bytes.length) {
       throw new Error('Taille de photo incohérente');
     }
     if (bytes.length > MAX_FIRESTORE_MEDIA_BYTES) {
       const compressed = await this.compress(uri);
+      this.requireSameAccount(uid);
       uri = compressed.uri;
       mimeType = compressed.mimeType;
       bytes = await this.readFile(uri);
+      this.requireSameAccount(uid);
     }
     if (bytes.length === 0 || bytes.length > MAX_FIRESTORE_MEDIA_BYTES) {
       throw new Error('Photo trop volumineuse pour le stockage Firebase gratuit (700 Kio)');
     }
     if (!isImage(bytes)) throw new Error('Contenu de photo invalide');
     const digest = await sha256(bytes);
+    this.requireSameAccount(uid);
 
-    return this.client.runTransaction(async (transaction) => {
+    const result = await this.client.runTransaction(async (transaction) => {
+      this.requireSameAccount(uid);
       const group = await transaction.get(`groups/${householdId}`);
+      this.requireSameAccount(uid);
       if (!memberOf(group, uid)) throw new FirebaseMediaError(403, 'Group access denied');
       const existing = await transaction.get(this.mediaPath(householdId, remoteRef));
+      this.requireSameAccount(uid);
       if (existing) {
         if (String(existing.fields.sha256 ?? '') !== digest) {
           throw new FirebaseMediaError(409, 'Media identifier already used with different content');
@@ -265,16 +278,21 @@ export class FirebaseMediaGateway implements MediaGateway {
       });
       return { remoteRef, sha256: digest, byteSize: bytes.length };
     });
+    this.requireSameAccount(uid);
+    return result;
   }
 
   async download(householdId: string, remoteRef: string): Promise<string> {
     const uid = this.uid();
     if (!ID.test(householdId) || !ID.test(remoteRef)) throw new Error('Référence de photo invalide');
     const group = await this.client.getDocument(`groups/${householdId}`);
+    this.requireSameAccount(uid);
     if (!memberOf(group, uid)) throw new FirebaseMediaError(403, 'Group access denied');
     const cached = await this.readCached(householdId, remoteRef);
+    this.requireSameAccount(uid);
     if (cached) return cached;
     const document = await this.client.getDocument(this.mediaPath(householdId, remoteRef));
+    this.requireSameAccount(uid);
     if (!document) throw new FirebaseMediaError(404, 'Media not found');
     const data = document.fields.data;
     if (typeof data !== 'string') throw new FirebaseMediaError(500, 'Media integrity check failed');
@@ -283,17 +301,23 @@ export class FirebaseMediaGateway implements MediaGateway {
     if (bytes.length !== Number(document.fields.byteSize ?? 0) || (await sha256(bytes)) !== expected) {
       throw new FirebaseMediaError(500, 'Media integrity check failed');
     }
+    this.requireSameAccount(uid);
     const mimeType = String(document.fields.mimeType ?? 'image/jpeg');
-    return this.writeCached(householdId, remoteRef, bytes, mimeType);
+    const uri = await this.writeCached(householdId, remoteRef, bytes, mimeType);
+    this.requireSameAccount(uid);
+    return uri;
   }
 
   async remove(householdId: string, remoteRef: string): Promise<void> {
     const uid = this.uid();
     if (!ID.test(householdId) || !ID.test(remoteRef)) throw new Error('Référence de photo invalide');
     await this.client.runTransaction(async (transaction: FirestoreTransaction) => {
+      this.requireSameAccount(uid);
       const group = await transaction.get(`groups/${householdId}`);
+      this.requireSameAccount(uid);
       if (!memberOf(group, uid)) throw new FirebaseMediaError(403, 'Group access denied');
       const document = await transaction.get(this.mediaPath(householdId, remoteRef));
+      this.requireSameAccount(uid);
       if (!document) return;
       const records = await transaction.query(`groups/${householdId}/records`, [
         { field: 'collection', op: '==', value: 'contribution_entries' },
@@ -301,6 +325,7 @@ export class FirebaseMediaGateway implements MediaGateway {
       const expenses = await transaction.query(`groups/${householdId}/records`, [
         { field: 'collection', op: '==', value: 'expense_entries' },
       ]);
+      this.requireSameAccount(uid);
       const referenced = [...records, ...expenses].some((record) => {
         const value = record.fields.value;
         const attachments = value && typeof value === 'object' && !Array.isArray(value)
