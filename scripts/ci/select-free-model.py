@@ -15,9 +15,19 @@ context = Path('.opencode-ci')
 context.mkdir(exist_ok=True)
 target = context / 'model-probe.txt'
 results = []
-for model in ['big-pickle', 'mimo-v2.5-free', 'deepseek-v4-flash-free', 'nemotron-3.5-lightning-free',
-        'north-mini-code-free', 'laguna-s-2.1-free', 'hy3-free', 'ling-3.0-flash-free',
-        'ling-3.0-tiny-free', 'nemotron-3-ultra-free', 'muse-spark-1.2-contributor-free', 'x-preview-f-free']:
+preferred = ['beam-free', 'mimo-v2.6-flash-free', 'deepseek-v4.1-flash-free']
+try:
+    listing = subprocess.check_output(['opencode', 'models', 'opencode'], timeout=30, text=True)
+    available = [line.strip().split('/', 1)[1] for line in listing.splitlines()
+        if re.fullmatch(r'opencode/[A-Za-z0-9._-]+', line.strip())]
+    candidates = [model for model in preferred if model in available]
+    candidates += [model for model in available if model not in candidates and model != 'big-pickle']
+    if 'big-pickle' in available:
+        candidates.append('big-pickle')
+except (subprocess.SubprocessError, OSError):
+    candidates = preferred
+print('Current OpenCode catalogue candidates: ' + ', '.join(candidates), flush=True)
+for model in candidates:
     try:
         url = f'https://raw.githubusercontent.com/anomalyco/models.dev/dev/providers/opencode/models/{model}.toml'
         with urllib.request.urlopen(url, timeout=20) as response:
