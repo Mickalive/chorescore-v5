@@ -33,6 +33,10 @@ def annotation(message):
 
 runs = json.loads(request(api + '/actions/workflows/product-acceptance.yml/runs?per_page=10'))['workflow_runs']
 previous = next((run for run in runs if run['id'] != current and run['conclusion'] == 'failure'), None)
+from pathlib import Path
+context = Path('.opencode-ci')
+context.mkdir(exist_ok=True)
+summaries = []
 if previous is None:
     print('No previous failed acceptance run.')
 else:
@@ -41,11 +45,14 @@ else:
         if job['conclusion'] != 'failure':
             continue
         failures = [step['name'] for step in job.get('steps', []) if step['conclusion'] == 'failure']
+        summaries.append(f"Run {previous['id']}, {job['name']}: {', '.join(failures)}")
         annotation(f"Run {previous['id']}, {job['name']}: {', '.join(failures)}")
         try:
             log = request(api + '/actions/jobs/' + str(job['id']) + '/logs').decode('utf-8', errors='replace')
+            summaries.append(log[-18000:].replace(token, '[REDACTED]'))
             # The API log has already been secret-masked by GitHub. Bound the
             # annotation so the failure remains accessible without a login.
             annotation(log[-7000:])
         except Exception as error:
             annotation('Log unavailable: ' + type(error).__name__)
+(context / 'previous-failures.md').write_text('\n\n'.join(summaries))

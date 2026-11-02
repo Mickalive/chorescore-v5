@@ -1,0 +1,12 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "opencode/big-pickle",
+  "small_model": "opencode/big-pickle",
+  "enabled_providers": ["opencode"],
+  "permission": {
+    "*": "allow",
+    "external_directory": "deny",
+    "doom_loop": "deny"
+  },
+  "agent": { "build": { "steps": 80 } }
+}
