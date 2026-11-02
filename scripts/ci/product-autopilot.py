@@ -83,9 +83,22 @@ checks = [
 ]
 records = []
 verified = None
+initial = []
+previous = CONTEXT / 'previous-failures.md'
+if previous.exists():
+    initial.append(previous.read_text())
+for name, args, timeout in checks[:4]:
+    log = EVIDENCE / f'baseline-{name}.log'
+    passed = run(args, log, timeout)
+    initial.append(f'## Baseline {name}: {"PASS" if passed else "FAIL"}\n' + log.read_text(errors='replace')[-18000:])
+    if not passed:
+        message = log.read_text(errors='replace')[-6000:]
+        print('::notice title=Concrete baseline failure::' + message.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A'), flush=True)
+        break
+(CONTEXT / 'latest-checks.md').write_text('\n\n'.join(initial))
 for attempt in range(1, 4):
     prompt = MISSION + '\nPass ' + str(attempt) + '. Read .opencode-ci/latest-checks.md first if present. Implement real product changes now.'
-    answered = run(['opencode', 'run', '--agent', 'build', '--model', 'opencode/big-pickle',
+    answered = run(['opencode', 'run', '--agent', 'build', '--model', os.environ['AUTOPILOT_MODEL'],
         '--format', 'json', prompt], EVIDENCE / f'worker-{attempt}.jsonl', 900)
     events = []
     for line in (EVIDENCE / f'worker-{attempt}.jsonl').read_text(errors='replace').splitlines():

@@ -11,13 +11,13 @@ permissions:
 
 concurrency:
   group: chorescore-single-product-writer
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   reconstruct:
     if: github.event.repository.private == false
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 180
     permissions:
       contents: read
       actions: read
@@ -51,33 +51,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/opencode-bin"
-          curl --fail --location --retry 2 https://github.com/anomalyco/opencode/releases/download/v1.19.4/opencode-linux-x64.tar.gz -o "$RUNNER_TEMP/opencode.tar.gz"
+          curl --fail --location --max-time 120 --retry 2 https://github.com/anomalyco/opencode/releases/download/v1.19.4/opencode-linux-x64.tar.gz -o "$RUNNER_TEMP/opencode.tar.gz"
           printf '%s  %s\n' 849bd6b3d959a1d2ef200ed1634a51c79a45ca236aa26665d75debd694805cce "$RUNNER_TEMP/opencode.tar.gz" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/opencode.tar.gz" -C "$RUNNER_TEMP/opencode-bin"
           echo "$RUNNER_TEMP/opencode-bin" >> "$GITHUB_PATH"
-          curl --fail --location https://raw.githubusercontent.com/anomalyco/models.dev/dev/providers/opencode/models/big-pickle.toml -o "$RUNNER_TEMP/model.toml"
-          python3 - <<'PY'
-          import os,tomllib
-          with open(os.environ['RUNNER_TEMP']+'/model.toml','rb') as f: model=tomllib.load(f)
-          assert model['cost']['text']['input']['price']==0, 'Input model pricing is not zero'
-          assert model['cost']['text']['output']['price']==0, 'Output model pricing is not zero'
-          PY
-      - name: Require a real free model response
-        timeout-minutes: 5
-        run: |
-          set -euo pipefail
-          timeout 240 opencode run --model opencode/big-pickle --format json 'Reply exactly OPENCODE_FREE_OK. Do not use tools or edit files.' > "$RUNNER_TEMP/model-health.jsonl"
-          python3 - <<'PY'
-          import json,os
-          events=[]
-          for line in open(os.environ['RUNNER_TEMP']+'/model-health.jsonl'):
-            try: events.append(json.loads(line))
-            except ValueError: pass
-          assert not any(e.get('type')=='error' for e in events), 'Free model returned an error'
-          text=''.join(e.get('part',{}).get('text','') for e in events if e.get('type')=='text')
-          assert 'OPENCODE_FREE_OK' in text, 'No actual free inference; do not pretend a worker ran'
-          print('::notice::Free OpenCode inference actually answered; starting product reconstruction.')
-          PY
+      - name: Require zero-price inference with a real tool call (historical fallback probe)
+        timeout-minutes: 9
+        run: python3 scripts/ci/select-free-model.py
       - name: Audit, implement and iterate against independent product gates
         run: python3 scripts/ci/product-autopilot.py
       - name: Expose concrete iteration outcome
