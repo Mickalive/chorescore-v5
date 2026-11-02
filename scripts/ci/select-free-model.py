@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import secrets
 import signal
+import re
 import subprocess
 import tomllib
 import urllib.request
@@ -32,7 +33,7 @@ for model in ['big-pickle', 'mimo-v2.5-free', 'deepseek-v4-flash-free', 'nemotro
         environment = dict(os.environ, OPENCODE_CONFIG_CONTENT=json.dumps(config))
         log = folder / (model + '-probe.jsonl')
         with log.open('w') as output:
-            process = subprocess.Popen(['opencode', 'run', '--agent', 'build', '--model', 'opencode/' + model,
+            process = subprocess.Popen(['opencode', 'run', '--print-logs', '--log-level', 'ERROR', '--agent', 'build', '--model', 'opencode/' + model,
                 '--format', 'json', 'Health probe only. Use a tool to read .opencode-ci/model-probe.txt. '
                 'Reply with the exact file contents. Do not edit files or do any other work.'],
                 env=environment, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
@@ -73,5 +74,16 @@ for model in ['big-pickle', 'mimo-v2.5-free', 'deepseek-v4-flash-free', 'nemotro
             detail = probe_log.read_text(errors='replace')[-1800:]
             print('::notice title=Model startup diagnostic::' + detail.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A'), flush=True)
 else:
+    print('::error title=Free model availability::' + json.dumps(results), flush=True)
+    # Server-side startup failures have only an opaque ref in JSON events.
+    # Surface bounded error lines, never headers/tokens or arbitrary log files.
+    logs = Path(os.environ.get('XDG_DATA_HOME', str(Path.home() / '.local/share'))) / 'opencode/log'
+    files = sorted(logs.glob('*.log'), key=lambda p: p.stat().st_mtime, reverse=True)[:2]
+    for file in files:
+        lines = [line for line in file.read_text(errors='replace').splitlines()
+            if re.search(r'UnknownError|ENOENT|EACCES|error=|stack=|api.?key|ECONN|failed', line, re.I)]
+        detail = '\n'.join(lines)[-5000:]
+        detail = re.sub(r'(?i)(bearer\s+|api.?key[=:]\s*)\S+', r'\1[REDACTED]', detail)
+        print('::notice title=OpenCode server failure::' + detail.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A'), flush=True)
     print('::error::No zero-priced model proved an actual tool call. No paid fallback or fake worker started.')
     raise SystemExit(1)
