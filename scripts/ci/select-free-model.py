@@ -70,6 +70,9 @@ for model in candidates:
             with open(os.environ['GITHUB_ENV'], 'a') as output:
                 output.write('AUTOPILOT_MODEL=opencode/' + model + '\n')
                 output.write('OPENCODE_CONFIG_CONTENT=' + json.dumps(config) + '\n')
+            if os.environ.get('GITHUB_OUTPUT'):
+                with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+                    output.write('model=opencode/' + model + '\n')
             print('::notice title=Free worker verified::' + model + ': zero pricing checked and a real tool-call nonce round-trip passed.', flush=True)
             break
     except Exception as error:

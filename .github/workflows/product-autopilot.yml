@@ -14,7 +14,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  free-model:
+    if: github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    outputs:
+      model: ${{ steps.probe.outputs.model }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - &install-opencode
+        name: Install verified OpenCode (including worker hang fix)
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/opencode-bin"
+          curl --fail --location --max-time 120 --retry 2 https://github.com/anomalyco/opencode/releases/download/v1.19.5/opencode-linux-x64.tar.gz -o "$RUNNER_TEMP/opencode.tar.gz"
+          printf '%s  %s\n' 588310a336fa3b9df36b3f0225b26f679d453efaad0cf3d66c3651ef3ec1647a "$RUNNER_TEMP/opencode.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/opencode.tar.gz" -C "$RUNNER_TEMP/opencode-bin"
+          echo "$RUNNER_TEMP/opencode-bin" >> "$GITHUB_PATH"
+      - name: Prove zero-price inference and an actual file-reading tool call
+        id: probe
+        run: python3 scripts/ci/select-free-model.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: free-model-proof-${{ github.run_id }}
+          path: verification-evidence/autopilot/
+          retention-days: 3
+
   reconstruct:
+    needs: free-model
     if: github.event.repository.private == false
     runs-on: ubuntu-24.04
     timeout-minutes: 180
@@ -23,6 +53,7 @@ jobs:
       actions: read
     env:
       EXPO_NO_TELEMETRY: '1'
+      AUTOPILOT_MODEL: ${{ needs.free-model.outputs.model }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -47,17 +78,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/ci/diagnose-previous-run.py
-      - name: Install verified historical OpenCode binary and require zero pricing
+      - *install-opencode
+      - name: Bind both primary and helper inference to the proved free model
         run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/opencode-bin"
-          curl --fail --location --max-time 120 --retry 2 https://github.com/anomalyco/opencode/releases/download/v1.19.5/opencode-linux-x64.tar.gz -o "$RUNNER_TEMP/opencode.tar.gz"
-          printf '%s  %s\n' 588310a336fa3b9df36b3f0225b26f679d453efaad0cf3d66c3651ef3ec1647a "$RUNNER_TEMP/opencode.tar.gz" | sha256sum -c -
-          tar -xzf "$RUNNER_TEMP/opencode.tar.gz" -C "$RUNNER_TEMP/opencode-bin"
-          echo "$RUNNER_TEMP/opencode-bin" >> "$GITHUB_PATH"
-      - name: Require zero-price inference with a real tool call (historical fallback probe)
-        timeout-minutes: 18
-        run: python3 scripts/ci/select-free-model.py
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          config=json.loads(Path('opencode.json').read_text())
+          config['model']=config['small_model']=os.environ['AUTOPILOT_MODEL']
+          with open(os.environ['GITHUB_ENV'],'a') as f:
+            f.write('OPENCODE_CONFIG_CONTENT='+json.dumps(config)+'\n')
+          PY
       - name: Audit, implement and iterate against independent product gates
         run: python3 scripts/ci/product-autopilot.py
       - name: Expose concrete iteration outcome
