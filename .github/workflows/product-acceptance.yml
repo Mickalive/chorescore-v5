@@ -1,0 +1,141 @@
+name: Product acceptance
+
+on:
+  push:
+    branches: [main, feat/product-reconstruction]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: product-acceptance-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  application:
+    # Standard hosted runners are free for public repositories. Never consume
+    # private-repository minutes or enable billing on the owner's behalf.
+    if: github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      EXPO_NO_TELEMETRY: '1'
+      EVIDENCE_DIR: verification-evidence/browser
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run test:backend
+      - name: Install real Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Browser and SQLite acceptance
+        run: |
+          export CHROME_BIN="$(node -e "process.stdout.write(require('@playwright/test').chromium.executablePath())")"
+          npm run test:web
+      - name: iOS JavaScript export (not an iPhone acceptance test)
+        run: npx expo export --platform ios --output-dir verification-evidence/ios-export
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: application-evidence-${{ github.sha }}
+          path: verification-evidence/
+          retention-days: 3
+
+  firestore:
+    if: github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm ci --no-audit --no-fund
+      - name: Official Firestore rules, separate accounts and hostile direct clients
+        run: >-
+          npm exec --yes --package=firebase-tools@14.22.0 --
+          firebase emulators:exec --only firestore --project demo-chorescore-audit
+          "node scripts/firebase/verify-rules.cjs"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: firestore-evidence-${{ github.sha }}
+          path: |
+            verification-evidence/firestore/
+            firestore-debug.log
+            firebase-debug.log
+          retention-days: 3
+
+  android:
+    if: github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    env:
+      EXPO_NO_TELEMETRY: '1'
+      ANDROID_EVIDENCE_DIR: verification-evidence/android
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - run: npm ci --no-audit --no-fund
+      - name: Generate normal native app (no test session or mock services)
+        run: npx expo prebuild --platform android --no-install
+      - name: Compile both release architectures
+        working-directory: android
+        run: ./gradlew :app:assembleRelease -PreactNativeArchitectures=arm64-v8a,x86_64 --max-workers=2 --no-daemon
+      - name: Verify APK identity and digest
+        run: |
+          mkdir -p verification-evidence/android
+          bash scripts/android/verify-apk-identity.sh android/app/build/outputs/apk/release/app-release.apk | tee verification-evidence/android/identity.txt
+          sha256sum android/app/build/outputs/apk/release/app-release.apk > verification-evidence/android/apk.sha256
+      - name: Enable hardware virtualization
+        run: |
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+      - name: Installed Android acceptance with real photo, reminder and share sheet
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: default
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -camera-back none -camera-front none
+          script: python3 scripts/android/verify-device.py android/app/build/outputs/apk/release/app-release.apk
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-evidence-${{ github.sha }}
+          path: |
+            verification-evidence/android/
+            android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 3

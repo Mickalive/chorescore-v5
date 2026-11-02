@@ -34,6 +34,9 @@ dist-backend/
 # Python verification output is generated, never product source.
 __pycache__/
 *.py[cod]
+verification-evidence/
+firestore-debug.log
+firebase-debug.log
 
 # Manual Firebase setup output; never store Google access tokens here.
 .firebase-onboarding/
