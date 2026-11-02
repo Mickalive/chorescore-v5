@@ -14,7 +14,9 @@ context = Path('.opencode-ci')
 context.mkdir(exist_ok=True)
 target = context / 'model-probe.txt'
 results = []
-for model in ['big-pickle', 'mimo-v2.5-free', 'deepseek-v4-flash-free', 'nemotron-3.5-lightning-free']:
+for model in ['big-pickle', 'mimo-v2.5-free', 'deepseek-v4-flash-free', 'nemotron-3.5-lightning-free',
+        'north-mini-code-free', 'laguna-s-2.1-free', 'hy3-free', 'ling-3.0-flash-free',
+        'ling-3.0-tiny-free', 'nemotron-3-ultra-free', 'muse-spark-1.2-contributor-free', 'x-preview-f-free']:
     try:
         url = f'https://raw.githubusercontent.com/anomalyco/models.dev/dev/providers/opencode/models/{model}.toml'
         with urllib.request.urlopen(url, timeout=20) as response:
@@ -35,7 +37,7 @@ for model in ['big-pickle', 'mimo-v2.5-free', 'deepseek-v4-flash-free', 'nemotro
                 'Reply with the exact file contents. Do not edit files or do any other work.'],
                 env=environment, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
             try:
-                status = process.wait(timeout=90)
+                status = process.wait(timeout=60)
             except subprocess.TimeoutExpired:
                 os.killpg(process.pid, signal.SIGTERM)
                 try:
@@ -64,6 +66,12 @@ for model in ['big-pickle', 'mimo-v2.5-free', 'deepseek-v4-flash-free', 'nemotro
     finally:
         target.unlink(missing_ok=True)
         (folder / 'model-probes.json').write_text(json.dumps(results, indent=2) + '\n')
+        if results:
+            print('::notice title=Free model probe::' + json.dumps(results[-1]), flush=True)
+        probe_log = folder / (model + '-probe.jsonl')
+        if probe_log.exists() and results and results[-1]['status'] != 'tool-call-proved':
+            detail = probe_log.read_text(errors='replace')[-1800:]
+            print('::notice title=Model startup diagnostic::' + detail.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A'), flush=True)
 else:
     print('::error::No zero-priced model proved an actual tool call. No paid fallback or fake worker started.')
     raise SystemExit(1)

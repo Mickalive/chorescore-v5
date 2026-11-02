@@ -6,6 +6,7 @@ prints credentials, changes code, dispatches jobs or contacts product users.
 import json
 import os
 import re
+import subprocess
 import urllib.request
 
 repository = os.environ['GITHUB_REPOSITORY']
@@ -15,13 +16,9 @@ api = 'https://api.github.com/repos/' + repository
 
 
 def request(url):
-    req = urllib.request.Request(url, headers={
-        'Authorization': 'Bearer ' + token,
-        'Accept': 'application/vnd.github+json',
-        'X-GitHub-Api-Version': '2022-11-28',
-    })
-    with urllib.request.urlopen(req, timeout=45) as response:
-        return response.read()
+    # gh handles GitHub's signed log-download redirects without forwarding
+    # Authorization to the blob-storage hostname.
+    return subprocess.check_output(['gh', 'api', url], timeout=60)
 
 
 def annotation(message):
@@ -56,3 +53,16 @@ else:
         except Exception as error:
             annotation('Log unavailable: ' + type(error).__name__)
 (context / 'previous-failures.md').write_text('\n\n'.join(summaries))
+
+worker_runs = json.loads(request(api + '/actions/workflows/product-autopilot.yml/runs?per_page=10'))['workflow_runs']
+worker = next((run for run in worker_runs if run['id'] != current and run['conclusion'] == 'failure'), None)
+if worker:
+    destination = context / 'previous-worker'
+    result = subprocess.run(['gh', 'run', 'download', str(worker['id']), '--repo', repository,
+        '--name', 'product-reconstruction-' + str(worker['id']), '--dir', str(destination)],
+        capture_output=True, timeout=60)
+    if result.returncode == 0:
+        for file in destination.rglob('model-probes.json'):
+            annotation('Previous free model probes: ' + file.read_text()[-5000:])
+        for file in destination.rglob('*-probe.jsonl'):
+            annotation(file.name + ': ' + file.read_text(errors='replace')[-2500:])

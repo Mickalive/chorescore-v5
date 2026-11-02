@@ -56,7 +56,7 @@ jobs:
           tar -xzf "$RUNNER_TEMP/opencode.tar.gz" -C "$RUNNER_TEMP/opencode-bin"
           echo "$RUNNER_TEMP/opencode-bin" >> "$GITHUB_PATH"
       - name: Require zero-price inference with a real tool call (historical fallback probe)
-        timeout-minutes: 9
+        timeout-minutes: 18
         run: python3 scripts/ci/select-free-model.py
       - name: Audit, implement and iterate against independent product gates
         run: python3 scripts/ci/product-autopilot.py

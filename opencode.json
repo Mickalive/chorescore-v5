@@ -3,6 +3,8 @@
   "model": "opencode/big-pickle",
   "small_model": "opencode/big-pickle",
   "enabled_providers": ["opencode"],
+  "share": "disabled",
+  "autoupdate": false,
   "permission": {
     "*": "allow",
     "external_directory": "deny",
