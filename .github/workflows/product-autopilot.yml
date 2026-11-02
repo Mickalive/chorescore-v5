@@ -118,6 +118,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write
+      actions: write
     steps:
       - uses: actions/checkout@v5
         with:
@@ -152,3 +153,9 @@ jobs:
           git config user.email 'chorescore-worker@users.noreply.github.com'
           git commit -m "Implement independently verified product slice from reconstruction $GITHUB_RUN_ID"
           git -c credential.helper='!f() { echo username=x-access-token; echo "password=$GH_TOKEN"; }; f' push origin HEAD:feat/product-reconstruction
+          # Pushes made with GITHUB_TOKEN do not trigger another workflow.
+          # Explicitly resume the same programme after verified source moves.
+          # Use the registered numeric id so no default-branch name lookup is
+          # needed; preserve the existing branch and integrated PR.
+          workflow_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .workflow_id)
+          gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow_id/dispatches" -f ref=feat/product-reconstruction

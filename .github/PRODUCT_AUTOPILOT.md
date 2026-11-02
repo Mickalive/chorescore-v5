@@ -39,3 +39,9 @@ security, suppress app crashes/ANRs or skip the real native assertions.
 No claim of "perfect" or "complete" is accepted without the actual native,
 cross-account Firebase, privacy, accounting and UI acceptance evidence. Green
 automated checks establish their covered scenarios only.
+
+Verified source is integrated by the trusted publisher, which explicitly
+resumes the same programme on that new revision. Existing public GitHub token
+push suppression must never silently stop product reconstruction. If an
+external service cannot run or no verified patch is produced, the failed
+checks and candidates remain evidence; do not publish a false completion.
