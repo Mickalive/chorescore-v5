@@ -5,6 +5,13 @@ APK factory. Work directly in feat/product-reconstruction, integrated PR #2.
 All work must remain free. The latest explicit owner instruction authorizes
 one OpenCode worker to audit, implement and iterate using the earlier projects.
 
+OpenCode's remote free endpoint actually refused every tested model with
+"Free usage limit reached" on 2 November. Do not pay, change identities, rotate
+IPs or bypass that limit. The worker now runs Apache-2.0 Qwen3 weights on the
+standard public GitHub runner CPU through localhost llama.cpp. No inference
+API key, provider account, GPU or billing service is involved. Model and runtime
+revisions/checksums are recorded. The nonce probe must prove real inference.
+
 Read AGENTS.md, CODEX_MISSION.md, PRODUCT.md, VERIFICATION.md,
 docs/CROSS_REPOSITORY_REQUIREMENTS.md, docs/source-history/manifest.json and
 the original V3/V4 constitutions and frugal-backend specifications referenced

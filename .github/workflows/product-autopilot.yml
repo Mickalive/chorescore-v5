@@ -17,7 +17,7 @@ jobs:
   free-model:
     if: github.event.repository.private == false
     runs-on: ubuntu-24.04
-    timeout-minutes: 18
+    timeout-minutes: 30
     outputs:
       model: ${{ steps.probe.outputs.model }}
     steps:
@@ -33,9 +33,15 @@ jobs:
           printf '%s  %s\n' 588310a336fa3b9df36b3f0225b26f679d453efaad0cf3d66c3651ef3ec1647a "$RUNNER_TEMP/opencode.tar.gz" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/opencode.tar.gz" -C "$RUNNER_TEMP/opencode-bin"
           echo "$RUNNER_TEMP/opencode-bin" >> "$GITHUB_PATH"
-      - name: Prove zero-price inference and an actual file-reading tool call
+      - &local-runtime
+        name: Start Apache-2.0 CPU model (no inference API, key or billing)
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libcurl4-openssl-dev ninja-build
+          python3 scripts/ci/start-local-coder.py
+      - name: Prove actual local inference and a real file-reading tool call
         id: probe
-        run: python3 scripts/ci/select-free-model.py
+        run: python3 scripts/ci/prove-local-coder.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -47,7 +53,7 @@ jobs:
     needs: free-model
     if: github.event.repository.private == false
     runs-on: ubuntu-24.04
-    timeout-minutes: 180
+    timeout-minutes: 240
     permissions:
       contents: read
       actions: read
@@ -79,16 +85,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/ci/diagnose-previous-run.py
       - *install-opencode
-      - name: Bind both primary and helper inference to the proved free model
-        run: |
-          python3 - <<'PY'
-          import json,os
-          from pathlib import Path
-          config=json.loads(Path('opencode.json').read_text())
-          config['model']=config['small_model']=os.environ['AUTOPILOT_MODEL']
-          with open(os.environ['GITHUB_ENV'],'a') as f:
-            f.write('OPENCODE_CONFIG_CONTENT='+json.dumps(config)+'\n')
-          PY
+      - *local-runtime
       - name: Audit, implement and iterate against independent product gates
         run: python3 scripts/ci/product-autopilot.py
       - name: Expose concrete iteration outcome

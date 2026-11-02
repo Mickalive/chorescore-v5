@@ -79,8 +79,30 @@ checks = [
         'firebase', 'emulators:exec', '--only', 'firestore', '--project', 'demo-chorescore-audit',
         'node scripts/firebase/verify-rules.cjs'], 420),
     ('browser', ['npm', 'run', 'test:web'], 240),
-    ('android', ['bash', 'scripts/ci/native-acceptance.sh'], 900),
+    ('android', ['bash', 'scripts/ci/native-acceptance.sh'], 1800),
 ]
+
+
+def stop_local_model():
+    marker = Path(os.environ['RUNNER_TEMP']) / 'chorescore-local-coder/server.pid'
+    if not marker.exists():
+        return
+    pid = int(marker.read_text())
+    command = Path('/proc') / str(pid) / 'cmdline'
+    if command.exists() and b'llama-server' in command.read_bytes():
+        os.kill(pid, signal.SIGTERM)
+        for _ in range(50):
+            if not command.exists():
+                break
+            __import__('time').sleep(.1)
+        if command.exists() and b'llama-server' in command.read_bytes():
+            os.kill(pid, signal.SIGKILL)
+    marker.unlink(missing_ok=True)
+
+
+# Release model RAM before Gradle/Chromium/SQLite checks. Reload cached local
+# weights only when the next implementation pass actually starts.
+stop_local_model()
 records = []
 verified = None
 initial = []
@@ -97,9 +119,12 @@ for name, args, timeout in checks[:4]:
         break
 (CONTEXT / 'latest-checks.md').write_text('\n\n'.join(initial))
 for attempt in range(1, 4):
+    if not run(['python3', 'scripts/ci/start-local-coder.py'], EVIDENCE / f'{attempt}-local-start.log', 900):
+        raise SystemExit('Local CPU model failed to start; no paid fallback used.')
     prompt = MISSION + '\nPass ' + str(attempt) + '. Read .opencode-ci/latest-checks.md first if present. Implement real product changes now.'
     answered = run(['opencode', 'run', '--agent', 'build', '--model', os.environ['AUTOPILOT_MODEL'],
-        '--format', 'json', prompt], EVIDENCE / f'worker-{attempt}.jsonl', 900)
+        '--format', 'json', prompt], EVIDENCE / f'worker-{attempt}.jsonl', 1200)
+    stop_local_model()
     events = []
     for line in (EVIDENCE / f'worker-{attempt}.jsonl').read_text(errors='replace').splitlines():
         try:
