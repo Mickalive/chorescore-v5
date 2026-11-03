@@ -3,7 +3,17 @@ name: Product reconstruction
 on:
   push:
     branches: [feat/product-reconstruction]
-    paths-ignore: ['VERIFICATION.md', 'docs/evidence/**']
+    paths:
+      - 'src/**'
+      - 'app/**'
+      - 'backend/**'
+      - 'firebase/**'
+      - 'plugins/**'
+      - 'assets/**'
+      - 'app.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/PRODUCT_AUTOPILOT.md'
   workflow_dispatch:
 
 permissions:

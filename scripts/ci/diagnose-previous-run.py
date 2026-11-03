@@ -66,3 +66,14 @@ if worker:
             annotation('Previous free model probes: ' + file.read_text()[-5000:])
         for file in destination.rglob('*-probe.jsonl'):
             annotation(file.name + ': ' + file.read_text(errors='replace')[-2500:])
+        for pattern in ['worker-*.jsonl', '*-android.log', '*-browser.log', 'local-model-server.log']:
+            for file in sorted(destination.rglob(pattern)):
+                content = file.read_text(errors='replace')
+                if pattern == 'worker-*.jsonl':
+                    events=[]
+                    for line in content.splitlines():
+                        try: events.append(json.loads(line))
+                        except ValueError: pass
+                    annotation(file.name + ' event types: ' + json.dumps([e.get('type') for e in events]))
+                    annotation(file.name + ' first events: ' + content[:3500])
+                annotation(file.name + ' last output: ' + content[-5000:])
