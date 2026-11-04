@@ -54,6 +54,9 @@ function nodeFetch(input: string | URL | Request, init?: RequestInit): Promise<R
   const headers = (init?.headers ?? {}) as Record<string, string>;
   return new Promise((resolve, reject) => {
     const req = request({
+      // This transport tests authority persistence, not Node's global socket pool.
+      // A freshly restarted authority must not inherit a stale keep-alive socket.
+      agent: false,
       hostname: url.hostname,
       port: url.port,
       path: `${url.pathname}${url.search}`,
@@ -390,6 +393,10 @@ test('two independent clients share exact ledgers, targeted member links, confli
   const aliceBefore = await alice.repos.contributions.getByHousehold(hid);
   const bobBefore = await bob.repos.expenses.getByHousehold(hid);
   const cursorBefore = (await bob.repos.syncState.getGroupState(hid))?.lastRevision;
+  const authorityBefore = (store.database.prepare('SELECT revision FROM groups WHERE id=?').get(hid) as { revision: number }).revision;
+  // A push acknowledges record versions, not unread group events: moving the
+  // pull cursor at push time could skip another member's preceding writes.
+  expect(cursorBefore).toBeLessThanOrEqual(authorityBefore);
   await stopServer();
   store = new CollaborationStore(join(directory, 'authority.sqlite'));
   const verifier = new FirebaseTokenVerifier('chorescore-test', async () => ({ 'test-key': publicKey }));
@@ -402,7 +409,9 @@ test('two independent clients share exact ledgers, targeted member links, confli
   await aliceRestarted.sync.startSync(hid);
   expect(await alice.repos.contributions.getByHousehold(hid)).toEqual(aliceBefore);
   expect(await bob.repos.expenses.getByHousehold(hid)).toEqual(bobBefore);
-  expect((await bob.repos.syncState.getGroupState(hid))?.lastRevision).toBe(cursorBefore);
+  expect((await bob.repos.syncState.getGroupState(hid))?.lastError).toBeNull();
+  expect((await bob.repos.syncState.getGroupState(hid))?.lastRevision).toBe(authorityBefore);
+  expect((store.database.prepare('SELECT revision FROM groups WHERE id=?').get(hid) as { revision: number }).revision).toBe(authorityBefore);
 
   // A member cannot mutate another group through a forged group id: the token
   // identity is never replaced by a device-local id.
