@@ -85,6 +85,27 @@ séquences puis les supprime avant toute annotation publique. Les prochains
 journaux devront confirmer l’échec Android exact ; sa correction n’est pas
 encore revendiquée.
 
+
+4 novembre — liaison écriture/delta renforcée : chaque record transporté porte
+maintenant son index de changement dans l’événement de la même révision. Les
+règles exigent dans les deux sens la même collection, identité, version, valeur,
+révision et index, ainsi qu’un événement contenant cet index. Un troisième
+scénario officiel essaie une écriture sans événement, sans changement, avec une
+valeur/index incohérents et le rejeu d’un ancien record comme nouveau delta.
+Les attaques contre les compensations gardent un événement cohérent afin de
+continuer à tester auteur/taux/montant séparément. **246 tests locaux passent,
+3 scénarios officiels sont exclus localement ; ces nouvelles règles attendent
+leur exécution réelle sur GitHub et ne sont pas déployées.** Typage réussi.
+
+La cause APK est précisée : apksigner ne retournait pas d’erreur, mais le
+comptage des lignes de texte donnait zéro. Le contrôle utilise désormais le
+certificat PEM vérifié par apksigner et calcule ses empreintes avec OpenSSL,
+indépendamment du libellé des outils Android. Le vrai candidat local conserve
+la bonne SHA-1. Les 22 tests Python Android passent, dont certificat unique,
+plusieurs certificats, sortie de libellé différent et APK debuggable volumineux.
+Le parcours natif complet reste à observer sur GitHub ; une compilation locale
+et cette vérification de certificat ne le remplacent pas.
+
 Sources lues : `AGENTS.md`, `CODEX_MISSION.md`, `PRODUCT.md`, les deux documents V3/V4 présents dans `docs/`, la [constitution V3 originale](https://github.com/Mickalive/chorescore-v3/blob/f922d347bc9989a717101bce274ca459902f6ff0/docs/V3_CONSTITUTION.md) et la [constitution V4 originale](https://github.com/Mickalive/chorescore-v3/blob/24041c9ff0adc9d88af534ef7e019699915d6ebe/docs/V4_CONSTITUTION.md). La copie V4 du dépôt est identique à cette source. Référence visuelle : composants et écran principal de `Mickalive/Chorescore`.
 
 | Parcours promis | Implémentation et preuve actuelle | Manque explicite |

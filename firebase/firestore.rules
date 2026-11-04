@@ -172,7 +172,7 @@ service cloud.firestore {
 
     function validRecord(groupId, recordId) {
       return request.resource.data.keys().hasOnly([
-          'id', 'collection', 'version', 'value', 'updatedAt', 'revision'
+          'id', 'collection', 'version', 'value', 'updatedAt', 'revision', 'eventIndex'
         ])
         && request.resource.data.id is string
         && request.resource.data.id.matches('^[A-Za-z0-9_-]{1,128}$')
@@ -184,6 +184,7 @@ service cloud.firestore {
         && request.resource.data.updatedAt is string
         && request.resource.data.revision is int
         && request.resource.data.revision == getAfter(groupPath(groupId)).data.revision
+        && recordHasDelta(groupId)
         && (
           request.resource.data.value == null
           || (
@@ -211,6 +212,22 @@ service cloud.firestore {
             && getAfter(groupPath(groupId)).data.get('deleted', false) == true
           )
         );
+    }
+
+    function recordHasDelta(groupId) {
+      let r = request.resource.data;
+      let event = /databases/$(database)/documents/groups/$(groupId)/events/$(string(r.revision));
+      let change = /databases/$(database)/documents/groups/$(groupId)/events/$(string(r.revision))/changes/$(string(r.eventIndex));
+      return r.eventIndex is int && r.eventIndex >= 0 && r.eventIndex < 100
+        && getAfter(event).data.revision == r.revision
+        && getAfter(event).data.groupId == groupId
+        && r.eventIndex < getAfter(event).data.count
+        && getAfter(change).data.revision == r.revision
+        && getAfter(change).data.index == r.eventIndex
+        && getAfter(change).data.collection == r.collection
+        && getAfter(change).data.id == r.id
+        && getAfter(change).data.version == r.version
+        && getAfter(change).data.value == r.value;
     }
 
     function memberIdentity(groupId, recordId) {
@@ -278,7 +295,15 @@ service cloud.firestore {
         && getAfter(recordPath(
           groupId,
           request.resource.data.collection + ':' + request.resource.data.id
-        )).data.value == request.resource.data.value;
+        )).data.value == request.resource.data.value
+        && getAfter(recordPath(
+          groupId,
+          request.resource.data.collection + ':' + request.resource.data.id
+        )).data.revision == request.resource.data.revision
+        && getAfter(recordPath(
+          groupId,
+          request.resource.data.collection + ':' + request.resource.data.id
+        )).data.eventIndex == request.resource.data.index;
     }
 
     match /groups/{groupId} {

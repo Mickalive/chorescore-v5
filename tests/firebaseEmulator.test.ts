@@ -461,14 +461,51 @@ describeEmulator('real Firestore rules and collaboration journey', () => {
       if(!group)throw new Error('Group missing');
       const revision=Number(group.fields.revision)+1;
       transaction.set(`groups/${household.id}`,{...group.fields,revision});
-      transaction.set(`groups/${household.id}/records/settlements:${id}`,{...original.fields,id,revision,version:existing?Number(original.fields.version)+1:1,
-        value:{...(original.fields.value as Record<string,any>),id,...patch} as any});
+      const record={...original.fields,id,revision,eventIndex:0,version:existing?Number(original.fields.version)+1:1,
+        value:{...(original.fields.value as Record<string,any>),id,...patch} as any};
+      transaction.set(`groups/${household.id}/records/settlements:${id}`,record);
+      transaction.set(`groups/${household.id}/events/${revision}`,{revision,groupId:household.id,count:1,createdAt:new Date().toISOString()});
+      transaction.set(`groups/${household.id}/events/${revision}/changes/0`,{
+        revision,index:0,collection:'settlements',id,version:record.version,value:record.value});
     });
     await expect(attack(settlement.id,{moneyAmountMinor:301},true)).rejects.toMatchObject({status:403});
     await expect(attack(`forged-author-${suffix}`,{createdBy:'another-account'})).rejects.toMatchObject({status:403});
     await expect(attack(`forged-rate-${suffix}`,{rateSnapshot:{...rate,moneyAmountMinor:500}})).rejects.toMatchObject({status:403});
     await expect(attack(`forged-amount-${suffix}`,{moneyAmountMinor:999})).rejects.toMatchObject({status:403});
     expect(await alice.firestore.getDocument(path)).toEqual(original);
+  });
+
+  test('direct clients cannot commit records without their exact atomic delta or replay an old record as a new delta', async () => {
+    const alice=await client('delta-owner-'+randomUUID().slice(0,8));
+    const {household}=await createGroupWithMembers(alice.repos,{
+      name:'Atomic delta',owner:{userId:alice.uid,displayName:'Alice'},memberNames:[],contributionUnit:'points'});
+    await alice.sync.ensureRemoteGroup(household.id,alice.uid);
+    const category=await alice.repos.categories.create({householdId:household.id,name:'Original',defaultTaskRatio:null});
+    await alice.sync.pushChanges(household.id);
+    const path=`groups/${household.id}/records/categories:${category.id}`;
+    const original=await alice.firestore.getDocument(path);
+    if(!original)throw new Error('Legitimate category missing');
+    const modes=['no-event','no-change','wrong-value','wrong-index','replay'] as const;
+    for(const mode of modes){
+      await expect(alice.firestore.runTransaction(async transaction=>{
+        const group=await transaction.get(`groups/${household.id}`);
+        if(!group)throw new Error('Group missing');
+        const revision=Number(group.fields.revision)+1;
+        const value={...(original.fields.value as Record<string,any>),name:'Changed'};
+        const version=Number(original.fields.version)+1;
+        transaction.set(`groups/${household.id}`,{...group.fields,revision});
+        if(mode!=='replay')transaction.set(path,{...original.fields,revision,eventIndex:0,version,value});
+        if(mode!=='no-event')transaction.set(`groups/${household.id}/events/${revision}`,{
+          revision,groupId:household.id,count:1,createdAt:new Date().toISOString()});
+        if(mode!=='no-change')transaction.set(`groups/${household.id}/events/${revision}/changes/0`,{
+          revision,index:mode==='wrong-index'?1:0,collection:'categories',id:category.id,
+          version:mode==='replay'?Number(original.fields.version):version,
+          value:mode==='replay'||mode==='wrong-value'?original.fields.value:value});
+      })).rejects.toMatchObject({status:403});
+      expect(await alice.firestore.getDocument(path)).toEqual(original);
+    }
+    await alice.repos.categories.update(category.id,{name:'Legitimate update'});
+    await expect(alice.sync.pushChanges(household.id)).resolves.toBeUndefined();
   });
 
 });

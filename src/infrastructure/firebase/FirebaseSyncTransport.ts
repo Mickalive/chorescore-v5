@@ -416,6 +416,7 @@ export class FirebaseSyncTransport {
     revision: number,
     change: AppliedChange,
     now: string,
+    eventIndex: number,
   ): Promise<void> {
     transaction.set(recordPath(groupId, change.collection, change.id), {
       id: change.id,
@@ -424,6 +425,7 @@ export class FirebaseSyncTransport {
       value: sanitize(change.value),
       updatedAt: now,
       revision,
+      eventIndex,
     });
   }
 
@@ -439,6 +441,7 @@ export class FirebaseSyncTransport {
       const previous = await this.readRecord(transaction, group.id, change.collection, change.id);
       const version = (previous?.version ?? 0) + 1;
       const value = change.value;
+      const eventIndex = applied.length;
       applied.push({ collection: change.collection, id: change.id, value, version });
       await this.writeRecord(
         transaction,
@@ -446,6 +449,7 @@ export class FirebaseSyncTransport {
         revision,
         { collection: change.collection, id: change.id, value, version },
         new Date(now).toISOString(),
+        eventIndex,
       );
       if (change.collection === 'households' && value) {
         group.household = value as unknown as Household;

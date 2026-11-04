@@ -37,14 +37,17 @@ if printf '%s\n' "$BADGING" | grep '^application-debuggable' >/dev/null; then
   exit 1
 fi
 
-CERTS=$("$APKSIGNER" verify --verbose --print-certs "$APK")
-SIGNERS=$(printf '%s\n' "$CERTS" | grep -c '^Signer #[0-9][0-9]* certificate SHA-1 digest:' || true)
+CERTS=$("$APKSIGNER" verify --verbose --print-certs --print-certs-pem "$APK")
+# Human-readable signer labels vary across build-tools versions. Parse the
+# verified certificate itself, not a particular English fingerprint label.
+PEM=$(printf '%s\n' "$CERTS" | sed -n '/^-----BEGIN CERTIFICATE-----$/,/^-----END CERTIFICATE-----$/p')
+SIGNERS=$(printf '%s\n' "$PEM" | grep -c '^-----BEGIN CERTIFICATE-----$' || true)
 if [ "$SIGNERS" -ne 1 ]; then
   echo "Expected exactly one APK signer, found $SIGNERS" >&2
   exit 1
 fi
-SHA1=$(printf '%s\n' "$CERTS" | sed -n 's/^Signer #1 certificate SHA-1 digest: //p' | head -1)
-SHA256=$(printf '%s\n' "$CERTS" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -1)
+SHA1=$(printf '%s\n' "$PEM" | openssl x509 -noout -fingerprint -sha1 | sed 's/.*=//;s/://g' | tr '[:upper:]' '[:lower:]')
+SHA256=$(printf '%s\n' "$PEM" | openssl x509 -noout -fingerprint -sha256 | sed 's/.*=//;s/://g' | tr '[:upper:]' '[:lower:]')
 
 if [ -n "${ANDROID_EXPECTED_SHA1:-}" ]; then
   EXPECTED=$(printf '%s' "$ANDROID_EXPECTED_SHA1" | tr '[:lower:]' '[:upper:]')
