@@ -149,6 +149,21 @@ Le job Android 126681310945 sur 64bb679 a compilé, validé l’APK et activé K
 puis échoué à l’étape native entre 15:57:28 et 16:08:46 UTC. La cause précise
 reste à extraire du journal ; aucune acceptation Android complète n’est annoncée.
 
+
+Dernier candidat local : source 373fe49, APK Firebase ARM64/x86_64 compilé en
+56 s, identité et signature vérifiées. SHA-256 :
+`1291e6c971f7696d4f3d41e4841643c4cb644441ffe6ea9bf26637ab7ba62509`.
+Les identifiants publics sont bien embarqués ; le module natif Google est
+présent. Ce candidat n’est pas installé ni connecté à un compte Google réel.
+L’extension des règles et le test officiel de photo supprimée restent à exécuter.
+
+Le lancement de l’émulateur du workflow est aligné sur celui du worker avec
+`-gpu swiftshader`, mode explicitement pris en charge par l’outil actuel ;
+`swiftshader_indirect` n’est plus listé par son aide. Ceci n’est pas encore une
+preuve de la cause du dernier échec GitHub. Les diagnostics retiennent désormais
+les premières erreurs du journal, en plus de la fin : dix minutes d’attente de
+boot ne doivent pas masquer l’erreur initiale de l’émulateur.
+
 Sources lues : `AGENTS.md`, `CODEX_MISSION.md`, `PRODUCT.md`, les deux documents V3/V4 présents dans `docs/`, la [constitution V3 originale](https://github.com/Mickalive/chorescore-v3/blob/f922d347bc9989a717101bce274ca459902f6ff0/docs/V3_CONSTITUTION.md) et la [constitution V4 originale](https://github.com/Mickalive/chorescore-v3/blob/24041c9ff0adc9d88af534ef7e019699915d6ebe/docs/V4_CONSTITUTION.md). La copie V4 du dépôt est identique à cette source. Référence visuelle : composants et écran principal de `Mickalive/Chorescore`.
 
 | Parcours promis | Implémentation et preuve actuelle | Manque explicite |

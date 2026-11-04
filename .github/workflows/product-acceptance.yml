@@ -167,7 +167,7 @@ jobs:
           arch: x86_64
           profile: pixel_2
           disable-animations: true
-          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -camera-back none -camera-front none
+          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader -no-snapshot -camera-back none -camera-front none
           script: python3 scripts/android/run-journey.py android/app/build/outputs/apk/release/app-release.apk
       - uses: actions/upload-artifact@v4
         if: always()

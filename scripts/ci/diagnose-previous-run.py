@@ -59,6 +59,11 @@ else:
         try:
             log = request(api + '/actions/jobs/' + str(job['id']) + '/logs').decode('utf-8', errors='replace')
             summaries.append(log[-18000:].replace(token, '[REDACTED]'))
+            markers = list(dict.fromkeys(line for line in log.splitlines()
+                if re.search(r'(?i)\b(error|fatal|invalid|unsupported|failed|timed out|timeout)\b', line)))
+            if markers:
+                important = markers[:8] + (markers[-4:] if len(markers) > 8 else [])
+                annotation('Failure markers:\n' + '\n'.join(important)[:6000])
             # The API log has already been secret-masked by GitHub. Bound the
             # annotation so the failure remains accessible without a login.
             annotation(log[-7000:])

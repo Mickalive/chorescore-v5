@@ -1,14 +1,20 @@
 {
-  "sourceCommit": "9f85583ba3d03bb095ed06dc214d76b3bd38ed20",
-  "apkSha256": "bfc3284c535435f9beac430a87c6c295d17866a7173543cbaa2533511d603124",
+  "sourceCommit": "373fe49b9b7a011b5cd4c03b6f5420e9d128b5bf",
+  "apkSha256": "1291e6c971f7696d4f3d41e4841643c4cb644441ffe6ea9bf26637ab7ba62509",
   "firebaseProject": "chorescore-a75b1",
   "firebaseConfigurationEmbedded": true,
   "signatureSha1": "5e8f16062ea3cd2c4a0d547876baa6f38cabf625",
-  "applicationTestsPassed": 246,
-  "localOfficialFirestoreTestsSkipped": 2,
+  "applicationTestsPassed": 252,
+  "localOfficialFirestoreTestsSkipped": 3,
   "installed": false,
   "realGoogleSignInVerified": false,
   "productionFirestoreRulesDeployed": false,
   "twoPhoneCollaborationVerified": false,
-  "apkLocalPath": "/workspace/chorescore-evidence/firebase-bfc3284c/ChoreScore-Firebase.apk"
+  "apkLocalPath": "/workspace/chorescore-evidence/firebase-1291e6c9/ChoreScore-Firebase.apk",
+  "officialFirestoreScenariosPassed": 3,
+  "officialFirestoreRun": "https://github.com/Mickalive/chorescore-v5/actions/runs/41860546468",
+  "browserSqliteJourneyPassed": true,
+  "authenticationTestsPassed": 12,
+  "nativeGoogleSignInModulePackaged": true,
+  "latestRulesExtensionOfficiallyVerified": false
 }
