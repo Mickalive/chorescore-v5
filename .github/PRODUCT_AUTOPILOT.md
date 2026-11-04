@@ -10,7 +10,8 @@ OpenCode's remote free endpoint actually refused every tested model with
 IPs or bypass that limit. The worker now runs Apache-2.0 Qwen3 weights on the
 standard public GitHub runner CPU through localhost llama.cpp. No inference
 API key, provider account, GPU or billing service is involved. Model and runtime
-revisions/checksums are recorded. The nonce probe must prove real inference.
+revisions/checksums are recorded. The capability probe must edit a broken
+source fixture and pass the unchanged test; inference alone is insufficient.
 
 Read AGENTS.md, CODEX_MISSION.md, PRODUCT.md and the cumulative requirements
 matrix in docs/CROSS_REPOSITORY_REQUIREMENTS.md. The originals are pinned by
@@ -22,6 +23,13 @@ every pass; use the current matrix and relevant original requirement. Never
 call task, invent session identifiers or delegate implementation to explore.
 Use V1's visual quality and retained V2/V3 privacy requirements. Do not bring
 back the abandoned chrono, ranking, paywall, premium or public demo.
+
+Current diagnostic: the restart test now requires successful catch-up to the
+server revision with unchanged records and no duplicate server writes. Its
+Node HTTP transport uses fresh sockets after authority restart; the former
+unchanged-cursor assertion could pass after ECONNRESET. Do not advance the
+product pull cursor during push: that can skip unread changes from others.
+This test correction is not a completed Firebase or native product journey.
 
 At each pass:
 1. Audit the actual current source and the first concrete failing check.
