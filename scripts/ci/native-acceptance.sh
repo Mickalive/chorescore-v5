@@ -44,4 +44,4 @@ adb shell settings put global animator_duration_scale 0
 adb shell wm dismiss-keyguard
 export ANDROID_EVIDENCE_DIR=verification-evidence/android
 export ANDROID_TEST_GROUP_NAME="MaisonCI${GITHUB_RUN_ID}${AUTOPILOT_ATTEMPT:-0}"
-python3 scripts/android/verify-device.py "$apk"
+python3 scripts/android/run-journey.py "$apk"

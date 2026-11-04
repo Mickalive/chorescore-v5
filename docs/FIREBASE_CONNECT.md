@@ -1,31 +1,45 @@
-# Connecter ChoreScore à ton Firebase
+# Connecter Firebase sans terminal ni paiement
 
-Ce guide ouvre un terminal **gratuit chez Google**, déjà relié à ton compte. Ce n’est pas une automation GitHub. Tu n’as pas besoin d’installer un logiciel sur ton ordinateur ni de créer une clé privée.
+Projet : **chorescore-a75b1**. Conserver le forfait **Spark**, sans carte bancaire.
+Ces étapes activent la connexion et fournissent la configuration publique de
+l’application ; elles ne donnent pas accès au compte Google à l’assistant.
 
-## 1. Autoriser Google
+## 1. Activer Google
 
-Si Google affiche **Autoriser Cloud Shell**, clique **Autoriser** avec le compte qui possède `chorescore-a75b1`.
+Ouvrir [Authentication → Fournisseurs](https://console.firebase.google.com/project/chorescore-a75b1/authentication/providers).
+Cliquer **Commencer** si proposé, puis **Google → Activer**. Choisir son adresse
+e-mail d’assistance, puis **Enregistrer**. Si Google est déjà activé, conserver
+la configuration existante.
 
-## 2. Lancer la configuration
+## 2. Télécharger la configuration Android
 
-Dans le terminal en bas, colle cette seule commande puis appuie sur Entrée :
+Ouvrir [Paramètres du projet → Général](https://console.firebase.google.com/project/chorescore-a75b1/settings/general).
+Dans **Vos applications**, ouvrir l’application Android **app.chorescore.v5**.
+Si elle n’existe pas : **Ajouter une application → Android**, saisir le nom de
+package **app.chorescore.v5** et le surnom **ChoreScore Android**, puis
+**Enregistrer l’application**.
 
-```sh
-python3 scripts/firebase/connect-project.py --apply
-```
+Dans ses paramètres, ajouter ces empreintes si elles ne sont pas déjà présentes :
 
-Le programme vérifie que la facturation est désactivée. Il prépare l’application Android et la base Firestore gratuite, enregistre la signature du candidat et publie les règles de sécurité du dépôt. Une base existante conserve ses données et sa région ; les anciennes règles sont sauvegardées avant remplacement. Aucun forfait Blaze, carte bancaire, Cloud Storage ou Cloud Function n’est activé.
+- SHA-1 : `5E:8F:16:06:2E:A3:CD:2C:4A:0D:54:78:76:BA:A6:F3:8C:AB:F6:25`
+- SHA-256 : `FA:C6:17:45:DC:09:03:78:6F:B9:ED:E6:2A:96:2B:39:9F:73:48:F0:BB:6F:89:9B:83:32:66:75:91:03:3B:9C`
 
-## 3. Activer Google si le programme le demande
+Elles viennent de `firebase/android-signing.json`, vérifié contre le candidat
+de développement. Une future signature de distribution nécessitera ses propres
+empreintes.
 
-Ouvre le lien Firebase affiché, clique **Google**, puis **Activer**, choisis ton adresse e-mail d’assistance et clique **Enregistrer**. Si Firebase propose d’abord **Commencer**, clique dessus pour initialiser Authentication. Reviens au terminal et appuie sur Entrée.
+**Après activation de Google et enregistrement des empreintes**, cliquer
+**Télécharger google-services.json**, puis joindre ce fichier à la conversation.
+Il contient la configuration publique Android, sans clé privée. Ne pas créer
+ni télécharger de clé de compte de service : ce serait un autre fichier.
+Ne pas modifier les SDK/Gradle à la main : le raccordement sera fait dans le dépôt.
 
-Si Google demande une mise à niveau payante, n’accepte pas : ce parcours ne l’exige pas.
+## Suite du raccordement
 
-## 4. Me transmettre le résultat public
+Valider le projet et le package du fichier, récupérer la clé API publique et
+le client OAuth de type Web, préparer le candidat configuré, vérifier les règles
+Firestore avant publication et tester les échanges entre comptes. Le fichier
+seul ne déploie pas les règles et ne prouve pas la synchronisation.
 
-À la fin, le terminal affiche un petit bloc avec trois lignes `EXPO_PUBLIC_...`. Copie **uniquement ce bloc** dans notre conversation. Ce sont les paramètres publics de l’application, pas un mot de passe ni un jeton de connexion. Je pourrai alors intégrer le raccordement au bon projet et poursuivre les essais.
-
-N’envoie jamais la sortie de `gcloud auth print-access-token`, un jeton de session, une clé privée ou un fichier de compte de service.
-
-Le programme peut être relancé si une étape n’est pas encore prête. Son code est dans `scripts/firebase/connect-project.py`. Les cinq tests de protocole locaux ne prouvent pas que la configuration a été appliquée sur ton projet ; seule une exécution Google réussie le confirmera. Le déploiement des règles ne remplace pas les essais de connexion et de synchronisation entre téléphones.
+Aucun Cloud Shell, mot de passe, jeton de connexion, compte de service,
+Cloud Storage, Cloud Function ou passage au forfait Blaze n’est demandé.

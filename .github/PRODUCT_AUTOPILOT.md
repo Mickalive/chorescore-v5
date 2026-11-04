@@ -31,6 +31,14 @@ unchanged-cursor assertion could pass after ECONNRESET. Do not advance the
 product pull cursor during push: that can skip unread changes from others.
 This test correction is not a completed Firebase or native product journey.
 
+The trusted baseline now runs the browser AND installed Android journey before
+choosing a repair, stopping on the first concrete failure. Read that current
+failure before older logs. The Android journey uses real device APIs, records
+video and verifies photos, actual notification delivery, both todo kinds,
+sharing, exact splits, process-death persistence and explicit compensation at
+a French decimal rate. Its independent evidence gate rejects missing captures
+and APK digest mismatches. Fix product behavior; do not bypass these controls.
+
 At each pass:
 1. Audit the actual current source and the first concrete failing check.
 2. Repair that failure. If checks pass, implement the next incomplete vertical

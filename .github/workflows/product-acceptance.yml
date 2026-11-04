@@ -53,6 +53,8 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm run typecheck
       - run: python3 -m unittest discover -s scripts/ci -p 'test_*.py'
+      - run: python3 -m unittest discover -s scripts/android -p 'test_*.py'
+      - run: python3 -m unittest discover -s scripts/firebase -p 'test_*.py'
       - name: Application and SQLite tests with retained failure evidence
         run: |
           mkdir -p verification-evidence/application
@@ -166,7 +168,7 @@ jobs:
           profile: pixel_2
           disable-animations: true
           emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -camera-back none -camera-front none
-          script: python3 scripts/android/verify-device.py android/app/build/outputs/apk/release/app-release.apk
+          script: python3 scripts/android/run-journey.py android/app/build/outputs/apk/release/app-release.apk
       - uses: actions/upload-artifact@v4
         if: always()
         with:

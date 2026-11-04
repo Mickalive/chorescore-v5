@@ -10,7 +10,7 @@ secret de compte de service ne doit être ajouté au dépôt.
 
 ## Connexion guidée sans clé privée
 
-Le parcours manuel est décrit dans [FIREBASE_CONNECT.md](FIREBASE_CONNECT.md). Il s’exécute dans Google Cloud Shell avec le consentement du propriétaire, vérifie l’absence de facturation, conserve les données existantes, prépare le package/signataire Android et publie les règles. Il ne crée aucun workflow GitHub et ne transmet aucun jeton à la conversation.
+Le parcours actuel est décrit dans [FIREBASE_CONNECT.md](FIREBASE_CONNECT.md) : activer Google et télécharger la configuration Android dans la console, sans terminal ni paiement. L’ancien script Cloud Shell est conservé pour traçabilité ; il n’est plus le parcours demandé au propriétaire.
 
 ## Trois niveaux à ne pas confondre
 
@@ -22,7 +22,7 @@ Le parcours manuel est décrit dans [FIREBASE_CONNECT.md](FIREBASE_CONNECT.md). 
 
 ## Paramètres publics transmis au build
 
-Les valeurs suivantes sont fournies au build direct via un fichier `.env.local` ignoré par Git. Les workflows GitHub ont été supprimés :
+Les valeurs suivantes peuvent être fournies au build via un fichier `.env.local` ignoré par Git. Les workflows GitHub sont de nouveau autorisés ; leurs parcours natifs locaux restent distincts du candidat Firebase configuré :
 
 - `EXPO_PUBLIC_FIREBASE_PROJECT_ID` — facultatif : le code utilise déjà
   `chorescore-a75b1` par défaut, cette variable permet de surcharger ;

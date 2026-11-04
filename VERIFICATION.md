@@ -2,6 +2,31 @@
 
 Aucune déclaration de produit terminé. Dernier état : **240 tests applicatifs réussis**, TypeScript, 3 tests serveur et parcours Chromium/SQLite complet réussis ; 2 scénarios officiels Firestore ignorés hors émulateur. Les captures Android de Groupes et de la catégorie correspondent au candidat `9a04a392` ; le parcours natif complet a été interrompu par l’arrêt graphique de l’émulateur. Le candidat avec aperçu photo et balances persistées compile, sans nouvelle validation native. Firebase de production et deux téléphones restent non vérifiés.
 
+
+Mise à jour du 4 novembre — parcours Android automatisé : le même scénario
+installé est exécuté par Product acceptance et par OpenCode, avec vidéo par
+segments, captures, arbres UI, logcat et empreinte de l’APK. Une validation
+indépendante refuse un succès sans les preuves requises ou provenant d’un autre
+APK. Ajout du scénario natif de compensation : taux explicite 1,5 point pour
+1,01 CHF, saisie française, effets exacts dans les deux ledgers et conservation
+après arrêt du processus. **Ce nouveau scénario natif est ajouté, pas encore
+observé réussi.** Le pilote lance désormais les contrôles navigateur et Android
+dès sa baseline pour réparer leur premier échec concret, plutôt que de choisir
+une fonctionnalité avant de les avoir essayés.
+
+Vérifications locales de cette modification : **19 tests du pilote Android,
+10 tests de configuration Firebase et 5 tests du contrôleur réussis** ;
+compilation Python, syntaxe shell et diff sans erreur. Dernier contrôle GitHub
+sur 805e4f1 : application/navigateur et Firestore réussis ; Android encore en
+cours lors de la consultation. Aucun nouveau succès natif n’est revendiqué.
+
+Le raccordement Firebase est désormais décrit sans Cloud Shell dans
+`docs/FIREBASE_CONNECT.md`. Un importeur local valide le fichier public
+`google-services.json`, refuse un compte de service, un autre projet/package
+ou un client OAuth Android utilisé à la place du client Web, et conserve les
+autres réglages de `.env.local`. Aucune configuration de production n’a été
+reçue ni appliquée ; aucune facturation n’a été activée.
+
 Sources lues : `AGENTS.md`, `CODEX_MISSION.md`, `PRODUCT.md`, les deux documents V3/V4 présents dans `docs/`, la [constitution V3 originale](https://github.com/Mickalive/chorescore-v3/blob/f922d347bc9989a717101bce274ca459902f6ff0/docs/V3_CONSTITUTION.md) et la [constitution V4 originale](https://github.com/Mickalive/chorescore-v3/blob/24041c9ff0adc9d88af534ef7e019699915d6ebe/docs/V4_CONSTITUTION.md). La copie V4 du dépôt est identique à cette source. Référence visuelle : composants et écran principal de `Mickalive/Chorescore`.
 
 | Parcours promis | Implémentation et preuve actuelle | Manque explicite |

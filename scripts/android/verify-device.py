@@ -946,6 +946,57 @@ try:
         time.sleep(.3)
     else:raise AssertionError('Reminder opt-in failed')
     hierarchy();screenshot('notification-options-android')
+
+    # The explicitly agreed conversion must affect BOTH independent ledgers,
+    # with French decimal input, exact cents and persistence after process death.
+    adb('shell','am','force-stop',PACKAGE)
+    start()
+    compensation_group='Compensation'+GROUP_NAME.replace(' ','')
+    scroll_to(resource='groups.newButton')
+    scroll_top()
+    fill('groups.nameInput',compensation_group)
+    scroll_to(resource='groups.unit.points')
+    add_member_at_creation('Bob')
+    scroll_to(resource='groups.createButton')
+    scroll_to('Ouvrir le groupe '+compensation_group)
+    fill('add.taskLabel','Travail partage')
+    fill('add.taskValue','6')
+    scroll_to('Ajouter la tâche')
+    scroll_top()
+    tap('Dépense')
+    fill('add.expenseTitle','Achat de Bob')
+    fill('add.expenseAmount','6,00')
+    scroll_to(resource='add.expensePayer.1')
+    scroll_to('Ajouter la dépense')
+    adb('shell','am','force-stop',PACKAGE)
+    start()
+    scroll_to('Options du groupe '+compensation_group)
+    scroll_to(resource='groupOptions.compensationToggle')
+    fill('groupOptions.rateContribution','1,5')
+    fill('groupOptions.rateMoney','1,01')
+    scroll_to(resource='groupOptions.save')
+    locate(resource='groupOptions.save')  # disabled until the SQLite save finishes
+    adb('shell','am','force-stop',PACKAGE)
+    start()
+    scroll_to('Ouvrir le groupe '+compensation_group)
+    tap('Balances')
+    assert_ledger_totals(['+ 3 pts','- 3 pts'],['- 3,00 CHF','+ 3,00 CHF'])
+    scroll_to(resource='balances.compensateButton')
+    creditors=[node for node in hierarchy().iter('node')
+               if 'balances.compenserCreditor.' in node.attrib.get('resource-id','')]
+    assert creditors,'Compensation creditor choices missing'
+    tap_node(creditors[0])
+    fill('balances.compenserValue','1,5')
+    screenshot('compensation-preview-android')
+    scroll_to(resource='balances.compenserConfirm')
+    locate(resource='balances.compensateButton')  # the preview modal must have closed
+    assert_ledger_totals(['+ 1,5 pts','- 1,5 pts'],['- 1,99 CHF','+ 1,99 CHF'])
+    adb('shell','am','force-stop',PACKAGE)
+    start()
+    scroll_to('Ouvrir le groupe '+compensation_group)
+    tap('Balances')
+    assert_ledger_totals(['+ 1,5 pts','- 1,5 pts'],['- 1,99 CHF','+ 1,99 CHF'])
+    screenshot('compensation-persisted-android')
     (EVIDENCE/'result.json').write_text(json.dumps({
         'status':'passed','apk_sha256':verified_apk_sha256,
         'installation':'existing APK bytes verified' if '--already-installed' in sys.argv[2:] else 'installed and APK bytes verified',
@@ -956,9 +1007,10 @@ try:
                     'reminder permission requested through the real scheduler',
                     'real local reminder notification observed in the Android shade','both ledger entries after force-stop and relaunch',
                     'native edit and delete from Balances','actual Android share chooser',
-                    'reminder preference disabled, persisted after restart and enabled again'],
+                    'reminder preference disabled, persisted after restart and enabled again',
+                    'custom compensation at explicit French decimal rate with exact cents in both ledgers after restart'],
         'partially_verified':['reminder scheduled through the native API; delivery timing is controlled by Android'],
-        'not_verified':['real Firebase sign-in','two-phone collaboration','custom compensation on device'],
+        'not_verified':['real Firebase sign-in','two-phone collaboration'],
     },ensure_ascii=False,indent=2))
     print('PASS: installed release APK: category/ratio, custom splits, photo, two todos, edit/delete, restart, share',flush=True)
 except Exception:

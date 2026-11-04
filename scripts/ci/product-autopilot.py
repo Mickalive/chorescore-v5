@@ -110,7 +110,7 @@ initial = []
 previous = CONTEXT / 'previous-failures.md'
 if previous.exists():
     initial.append(previous.read_text())
-for name, args, timeout in checks[:4]:
+for name, args, timeout in checks:
     log = EVIDENCE / f'baseline-{name}.log'
     passed = run(args, log, timeout)
     initial.append(f'## Baseline {name}: {"PASS" if passed else "FAIL"}\n' + log.read_text(errors='replace')[-18000:])
