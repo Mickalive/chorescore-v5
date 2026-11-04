@@ -106,6 +106,28 @@ plusieurs certificats, sortie de libellé différent et APK debuggable volumineu
 Le parcours natif complet reste à observer sur GitHub ; une compilation locale
 et cette vérification de certificat ne le remplacent pas.
 
+
+Résultat officiel sur 64bb679 : job Firestore de l’exécution 41860546468
+réussi, ce qui exécute les **trois** scénarios sans skip via verify-rules.cjs,
+y compris l’écriture sans delta et le rejeu. Application/navigateur GitHub
+réussis sur cette même source. Le parcours Chromium/SQLite local et le build
+Android Firebase local passent aussi. Le parcours Android GitHub reste en cours.
+
+Connexion Google : un double appui lançait deux appels natifs concurrents,
+chacun avançant la génération et pouvant invalider le premier. Un test rouge
+le reproduit (deux appels au lieu d’un). Les appels concurrents partagent
+maintenant la même tentative. Annulation/reprise et déconnexion pendant la
+feuille Google sont testées ; après déconnexion, le résultat tardif ne lance
+même plus l’échange Firebase. 11 tests d’authentification et le typage passent ;
+la suite complète atteint 249 tests passés, avec 3 scénarios officiels exclus
+localement. Ces tests du protocole ne prouvent pas une connexion Google réelle.
+
+Les traces Playwright, l’erreur exacte et les captures navigateur seront aussi
+conservées par le worker ; auparavant son répertoire par défaut sous /tmp
+n’était pas inclus dans l’artefact. Le diagnostic recherche désormais les jobs
+échoués même quand le workflow global a ensuite été annulé par une publication,
+afin de ne pas revenir éternellement à un ancien échec sans rapport.
+
 Sources lues : `AGENTS.md`, `CODEX_MISSION.md`, `PRODUCT.md`, les deux documents V3/V4 présents dans `docs/`, la [constitution V3 originale](https://github.com/Mickalive/chorescore-v3/blob/f922d347bc9989a717101bce274ca459902f6ff0/docs/V3_CONSTITUTION.md) et la [constitution V4 originale](https://github.com/Mickalive/chorescore-v3/blob/24041c9ff0adc9d88af534ef7e019699915d6ebe/docs/V4_CONSTITUTION.md). La copie V4 du dépôt est identique à cette source. Référence visuelle : composants et écran principal de `Mickalive/Chorescore`.
 
 | Parcours promis | Implémentation et preuve actuelle | Manque explicite |

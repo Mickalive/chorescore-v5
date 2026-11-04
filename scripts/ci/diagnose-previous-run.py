@@ -31,7 +31,18 @@ def annotation(message):
 
 
 runs = json.loads(request(api + '/actions/workflows/product-acceptance.yml/runs?per_page=10'))['workflow_runs']
-previous = next((run for run in runs if run['id'] != current and run['conclusion'] == 'failure'), None)
+previous = None
+jobs = []
+branch = os.environ.get('GITHUB_REF_NAME')
+for run in runs:
+    if run['id'] == current or (branch and run.get('head_branch') != branch):
+        continue
+    # A failed browser check can be followed by a cancelled Android build.
+    # The whole run then says "cancelled", but the failed job remains real.
+    candidate_jobs = json.loads(request(api + '/actions/runs/' + str(run['id']) + '/jobs?per_page=100'))['jobs']
+    if any(job.get('conclusion') == 'failure' for job in candidate_jobs):
+        previous, jobs = run, candidate_jobs
+        break
 from pathlib import Path
 context = Path('.opencode-ci')
 context.mkdir(exist_ok=True)
@@ -39,7 +50,6 @@ summaries = []
 if previous is None:
     print('No previous failed acceptance run.')
 else:
-    jobs = json.loads(request(api + '/actions/runs/' + str(previous['id']) + '/jobs?per_page=100'))['jobs']
     for job in jobs:
         if job['conclusion'] != 'failure':
             continue

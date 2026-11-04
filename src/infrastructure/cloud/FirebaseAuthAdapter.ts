@@ -22,6 +22,7 @@ export class FirebaseAuthAdapter implements AuthGateway {
   private storageWrites: Promise<void> = Promise.resolve();
   private generation = 0;
   private refreshing: { session: AuthSessionToken; promise: Promise<string> } | null = null;
+  private signingIn: Promise<AuthUser | null> | null = null;
   constructor(private config: FirebaseAuthConfig, private store: SecureStorageGateway) {}
   isAvailable() { return true; }
   getCurrentUserId() { return this.session?.userId ?? null; }
@@ -41,15 +42,29 @@ export class FirebaseAuthAdapter implements AuthGateway {
   async signInWithApple(): Promise<null> { return null; }
   async signInWithFacebook(): Promise<null> { return null; }
 
-  async signInWithGoogle(): Promise<AuthUser | null> {
+  signInWithGoogle(): Promise<AuthUser | null> {
+    // Native provider sheets cannot run concurrently. A double tap must join
+    // the current attempt instead of invalidating it with a new generation.
+    if (this.signingIn) return this.signingIn;
+    const pending = this.performGoogleSignIn().finally(() => {
+      if (this.signingIn === pending) this.signingIn = null;
+    });
+    this.signingIn = pending;
+    return pending;
+  }
+
+  private async performGoogleSignIn(): Promise<AuthUser | null> {
     const generation = ++this.generation;
     // Lazy import: local builds, Node tests and web do not require native Google services.
     const { GoogleSignin } = require('@react-native-google-signin/google-signin') as typeof import('@react-native-google-signin/google-signin');
     GoogleSignin.configure({ webClientId: this.config.googleWebClientId });
     await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+    if (generation !== this.generation) throw new Error('Sign-in cancelled');
     const result = await GoogleSignin.signIn();
     if (result.type === 'cancelled') return null;
+    if (generation !== this.generation) throw new Error('Sign-in cancelled');
     const { idToken } = await GoogleSignin.getTokens();
+    if (generation !== this.generation) throw new Error('Sign-in cancelled');
     if (!idToken) throw new Error('Google did not return an ID token');
     const response = await this.request(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithIdp?key=${encodeURIComponent(this.config.apiKey)}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -92,7 +107,7 @@ export class FirebaseAuthAdapter implements AuthGateway {
     await write;
   }
   async signOut() {
-    this.generation += 1; this.session = null; this.refreshing = null; this.notify();
+    this.generation += 1; this.session = null; this.refreshing = null; this.signingIn = null; this.notify();
     await this.clearSession();
   }
 

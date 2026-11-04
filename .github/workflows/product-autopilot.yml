@@ -69,6 +69,7 @@ jobs:
       actions: read
     env:
       EXPO_NO_TELEMETRY: '1'
+      EVIDENCE_DIR: verification-evidence/browser
       AUTOPILOT_MODEL: ${{ needs.free-model.outputs.model }}
     steps:
       - uses: actions/checkout@v5
@@ -113,6 +114,7 @@ jobs:
           name: product-reconstruction-${{ github.run_id }}
           path: |
             verification-evidence/autopilot/
+            verification-evidence/browser/
             verification-evidence/android/
             verification-evidence/firestore/
             .opencode-ci/latest-checks.md

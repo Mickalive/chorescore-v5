@@ -24,6 +24,7 @@ const server = createServer((req, res) => {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const browser = await chromium.launch({ executablePath: process.env.CHROME_BIN || '/usr/bin/chromium', headless: true, args: ['--no-sandbox'] });
   const context = await browser.newContext({ viewport: { width: 412, height: 915 } });
+  await context.tracing.start({ screenshots: true, snapshots: true, sources: false });
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -318,9 +319,15 @@ const server = createServer((req, res) => {
   } catch (error) {
     await screenshot('failure-web').catch(() => {});
     console.error(error.message);
-    console.error((await page.locator('body').innerText().catch(() => '')).slice(-5000));
+    const body = (await page.locator('body').innerText().catch(() => '')).slice(-5000);
+    console.error(body);
+    fs.writeFileSync(path.join(evidence, 'failure.txt'), String(error.stack || error.message) + '\n' + body);
+    const detail = (String(error.message) + '\n' + body).slice(-7000)
+      .replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+    console.error('::error title=Browser acceptance failure::' + detail);
     process.exitCode = 1;
   } finally {
+    await context.tracing.stop({ path: path.join(evidence, 'journey-trace.zip') }).catch(() => {});
     await browser.close(); await new Promise(resolve => server.close(resolve));
   }
 })().catch(error => { console.error(error.message); server.close(); process.exitCode = 1; });
