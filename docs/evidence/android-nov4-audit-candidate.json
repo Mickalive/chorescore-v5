@@ -1,0 +1,25 @@
+{
+  "sourceCommit": "e3239bea326c94a90eee4a36cf536099381ac0e0",
+  "apkSha256": "9cf0326906511c2df0963d92dc86bf37651fb44cae5a5f8dbf9435b40891fab2",
+  "buildSucceeded": true,
+  "appTestsPassed": 240,
+  "officialFirestoreTestsSkippedLocally": 2,
+  "backendTestsPassed": 3,
+  "controllerTestsPassed": 5,
+  "browserJourneyPassed": true,
+  "installed": false,
+  "fullNativeJourneyPassed": false,
+  "productionFirebaseVerified": false,
+  "twoPhonesVerified": false,
+  "automationProductChangesPreviouslyIntegrated": 0,
+  "updatedAutomationEndToEndVerified": false,
+  "dependencyAudit": {
+    "info": 0,
+    "low": 1,
+    "moderate": 22,
+    "high": 5,
+    "critical": 0,
+    "total": 28
+  },
+  "evidenceDirectory": "/workspace/chorescore-evidence/candidate-9cf03269"
+}
