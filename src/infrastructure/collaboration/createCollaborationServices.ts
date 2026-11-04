@@ -100,6 +100,12 @@ export function createCollaborationServices(
       getAccessToken: config.getAccessToken,
       getUid,
       fetchImpl,
+      canReadCached: async (householdId, uid) => {
+        const repos = config.getRepos();
+        if (!(await repos.households.getById(householdId))) return false;
+        return (await repos.memberships.getByHousehold(householdId))
+          .some(membership => membership.userId === uid);
+      },
     });
     return {
       mode,

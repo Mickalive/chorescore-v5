@@ -5,6 +5,7 @@ from pathlib import Path
 import hashlib
 import random
 import subprocess
+from worker_protocol import run_worker
 
 directory = Path('.opencode-ci')
 directory.mkdir(exist_ok=True)
@@ -21,18 +22,17 @@ test_digest = hashlib.sha256(test.read_bytes()).hexdigest()
 assert subprocess.run(['node',str(test)],capture_output=True).returncode != 0, 'Broken fixture must actually fail'
 log = Path('verification-evidence/autopilot/local-model-probe.jsonl')
 try:
-    with log.open('w') as output:
-        result = subprocess.run(['opencode', 'run', '--agent', 'model-probe',
+    succeeded = run_worker(['opencode', 'run', '--agent', 'model-probe',
             '--model', os.environ['AUTOPILOT_MODEL'], '--format', 'json',
             'Repair .opencode-ci/code-probe/sum.cjs so it adds two numbers rather than concatenating strings. Read it, edit the source, then run node .opencode-ci/code-probe/test.cjs. Do not edit the test. Do not delegate or call task.'],
-            stdout=output, stderr=subprocess.STDOUT, timeout=600)
+            log, 600)
     events = []
     for line in log.read_text(errors='replace').splitlines():
         try:
             events.append(json.loads(line))
         except ValueError:
             pass
-    assert result.returncode == 0 and not any(e.get('type') == 'error' for e in events), log.read_text()[-4000:]
+    assert succeeded and not any(e.get('type') == 'error' for e in events), log.read_text()[-4000:]
     assert target.read_bytes() != original, 'No source repair was made'
     assert hashlib.sha256(test.read_bytes()).hexdigest() == test_digest, 'Worker changed the test instead of repairing source'
     subprocess.run(['node',str(test)],check=True)
@@ -40,6 +40,10 @@ try:
         with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
             output.write('model=' + os.environ['AUTOPILOT_MODEL'] + '\n')
     print('::notice title=Free local repair proved::The original source failed; OpenCode changed the source, preserved the test and passed all numeric cases. This is a capability probe, not a product feature.')
+except Exception:
+    detail = log.read_text(errors='replace')[-5000:] if log.exists() else 'No probe transcript was produced.'
+    print('::error title=Free model repair failed::' + detail.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A'), flush=True)
+    raise
 finally:
     target.unlink(missing_ok=True)
     test.unlink(missing_ok=True)

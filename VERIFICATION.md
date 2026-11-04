@@ -27,6 +27,30 @@ ou un client OAuth Android utilisé à la place du client Web, et conserve les
 autres réglages de `.env.local`. Aucune configuration de production n’a été
 reçue ni appliquée ; aucune facturation n’a été activée.
 
+
+4 novembre — configuration réelle reçue : le nouveau fichier Android du
+propriétaire a été validé pour chorescore-a75b1 et app.chorescore.v5. Son client
+OAuth Android correspond à la SHA-1 du candidat, et son client OAuth Web est
+présent. Les paramètres ont été importés uniquement dans `.env.local`, ignoré
+par Git. Aucun fichier de compte de service ni paramètre de production n’a été
+commité ; aucune connexion réelle ni règle déployée n’est revendiquée.
+
+Correction produit : les photos Firebase déjà téléchargées peuvent être relues
+sans réseau pour le compte membre conservé localement. Les refus explicites
+401/403/404 restent bloquants ; un changement de compte pendant le contrôle
+ou la lecture ne renvoie jamais le cache précédent. Deux nouveaux tests rouges
+avant correction ; 11 tests des médias Firebase passent après correction et
+le typage passe. Cette preuve porte sur le contrat local, pas sur un téléphone
+connecté à la production.
+
+Diagnostic GitHub b0ce8b9 : application/navigateur et règles Firestore réussis ;
+Android arrêté au contrôle d’identité APK avant l’émulateur ; épreuve de
+réparation OpenCode échouée, reconstruction et intégration non exécutées. Le
+contrôle de l’APK expose désormais sa ligne d’échec ; l’épreuve OpenCode utilise
+le contrôleur de processus déjà testé et expose son transcript borné en cas
+d’échec, plutôt qu’un simple code 1. Aucun de ces échecs n’est déclaré résolu
+sans le résultat précis de la nouvelle exécution.
+
 Sources lues : `AGENTS.md`, `CODEX_MISSION.md`, `PRODUCT.md`, les deux documents V3/V4 présents dans `docs/`, la [constitution V3 originale](https://github.com/Mickalive/chorescore-v3/blob/f922d347bc9989a717101bce274ca459902f6ff0/docs/V3_CONSTITUTION.md) et la [constitution V4 originale](https://github.com/Mickalive/chorescore-v3/blob/24041c9ff0adc9d88af534ef7e019699915d6ebe/docs/V4_CONSTITUTION.md). La copie V4 du dépôt est identique à cette source. Référence visuelle : composants et écran principal de `Mickalive/Chorescore`.
 
 | Parcours promis | Implémentation et preuve actuelle | Manque explicite |

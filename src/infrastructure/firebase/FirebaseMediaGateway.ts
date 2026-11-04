@@ -11,7 +11,7 @@
  * Firestore rules restrict every media document to members of its group.
  */
 import { MediaGateway } from '../../application/ports';
-import { FirestoreDocument, FirestorePort, FirestoreTransaction } from './FirestorePort';
+import { FirestoreDocument, FirestoreHttpError, FirestorePort, FirestoreTransaction } from './FirestorePort';
 import { FirestoreRestClient } from './FirestoreRestClient';
 
 export const MAX_FIRESTORE_MEDIA_BYTES = 700 * 1024;
@@ -163,6 +163,8 @@ export interface FirebaseMediaConfig {
   fetchImpl?: typeof fetch;
   readFile?: (uri: string) => Promise<Uint8Array>;
   readCached?: (householdId: string, remoteRef: string) => Promise<string | null>;
+  /** Offline fallback requires persisted membership for this exact account. */
+  canReadCached?: (householdId: string, uid: string) => Promise<boolean>;
   writeCached?: (householdId: string, remoteRef: string, bytes: Uint8Array, mimeType: string) => Promise<string>;
   compress?: (uri: string) => Promise<{ uri: string; mimeType: string }>;
   now?: () => number;
@@ -285,7 +287,24 @@ export class FirebaseMediaGateway implements MediaGateway {
   async download(householdId: string, remoteRef: string): Promise<string> {
     const uid = this.uid();
     if (!ID.test(householdId) || !ID.test(remoteRef)) throw new Error('Référence de photo invalide');
-    const group = await this.client.getDocument(`groups/${householdId}`);
+    let group: FirestoreDocument | null;
+    try {
+      group = await this.client.getDocument(`groups/${householdId}`);
+    } catch (error) {
+      this.requireSameAccount(uid);
+      // A server refusal is authoritative. Only transport failure/timeouts
+      // permit local-first reading of a previously downloaded photo.
+      const offline = error instanceof TypeError ||
+        (error instanceof FirestoreHttpError && error.status === 408);
+      if (!offline || !this.config.canReadCached) throw error;
+      const permitted = await this.config.canReadCached(householdId, uid);
+      this.requireSameAccount(uid);
+      if (!permitted) throw error;
+      const cached = await this.readCached(householdId, remoteRef);
+      this.requireSameAccount(uid);
+      if (cached) return cached;
+      throw error;
+    }
     this.requireSameAccount(uid);
     if (!memberOf(group, uid)) throw new FirebaseMediaError(403, 'Group access denied');
     const cached = await this.readCached(householdId, remoteRef);

@@ -5,6 +5,7 @@
 # - the signing certificate fingerprints Firebase must trust.
 # Nothing here fabricates a Firebase project, key or OAuth client.
 set -euo pipefail
+trap 'code=$?; echo "::error title=APK identity verification failed::Line $LINENO exited with status $code; inspect the identity log for the actual tool failure." >&2; exit "$code"' ERR
 
 APK=${1:?usage: verify-apk-identity.sh <apk>}
 PACKAGE=${ANDROID_PACKAGE:-app.chorescore.v5}
