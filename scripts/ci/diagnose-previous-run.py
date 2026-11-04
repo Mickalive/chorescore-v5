@@ -66,7 +66,7 @@ if worker:
             annotation('Previous free model probes: ' + file.read_text()[-5000:])
         for file in destination.rglob('*-probe.jsonl'):
             annotation(file.name + ': ' + file.read_text(errors='replace')[-2500:])
-        for pattern in ['worker-*.jsonl', '*-android.log', '*-browser.log', 'local-model-server.log']:
+        for pattern in ['*-android.log', '*-browser.log', 'local-model-server.log', 'worker-*.jsonl']:
             for file in sorted(destination.rglob(pattern)):
                 content = file.read_text(errors='replace')
                 if pattern == 'worker-*.jsonl':
