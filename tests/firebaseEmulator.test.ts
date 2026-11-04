@@ -10,7 +10,7 @@
  * supplies FIRESTORE_EMULATOR_HOST. A plain local `npm test` skips it because
  * there is no emulator to prove anything.
  */
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -58,7 +58,6 @@ const projectId =
 const describeEmulator = emulatorHost ? describe : describe.skip;
 const clock = Date.now();
 const photo = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4, 5, 6, 7, 8]);
-let tokenSequence = 0;
 let idSequence = 0;
 
 function token(uid: string): string {
@@ -164,10 +163,7 @@ async function client(uid: string): Promise<Client> {
     getAccessToken,
     getUid: () => uid,
     now: () => clock,
-    createToken: async () => {
-      tokenSequence += 1;
-      return `${String(tokenSequence).padStart(3, '0')}${'c'.repeat(40)}`;
-    },
+    createToken: async () => randomBytes(32).toString('base64url'),
     createId: () => {
       idSequence += 1;
       return `membership-${idSequence}-${uid}`;

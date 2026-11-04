@@ -10,7 +10,7 @@ import shutil
 import signal
 from pathlib import Path
 import subprocess
-from worker_protocol import run_worker
+from worker_protocol import run_worker, is_verified_product_patch
 
 ROOT = Path.cwd()
 EVIDENCE = ROOT / 'verification-evidence' / 'autopilot'
@@ -108,16 +108,19 @@ records = []
 verified = None
 initial = []
 previous = CONTEXT / 'previous-failures.md'
-if previous.exists():
-    initial.append(previous.read_text())
+baseline_failed = False
 for name, args, timeout in checks:
     log = EVIDENCE / f'baseline-{name}.log'
     passed = run(args, log, timeout)
-    initial.append(f'## Baseline {name}: {"PASS" if passed else "FAIL"}\n' + log.read_text(errors='replace')[-18000:])
+    initial.append(f'## Baseline {name}: {"PASS" if passed else "FAIL"}' +
+        ('' if passed else '\n' + log.read_text(errors='replace')[-18000:]))
     if not passed:
+        baseline_failed = True
         message = log.read_text(errors='replace')[-6000:]
         print('::notice title=Concrete baseline failure::' + message.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A'), flush=True)
         break
+if baseline_failed and previous.exists():
+    initial.append('## Historical context (the current baseline above takes priority)\n' + previous.read_text()[-6000:])
 (CONTEXT / 'latest-checks.md').write_text('\n\n'.join(initial))
 for attempt in range(1, 4):
     if not run(['python3', 'scripts/ci/start-local-coder.py'], EVIDENCE / f'{attempt}-local-start.log', 900):
@@ -132,7 +135,7 @@ for attempt in range(1, 4):
             events.append(json.loads(line))
         except ValueError:
             pass
-    answered = answered and any(e.get('type') == 'text' for e in events) and not any(e.get('type') == 'error' for e in events)
+    answered = answered and not any(e.get('type') == 'error' for e in events)
     protect_controls()
     paths = subprocess.check_output(['git', 'diff', '--cached', '--name-only'], text=True).splitlines()
     product = [p for p in paths if p.startswith(('src/', 'app/', 'backend/', 'firebase/', 'plugins/', 'assets/')) or p == 'app.json']
@@ -146,13 +149,17 @@ for attempt in range(1, 4):
         log = EVIDENCE / f'{attempt}-{name}.log'
         passed = run(args, log, timeout)
         outcomes.append({'check': name, 'passed': passed})
-        context.append(f'## {name}: {"PASS" if passed else "FAIL"}\n' + log.read_text(errors='replace')[-18000:])
+        context.append(f'## {name}: {"PASS" if passed else "FAIL"}' +
+            ('' if passed else '\n' + log.read_text(errors='replace')[-18000:]))
         # First concrete failure is the next repair input. Do not spend time
         # rebuilding native artifacts while accounting/security is broken.
         if not passed:
             break
     (CONTEXT / 'latest-checks.md').write_text('\n\n'.join(context))
-    passed = answered and bool(product) and len(outcomes) == len(checks) and all(row['passed'] for row in outcomes)
+    # An interrupted model is not proof of a bad patch, and a confident final
+    # message is not proof of a good one. Retain only actual source changes
+    # that pass all six independent gates, including installed Android.
+    passed = is_verified_product_patch(product, outcomes)
     records.append({'attempt': attempt, 'modelExitedSuccessfully': answered, 'productPaths': product,
         'checks': outcomes, 'verifiedProductPatch': passed})
     (EVIDENCE / 'iterations.json').write_text(json.dumps(records, indent=2) + '\n')

@@ -7,6 +7,13 @@ import subprocess
 import time
 
 
+def is_verified_product_patch(product_paths, outcomes):
+    required = {'typecheck', 'application', 'backend', 'firestore', 'browser', 'android'}
+    return (bool(product_paths) and len(outcomes) == len(required)
+            and {row.get('check') for row in outcomes} == required
+            and all(row.get('passed') is True for row in outcomes))
+
+
 def run_worker(args, log, timeout, verified_when=None):
     progress = WorkerProgress()
     process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)

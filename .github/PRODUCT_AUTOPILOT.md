@@ -16,6 +16,13 @@ The trusted controller executes that test after a completed edit and stops
 the capability probe on verified success; it does not wait for a stalled
 model to announce completion. This shortcut applies only to the tiny probe.
 Actual product patches still require every independent acceptance gate.
+Current product failure (run 41864999398): installed Android passes group and
+category creation, then cannot find todos.complete.0 after creating a task todo
+with a reminder. Inspect the preserved Android UI hierarchy and runtime errors
+before choosing a fix; do not assume the todo was saved or bypass its completion.
+The latest three official Firestore scenarios pass, including cached photo
+deletion and incomplete/replayed deltas. Do not spend a pass fixing an older
+green transport check. Passing checks are summarized; focus on the current FAIL.
 
 Read AGENTS.md, CODEX_MISSION.md, PRODUCT.md and the cumulative requirements
 matrix in docs/CROSS_REPOSITORY_REQUIREMENTS.md. The originals are pinned by

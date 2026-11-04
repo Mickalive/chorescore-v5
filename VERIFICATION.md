@@ -164,6 +164,32 @@ preuve de la cause du dernier échec GitHub. Les diagnostics retiennent désorma
 les premières erreurs du journal, en plus de la fin : dix minutes d’attente de
 boot ne doivent pas masquer l’erreur initiale de l’émulateur.
 
+
+Vérification locale avec le vrai émulateur Google 1.23.0 : **255 tests réussis,
+41 suites, aucun test ignoré**, y compris les 3 scénarios officiels. Image
+publique Google épinglée par digest, Java 25 fourni par cette image, port lié
+uniquement à localhost et projet demo-chorescore-audit. Les invitations de test
+utilisent désormais des jetons uniques : une seconde exécution sur le même
+émulateur avait exposé une collision des anciens jetons constants. Aucune
+assertion n’est retirée. Le lanceur reproductible `scripts/firebase/run-local-rules.sh`
+a également exécuté les 3 scénarios puis supprimé son propre conteneur.
+Preuves et empreintes des règles/tests : `docs/evidence/firestore-local-nov4.json`.
+Aucun accès production ni déploiement de règles.
+
+Derniers résultats GitHub fa27693 : application/navigateur et Firestore réussis.
+Android installe et ouvre l’application, passe groupe/catégorie, puis échoue à
+`todos.complete.0` après la création d’une tâche avec rappel. La copie réelle
+de l’écran et les erreurs runtime seront exposées par le prochain diagnostic.
+Le worker gratuit a réussi son épreuve de capacité, puis échoué ses 3 passes
+sans modifier de source : aucune correction issue de ce run n’a été intégrée.
+
+Le contexte du worker donne maintenant la baseline actuelle avant l’historique,
+et résume les contrôles réussis au lieu d’envoyer jusqu’à 100 Ko de journaux.
+Un modèle interrompu ne fait plus rejeter une source qui aurait réellement
+passé les six contrôles indépendants ; son état reste consigné séparément.
+Les contrôles Android/Firestore/navigateur ne peuvent être omis, dupliqués ou
+remplacés par un message de succès du modèle : 8 tests du contrôleur passent.
+
 Sources lues : `AGENTS.md`, `CODEX_MISSION.md`, `PRODUCT.md`, les deux documents V3/V4 présents dans `docs/`, la [constitution V3 originale](https://github.com/Mickalive/chorescore-v3/blob/f922d347bc9989a717101bce274ca459902f6ff0/docs/V3_CONSTITUTION.md) et la [constitution V4 originale](https://github.com/Mickalive/chorescore-v3/blob/24041c9ff0adc9d88af534ef7e019699915d6ebe/docs/V4_CONSTITUTION.md). La copie V4 du dépôt est identique à cette source. Référence visuelle : composants et écran principal de `Mickalive/Chorescore`.
 
 | Parcours promis | Implémentation et preuve actuelle | Manque explicite |

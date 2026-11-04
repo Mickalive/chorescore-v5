@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import urllib.request
+import xml.etree.ElementTree as ET
 
 repository = os.environ['GITHUB_REPOSITORY']
 current = int(os.environ['GITHUB_RUN_ID'])
@@ -71,6 +72,27 @@ else:
             annotation('Log unavailable: ' + type(error).__name__)
             if isinstance(error, subprocess.CalledProcessError) and error.stderr:
                 annotation(str(error.stderr)[-1500:])
+        if job['name'] == 'android':
+            destination = context / 'previous-android'
+            downloaded = subprocess.run(['gh', 'run', 'download', str(previous['id']), '--repo', repository,
+                '--name', 'android-evidence-' + previous['head_sha'], '--dir', str(destination)],
+                capture_output=True, timeout=60)
+            if downloaded.returncode == 0:
+                for file in destination.rglob('latest-window.xml'):
+                    try:
+                        nodes = ET.fromstring(file.read_text()).iter('node')
+                        screen = '\n'.join(' | '.join(str(node.get(key, '')) for key in
+                            ['package', 'resource-id', 'text', 'content-desc', 'enabled'])
+                            for node in nodes if any(node.get(key) for key in ['text', 'content-desc', 'resource-id']))
+                        summaries.append('Actual failed Android screen:\n' + screen)
+                        annotation('Actual failed Android screen:\n' + screen[-6500:])
+                    except (ET.ParseError, OSError) as error:
+                        annotation('Android hierarchy unreadable: ' + type(error).__name__)
+                for file in destination.rglob('logcat.txt'):
+                    lines = [line for line in file.read_text(errors='replace').splitlines()
+                        if re.search(r'(?i)(ReactNativeJS.*(error|exception)|notification.*(error|exception|failed)|Alarm.*Exception)', line)]
+                    if lines:
+                        annotation('Android runtime errors:\n' + '\n'.join(lines[-20:])[-6500:])
 (context / 'previous-failures.md').write_text('\n\n'.join(summaries))
 
 worker_runs = json.loads(request(api + '/actions/workflows/product-autopilot.yml/runs?per_page=10'))['workflow_runs']
@@ -82,7 +104,8 @@ if worker:
     probe = subprocess.run(['gh', 'run', 'download', str(worker['id']), '--repo', repository,
         '--name', 'free-model-proof-' + str(worker['id']), '--dir', str(probe_destination)],
         capture_output=True, timeout=60)
-    if probe.returncode == 0:
+    worker_jobs = json.loads(request(api + '/actions/runs/' + str(worker['id']) + '/jobs?per_page=100'))['jobs']
+    if probe.returncode == 0 and any(job['name']=='free-model' and job.get('conclusion')=='failure' for job in worker_jobs):
         for file in probe_destination.rglob('*probe.jsonl'):
             annotation('Previous capability probe: ' + file.read_text(errors='replace')[-5500:])
     destination = context / 'previous-worker'
@@ -94,7 +117,7 @@ if worker:
             annotation('Previous free model probes: ' + file.read_text()[-5000:])
         for file in destination.rglob('*-probe.jsonl'):
             annotation(file.name + ': ' + file.read_text(errors='replace')[-2500:])
-        for pattern in ['*-android.log', '*-browser.log', 'local-model-server.log', 'worker-*.jsonl']:
+        for pattern in ['*-android.log', '*-browser.log', 'worker-*.jsonl']:
             for file in sorted(destination.rglob(pattern)):
                 content = file.read_text(errors='replace')
                 if pattern == 'worker-*.jsonl':
@@ -102,6 +125,13 @@ if worker:
                     for line in content.splitlines():
                         try: events.append(json.loads(line))
                         except ValueError: pass
-                    annotation(file.name + ' event types: ' + json.dumps([e.get('type') for e in events]))
-                    annotation(file.name + ' first events: ' + content[:3500])
-                annotation(file.name + ' last output: ' + content[-5000:])
+                    tools=[]
+                    for event in events:
+                        part=event.get('part',{}); state=part.get('state',{})
+                        if event.get('type')=='tool_use':
+                            tools.append({'tool':part.get('tool'),'status':state.get('status'),
+                                'input':state.get('input'),'error':state.get('error')})
+                    errors=[event for event in events if event.get('type')=='error']
+                    annotation(file.name + ' actual tool actions/errors: ' + json.dumps({'tools':tools[-5:],'errors':errors[-2:]})[-6000:])
+                else:
+                    annotation(file.name + ' last output: ' + content[-5000:])

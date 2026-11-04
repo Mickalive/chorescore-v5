@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 import tempfile
 import time
-from worker_protocol import WorkerProgress, run_worker
+from worker_protocol import WorkerProgress, run_worker, is_verified_product_patch
 
 
 def event(tool, status='error'):
@@ -12,6 +12,17 @@ def event(tool, status='error'):
 
 
 class ProgressTests(unittest.TestCase):
+    def test_only_all_independent_product_gates_authorize_retaining_a_patch(self):
+        checks = [{'check': name, 'passed': True} for name in
+                  ['typecheck', 'application', 'backend', 'firestore', 'browser', 'android']]
+        self.assertTrue(is_verified_product_patch(['src/feature.ts'], checks))
+        self.assertFalse(is_verified_product_patch([], checks))
+        self.assertFalse(is_verified_product_patch(['src/feature.ts'], checks[:-1]))
+        failed = [*checks[:-1], {'check': 'android', 'passed': False}]
+        self.assertFalse(is_verified_product_patch(['src/feature.ts'], failed))
+        repeated = [*checks[:-1], checks[0]]
+        self.assertFalse(is_verified_product_patch(['src/feature.ts'], repeated))
+
     def test_verified_files_stop_a_stalled_probe_without_trusting_its_claim(self):
         with tempfile.TemporaryDirectory() as folder:
             target = Path(folder)/'candidate.txt'
