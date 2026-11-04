@@ -49,7 +49,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y libcurl4-openssl-dev ninja-build
           python3 scripts/ci/start-local-coder.py
-      - name: Prove actual local inference and a real file-reading tool call
+      - name: Prove an actual code repair with an unchanged failing-then-passing test
         id: probe
         run: python3 scripts/ci/prove-local-coder.py
       - uses: actions/upload-artifact@v4

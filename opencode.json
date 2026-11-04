@@ -22,7 +22,13 @@
   "permission": {
     "*": "allow",
     "external_directory": "deny",
+    "task": "deny",
     "doom_loop": "deny"
   },
-  "agent": { "build": { "steps": 80 } }
+  "agent": {
+    "build": {
+      "steps": 80,
+      "prompt": "Implement the assigned repair directly using read, grep, bash and edit tools. Never delegate, call task, invent session identifiers or launch another agent. Read the concrete work order first. Make and test a real code change before writing a report."
+    }
+  }
 }

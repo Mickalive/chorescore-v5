@@ -8,6 +8,9 @@ export ANDROID_AVD_HOME="$RUNNER_TEMP/chorescore-avd"
 mkdir -p "$ANDROID_AVD_HOME" verification-evidence/android
 sdk_root=${ANDROID_HOME:?Android SDK must be installed on the runner}
 export PATH="$sdk_root/platform-tools:$sdk_root/emulator:$PATH"
+sdk_manager=$(find "$sdk_root/cmdline-tools" -maxdepth 3 -type f -name sdkmanager | sort -V | tail -1)
+test -n "$sdk_manager" && test -x "$sdk_manager"
+export PATH="$(dirname "$sdk_manager"):$PATH"
 if ! test -f "$ANDROID_AVD_HOME/chorescore-ci.ini"; then
   sdkmanager 'system-images;android-35;default;x86_64' 'emulator' 'platform-tools'
   echo no | avdmanager create avd --name chorescore-ci --package 'system-images;android-35;default;x86_64' --device pixel_2

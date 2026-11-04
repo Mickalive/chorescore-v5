@@ -145,12 +145,17 @@ export class CollaborationStore {
       throw error;
     }
   }
-  getMedia(uid: string, groupId: string, mediaId: string) {
+  getMediaMetadata(uid: string, groupId: string, mediaId: string) {
     id(groupId); id(mediaId);
     this.access(groupId,uid);
     const row = this.database.prepare('SELECT * FROM media WHERE groupId=? AND id=?').get(groupId,mediaId) as Row | undefined;
     const path = this.mediaPath(groupId,mediaId);
     if (!row || !existsSync(path)) throw new HttpError(404,'Media not found');
+    return { mimeType:row.mimeType as string, byteSize:row.byteSize as number, sha256:row.sha256 as string };
+  }
+  getMedia(uid: string, groupId: string, mediaId: string) {
+    const row = this.getMediaMetadata(uid,groupId,mediaId);
+    const path = this.mediaPath(groupId,mediaId);
     const bytes = readFileSync(path);
     if (bytes.length !== row.byteSize || createHash('sha256').update(bytes).digest('hex') !== row.sha256) {
       throw new HttpError(500,'Media integrity check failed');

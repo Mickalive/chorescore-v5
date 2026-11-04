@@ -160,6 +160,9 @@ function openClient(uid: string, databaseName: string): Client {
   client.media = new HttpMediaGateway({
     baseUrl,
     getAccessToken: async () => token(uid),
+    getUid: () => uid,
+    canReadCached: async (householdId, userId) =>
+      (await client.repos.memberships.getByHousehold(householdId)).some(membership => membership.userId === userId),
     fetchImpl,
     readFile: async (uri) => {
       const bytes = files.get(uri);
@@ -314,13 +317,16 @@ test('private photos reach the other member and never leak across tenants', asyn
   expect(Buffer.from(bob.files.get(downloaded)!)).toEqual(photo);
   // A second read is served from the private cache, not the public internet.
   expect(await bob.media.download(hid, attachment!.remoteRef!)).toBe(downloaded);
+  bob.state.online = false;
+  expect(await bob.media.download(hid, attachment!.remoteRef!)).toBe(downloaded);
+  bob.state.online = true;
 
   // An unrelated authenticated account cannot read the group's private file.
   const intruder = openClient('intruder', 'intruder-media.db');
   await mount(intruder);
-  await expect(intruder.media.download(hid, attachment!.remoteRef!)).rejects.toThrow(
-    'Group access denied',
-  );
+  // A shared on-device cache is not evidence of the active account's rights.
+  intruder.cache.set(`${hid}/${attachment!.remoteRef!}`, downloaded);
+  await expect(intruder.media.download(hid, attachment!.remoteRef!)).rejects.toMatchObject({ status: 403 });
 
   // Deleting while a live entry still references the file is harmless: the
   // authority keeps it (409) so no referenced object can be orphaned.

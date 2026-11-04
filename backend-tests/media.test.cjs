@@ -54,6 +54,11 @@ test('HTTP: private media ACL, idempotence, tenant isolation and attachment auth
  assert.equal(fetched.headers.get('content-type'),'image/jpeg');
  assert.equal(fetched.headers.get('x-content-type-options'),'nosniff');
  assert.equal((await media('intruder','/groups/home/media/photo-1')).status,403);
+ const metadata=await media('bob','/groups/home/media/photo-1',undefined,undefined,'HEAD');
+ assert.equal(metadata.status,200);assert.equal(metadata.bytes.length,0);
+ assert.equal(metadata.headers.get('content-length'),String(photo.length));
+ assert.equal(metadata.headers.get('cache-control'),'no-store');
+ assert.equal((await media('intruder','/groups/home/media/photo-1',undefined,undefined,'HEAD')).status,403);
  assert.equal((await media('alice','/groups/home/media/photo-1',jpeg(Buffer.alloc(65,1)),'image/jpeg')).status,409);
  assert.equal((await media('alice','/groups/home/media/photo-1',photo,'image/jpeg')).status,200);
  assert.equal((await media('alice','/groups/home/media/nope',Buffer.from('hello'),'image/jpeg')).status,400);
@@ -85,6 +90,7 @@ test('HTTP: private media ACL, idempotence, tenant isolation and attachment auth
  assert.equal(cleared.status,200);
  assert.equal((await media('alice','/groups/home/media/photo-1',undefined,undefined,'DELETE')).status,200);
  assert.equal((await media('bob','/groups/home/media/photo-1')).status,404);
+ assert.equal((await media('bob','/groups/home/media/photo-1',undefined,undefined,'HEAD')).status,404);
 
  const orphan=await media('alice','/groups/home/media/orphan',jpeg(Buffer.alloc(70,2)),'image/jpeg');
  assert.equal(orphan.status,200);

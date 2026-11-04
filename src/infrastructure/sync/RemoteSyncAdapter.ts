@@ -1,4 +1,5 @@
 import { NetworkCost, NetworkMetrics } from '../../domain/services/networkCost';
+import { collaborationBaseUrl } from './collaborationUrl';
 /**
  * RemoteSyncAdapter — real HTTP collaboration against the frugal server.
  *
@@ -120,7 +121,7 @@ export class RemoteSyncAdapter implements SyncGateway {
   private readonly runtimeErrors = new Map<string, string | null>();
 
   constructor(private readonly config: RemoteSyncConfig) {
-    this.baseUrl = (config.baseUrl ?? '').replace(/\/+$/, '');
+    this.baseUrl = collaborationBaseUrl(config.baseUrl ?? '');
     this.fetchImpl = config.fetchImpl ?? fetch;
   }
 

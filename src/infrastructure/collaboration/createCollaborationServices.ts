@@ -67,6 +67,13 @@ export function createCollaborationServices(
     const media = new HttpMediaGateway({
       baseUrl: collaborationUrl,
       getAccessToken: config.getAccessToken,
+      getUid: config.firebase?.getUid,
+      canReadCached: async (householdId, uid) => {
+        const repos = config.getRepos();
+        const household = await repos.households.getById(householdId);
+        if (!household) return false;
+        return (await repos.memberships.getByHousehold(householdId)).some(membership => membership.userId === uid);
+      },
     });
     return {
       mode,

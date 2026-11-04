@@ -10,6 +10,7 @@ import shutil
 import signal
 from pathlib import Path
 import subprocess
+from worker_protocol import run_worker
 
 ROOT = Path.cwd()
 EVIDENCE = ROOT / 'verification-evidence' / 'autopilot'
@@ -122,7 +123,7 @@ for attempt in range(1, 4):
     if not run(['python3', 'scripts/ci/start-local-coder.py'], EVIDENCE / f'{attempt}-local-start.log', 900):
         raise SystemExit('Local CPU model failed to start; no paid fallback used.')
     prompt = MISSION + '\nPass ' + str(attempt) + '. Read .opencode-ci/latest-checks.md first if present. Implement real product changes now.'
-    answered = run(['opencode', 'run', '--agent', 'build', '--model', os.environ['AUTOPILOT_MODEL'],
+    answered = run_worker(['opencode', 'run', '--agent', 'build', '--model', os.environ['AUTOPILOT_MODEL'],
         '--format', 'json', prompt], EVIDENCE / f'worker-{attempt}.jsonl', 1200)
     stop_local_model()
     events = []
@@ -139,7 +140,8 @@ for attempt in range(1, 4):
     context = []
     if not product:
         context.append('REJECTED: no executable product change; reports/tests alone do not complete the product.')
-    for name, args, timeout in checks:
+        context.append((EVIDENCE / f'worker-{attempt}.jsonl').read_text(errors='replace')[-6000:])
+    for name, args, timeout in (checks if product else []):
         os.environ['AUTOPILOT_ATTEMPT'] = str(attempt)
         log = EVIDENCE / f'{attempt}-{name}.log'
         passed = run(args, log, timeout)

@@ -34,12 +34,20 @@ export function createCollaborationServer(store: CollaborationStore, verifier: F
       // Private media is addressed per group and requires membership on every
       // request. Binary uploads bypass the JSON parser and are size-bounded.
       if (parts[0] === 'groups' && parts.length === 4 && parts[2] === 'media') {
+        if (request.method === 'HEAD') {
+          const media = store.getMediaMetadata(uid,parts[1],parts[3]);
+          response.setHeader('Content-Type',media.mimeType);
+          response.setHeader('Content-Length',String(media.byteSize));
+          response.end();
+          return;
+        }
         if (request.method === 'GET') {
           const media = store.getMedia(uid,parts[1],parts[3]);
           response.statusCode = 200;
           response.setHeader('Content-Type',media.mimeType);
           response.setHeader('Content-Length',String(media.bytes.length));
-          response.setHeader('Cache-Control','private, max-age=3600');
+          // Native files provide caching; network responses must recheck ACLs.
+          response.setHeader('Cache-Control','no-store');
           response.end(media.bytes);
           return;
         }

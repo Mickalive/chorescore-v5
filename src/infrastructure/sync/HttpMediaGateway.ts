@@ -6,6 +6,7 @@
  * local path is never sent to the authority.
  */
 import { MediaGateway } from '../../application/ports';
+import { collaborationBaseUrl } from './collaborationUrl';
 
 const MAX_PHOTO_BYTES = 20 * 1024 * 1024;
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
@@ -63,6 +64,8 @@ async function writeCachedFile(
 export interface HttpMediaConfig {
   baseUrl: string;
   getAccessToken: () => Promise<string | null>;
+  getUid?: () => string | null;
+  canReadCached?: (householdId: string, uid: string) => Promise<boolean>;
   fetchImpl?: typeof fetch;
   readFile?: (uri: string) => Promise<Uint8Array>;
   readCached?: (householdId: string, remoteRef: string) => Promise<string | null>;
@@ -87,7 +90,7 @@ export class HttpMediaGateway implements MediaGateway {
   ) => Promise<string>;
 
   constructor(private readonly config: HttpMediaConfig) {
-    this.baseUrl = config.baseUrl.replace(/\/+$/, '');
+    this.baseUrl = collaborationBaseUrl(config.baseUrl);
     this.fetchImpl = config.fetchImpl ?? fetch;
     this.readFile = config.readFile ?? readLocalFile;
     this.readCached = config.readCached ?? cachedFile;
@@ -104,19 +107,36 @@ export class HttpMediaGateway implements MediaGateway {
     return token;
   }
 
-  private async request(method: 'GET' | 'PUT' | 'DELETE', path: string, body?: Uint8Array, mimeType?: string): Promise<Response> {
+  private async actor(): Promise<{ token: string; uid: string | null | undefined }> {
+    const uid = this.config.getUid?.();
+    const actor = { token: await this.token(), uid };
+    await this.requireActor(actor);
+    return actor;
+  }
+
+  private async requireActor(actor: { token: string; uid: string | null | undefined }): Promise<void> {
+    const unchanged = this.config.getUid
+      ? Boolean(actor.uid) && this.config.getUid() === actor.uid
+      : await this.config.getAccessToken() === actor.token;
+    if (!unchanged) throw new MediaHttpError(401, 'Account changed during photo operation');
+  }
+
+  private async request(actor: { token: string; uid: string | null | undefined }, method: 'GET' | 'HEAD' | 'PUT' | 'DELETE', path: string, body?: Uint8Array, mimeType?: string): Promise<Response> {
+    await this.requireActor(actor);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30_000);
     try {
-      return await this.fetchImpl(`${this.baseUrl}${path}`, {
+      const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
         method,
         headers: {
-          Authorization: `Bearer ${await this.token()}`,
+          Authorization: `Bearer ${actor.token}`,
           ...(mimeType ? { 'Content-Type': mimeType } : {}),
         },
         body: body as BodyInit | undefined,
         signal: controller.signal,
       });
+      await this.requireActor(actor);
+      return response;
     } catch (error) {
       if ((error as { name?: string }).name === 'AbortError') {
         throw new Error('Délai de transfert de la photo dépassé');
@@ -140,6 +160,7 @@ export class HttpMediaGateway implements MediaGateway {
     householdId: string,
     attachment: { id: string; ref: string; mimeType?: string; byteSize?: number },
   ): Promise<{ remoteRef: string; sha256: string; byteSize: number }> {
+    const actor = await this.actor();
     if (!ID.test(householdId)) throw new Error('Identifiant de groupe invalide');
     const remoteRef = ID.test(attachment.id) ? attachment.id : attachment.id.replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 128);
     if (!ID.test(remoteRef)) throw new Error('Identifiant de photo invalide');
@@ -150,6 +171,7 @@ export class HttpMediaGateway implements MediaGateway {
       throw new Error('Taille de photo incohérente');
     }
     const response = await this.request(
+      actor,
       'PUT',
       `/groups/${encodeURIComponent(householdId)}/media/${encodeURIComponent(remoteRef)}`,
       bytes,
@@ -157,6 +179,7 @@ export class HttpMediaGateway implements MediaGateway {
     );
     if (!response.ok) await this.failure(response);
     const data = await response.json() as { id?: unknown; sha256?: unknown; byteSize?: unknown };
+    await this.requireActor(actor);
     if (data.id !== remoteRef || typeof data.sha256 !== 'string' || data.byteSize !== bytes.length) {
       throw new Error('Réponse de stockage photo invalide');
     }
@@ -165,22 +188,45 @@ export class HttpMediaGateway implements MediaGateway {
 
   async download(householdId: string, remoteRef: string): Promise<string> {
     if (!ID.test(householdId) || !ID.test(remoteRef)) throw new Error('Référence de photo invalide');
+    const actor = await this.actor();
     const cached = await this.readCached(householdId, remoteRef);
-    if (cached) return cached;
+    await this.requireActor(actor);
+    const path = `/groups/${encodeURIComponent(householdId)}/media/${encodeURIComponent(remoteRef)}`;
+    if (cached) {
+      // A private file's presence is not authorization for the active account.
+      // HEAD checks the current group ACL without retransferring the photo.
+      try {
+        const response = await this.request(actor, 'HEAD', path);
+        if (!response.ok) await this.failure(response);
+      } catch (error) {
+        // Offline access uses persisted membership for this exact account.
+        // An explicit server denial/deletion always wins over that snapshot.
+        if (error instanceof MediaHttpError || !actor.uid || !this.config.canReadCached ||
+            !await this.config.canReadCached(householdId, actor.uid)) throw error;
+        await this.requireActor(actor);
+      }
+      return cached;
+    }
     const response = await this.request(
+      actor,
       'GET',
-      `/groups/${encodeURIComponent(householdId)}/media/${encodeURIComponent(remoteRef)}`,
+      path,
     );
     if (!response.ok) await this.failure(response);
     const mimeType = (response.headers.get('content-type') ?? 'image/jpeg').split(';')[0].trim().toLowerCase();
     const bytes = new Uint8Array(await response.arrayBuffer());
+    await this.requireActor(actor);
     if (bytes.length === 0 || bytes.length > MAX_PHOTO_BYTES) throw new Error('Taille de photo invalide');
-    return this.writeCached(householdId, remoteRef, bytes, mimeType);
+    const uri = await this.writeCached(householdId, remoteRef, bytes, mimeType);
+    await this.requireActor(actor);
+    return uri;
   }
 
   async remove(householdId: string, remoteRef: string): Promise<void> {
+    const actor = await this.actor();
     if (!ID.test(householdId) || !ID.test(remoteRef)) throw new Error('Référence de photo invalide');
     const response = await this.request(
+      actor,
       'DELETE',
       `/groups/${encodeURIComponent(householdId)}/media/${encodeURIComponent(remoteRef)}`,
     );

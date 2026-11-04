@@ -12,10 +12,14 @@ standard public GitHub runner CPU through localhost llama.cpp. No inference
 API key, provider account, GPU or billing service is involved. Model and runtime
 revisions/checksums are recorded. The nonce probe must prove real inference.
 
-Read AGENTS.md, CODEX_MISSION.md, PRODUCT.md, VERIFICATION.md,
-docs/CROSS_REPOSITORY_REQUIREMENTS.md, docs/source-history/manifest.json and
-the original V3/V4 constitutions and frugal-backend specifications referenced
-there. Read .opencode-ci/ context and actual failed checks before choosing work.
+Read AGENTS.md, CODEX_MISSION.md, PRODUCT.md and the cumulative requirements
+matrix in docs/CROSS_REPOSITORY_REQUIREMENTS.md. The originals are pinned by
+docs/source-history/manifest.json: consult the original section relevant to
+the chosen repair. Read .opencode-ci/latest-checks.md FIRST. Choose ONE concrete
+failing behavior, read its source/tests, edit it directly and run its test.
+Do not reread the complete historical VERIFICATION.md or all 34 snapshots on
+every pass; use the current matrix and relevant original requirement. Never
+call task, invent session identifiers or delegate implementation to explore.
 Use V1's visual quality and retained V2/V3 privacy requirements. Do not bring
 back the abandoned chrono, ranking, paywall, premium or public demo.
 

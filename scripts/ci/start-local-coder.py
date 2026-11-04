@@ -87,9 +87,9 @@ config['provider'] = {'local-coder': {
         'limit': {'context': 32768, 'output': 8192}, 'cost': {'input': 0, 'output': 0}}},
 }}
 config['agent']['model-probe'] = {
-    'mode': 'primary', 'description': 'Only prove a read-only nonce tool call',
-    'prompt': 'Only read the exact requested file and return its contents. No other work.',
-    'steps': 3, 'permission': {'edit': 'deny', 'task': 'deny', 'question': 'deny'},
+    'mode': 'primary', 'description': 'Prove a real source repair and execute its test',
+    'prompt': 'Directly read and repair the assigned scratch source file and run its test. Do not delegate or call task. Do not modify the test. No other work.',
+    'steps': 8, 'permission': {'task': 'deny', 'question': 'deny'},
 }
 with open(os.environ['GITHUB_ENV'], 'a') as output:
     output.write('AUTOPILOT_MODEL=' + model + '\n')
