@@ -272,6 +272,12 @@ service cloud.firestore {
         && request.resource.data.index is int
         && request.resource.data.index >= 0
         && string(request.resource.data.index) == index
+        && request.resource.data.index < getAfter(/databases/$(database)/documents/groups/$(groupId)/events/$(revision)).data.count
+        && (
+          request.resource.data.index == 0
+          || getAfter(/databases/$(database)/documents/groups/$(groupId)/events/$(revision)/changes/$(string(request.resource.data.index - 1))).data.index
+            == request.resource.data.index - 1
+        )
         && writableCollection(request.resource.data.collection)
         && request.resource.data.id is string
         && request.resource.data.id.matches('^[A-Za-z0-9_-]{1,128}$')
@@ -365,7 +371,11 @@ service cloud.firestore {
           && request.resource.data.createdAt is string
           && request.resource.data.count is int
           && request.resource.data.count >= 1
-          && request.resource.data.count <= 100;
+          && request.resource.data.count <= 100
+          // The last change and each predecessor must exist in this commit.
+          // This prevents empty/partial events from poisoning all later pulls.
+          && getAfter(/databases/$(database)/documents/groups/$(groupId)/events/$(revision)/changes/$(string(request.resource.data.count - 1))).data.index
+            == request.resource.data.count - 1;
         allow update, delete: if false;
 
         match /changes/{index} {

@@ -218,17 +218,19 @@ export class FirestoreRestClient implements FirestorePort {
     }
   }
 
-  async getDocument(path: string): Promise<FirestoreDocument | null> {
-    return this.readDocument(path);
+  async getDocument(path: string, fieldMask?: readonly string[]): Promise<FirestoreDocument | null> {
+    return this.readDocument(path, fieldMask);
   }
 
-  async readDocument(path: string): Promise<FirestoreDocument | null> {
+  async readDocument(path: string, fieldMask?: readonly string[]): Promise<FirestoreDocument | null> {
     try {
+      const url = new URL(this.documentUrl(path));
+      for (const field of fieldMask ?? []) url.searchParams.append('mask.fieldPaths', field);
       const document = await this.request<{
         name?: string;
         fields?: Record<string, Record<string, unknown>>;
         updateTime?: string;
-      }>(this.documentUrl(path));
+      }>(url.toString());
       return decodeDocument(document);
     } catch (error) {
       if (error instanceof FirestoreHttpError && error.status === 404) return null;

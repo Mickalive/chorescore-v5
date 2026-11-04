@@ -46,7 +46,7 @@ export interface FirestoreTransaction {
 
 export interface FirestorePort {
   available(): boolean;
-  getDocument(path: string): Promise<FirestoreDocument | null>;
+  getDocument(path: string, fieldMask?: readonly string[]): Promise<FirestoreDocument | null>;
   query(
     collectionPath: string,
     filters?: FirestoreFilter[],

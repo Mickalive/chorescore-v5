@@ -216,6 +216,10 @@ export class FirebaseMediaGateway implements MediaGateway {
     }
   }
 
+  private offline(error: unknown): boolean {
+    return error instanceof TypeError || (error instanceof FirestoreHttpError && error.status === 408);
+  }
+
   private mediaPath(householdId: string, remoteRef: string): string {
     return `groups/${householdId}/media/${remoteRef}`;
   }
@@ -294,9 +298,7 @@ export class FirebaseMediaGateway implements MediaGateway {
       this.requireSameAccount(uid);
       // A server refusal is authoritative. Only transport failure/timeouts
       // permit local-first reading of a previously downloaded photo.
-      const offline = error instanceof TypeError ||
-        (error instanceof FirestoreHttpError && error.status === 408);
-      if (!offline || !this.config.canReadCached) throw error;
+      if (!this.offline(error) || !this.config.canReadCached) throw error;
       const permitted = await this.config.canReadCached(householdId, uid);
       this.requireSameAccount(uid);
       if (!permitted) throw error;
@@ -309,7 +311,22 @@ export class FirebaseMediaGateway implements MediaGateway {
     if (!memberOf(group, uid)) throw new FirebaseMediaError(403, 'Group access denied');
     const cached = await this.readCached(householdId, remoteRef);
     this.requireSameAccount(uid);
-    if (cached) return cached;
+    if (cached) {
+      // Check existence/ACL without downloading the base64 image again.
+      // If connectivity drops after the live membership check, keep the
+      // authorized offline cache; an explicit refusal must still propagate.
+      let metadata: FirestoreDocument | null;
+      try {
+        metadata = await this.client.getDocument(this.mediaPath(householdId, remoteRef), ['sha256']);
+      } catch (error) {
+        this.requireSameAccount(uid);
+        if (this.offline(error)) return cached;
+        throw error;
+      }
+      this.requireSameAccount(uid);
+      if (!metadata) throw new FirebaseMediaError(404, 'Media not found');
+      return cached;
+    }
     const document = await this.client.getDocument(this.mediaPath(householdId, remoteRef));
     this.requireSameAccount(uid);
     if (!document) throw new FirebaseMediaError(404, 'Media not found');

@@ -561,6 +561,14 @@ def assert_absent(label,partial=False):
 def screenshot(name):
     (EVIDENCE/(name+'.png')).write_bytes(adb('exec-out','screencap','-p',binary=True))
     (EVIDENCE/(name+'.xml')).write_text(adb('shell','cat','/data/local/tmp/chorescore-window.xml'))
+    (EVIDENCE/'last-checkpoint.json').write_text(json.dumps({'capture':name,'at':time.time()},indent=2)+'\n')
+    # Ten bounded notices stay readable in the public check without access to
+    # raw logs. A captured screen is a checkpoint, never the final acceptance.
+    if name in {'groups-filled-android','category-with-ratio-android','todos-completed-android',
+                'reminder-delivered-android','balances-before-restart-android','balances-after-restart-android',
+                'photo-after-restart-android','native-share-android','notification-options-android',
+                'compensation-persisted-android'}:
+        print('::notice title=Android screenshot captured::'+name,flush=True)
 
 def dismiss_permission(root):
     packages={node.attrib.get('package','') for node in root.iter('node')}

@@ -1,6 +1,6 @@
 # Vérification de la mission V5 — en cours
 
-Aucune déclaration de produit terminé. Dernier état : **246 tests applicatifs réussis**, TypeScript, 3 tests serveur et parcours Chromium/SQLite complet réussis ; 2 scénarios officiels Firestore ignorés hors émulateur. Les captures Android de Groupes et de la catégorie correspondent au candidat `9a04a392` ; le parcours natif complet a été interrompu par l’arrêt graphique de l’émulateur. Le candidat avec aperçu photo et balances persistées compile, sans nouvelle validation native. Firebase de production et deux téléphones restent non vérifiés.
+Aucune déclaration de produit terminé. Dernier état : **252 tests applicatifs réussis**, TypeScript, 3 tests serveur et parcours Chromium/SQLite complet réussis ; 2 scénarios officiels Firestore ignorés hors émulateur. Les captures Android de Groupes et de la catégorie correspondent au candidat `9a04a392` ; le parcours natif complet a été interrompu par l’arrêt graphique de l’émulateur. Le candidat avec aperçu photo et balances persistées compile, sans nouvelle validation native. Firebase de production et deux téléphones restent non vérifiés.
 
 
 Mise à jour du 4 novembre — parcours Android automatisé : le même scénario
@@ -127,6 +127,27 @@ conservées par le worker ; auparavant son répertoire par défaut sous /tmp
 n’était pas inclus dans l’artefact. Le diagnostic recherche désormais les jobs
 échoués même quand le workflow global a ensuite été annulé par une publication,
 afin de ne pas revenir éternellement à un ancien échec sans rapport.
+
+
+Extension en attente d’émulateur : les événements vides, le nombre de changements
+mensonger et les indices non contigus sont également refusés par les règles
+proposées. Le dernier changement doit exister et chacun exige son prédécesseur.
+Les attaques officielles sont étendues pour vérifier ces cas ; le succès des
+3 scénarios sur 64bb679 ne valide pas encore cette extension.
+
+Photo supprimée : un nouveau test rouge reproduit l’ouverture du cache alors
+que le document distant a disparu. La lecture en ligne vérifie désormais
+l’existence/ACL par projection du seul champ sha256, sans retélécharger la
+photo ; la lecture hors ligne autorisée est conservée. Le test officiel garde
+maintenant le cache existant au lieu de le vider avant d’attendre le 404.
+13 tests ciblés des médias passent. La reprise après un échec Google est aussi
+vérifiée. Bilan intégré local : **252 tests passés, 3 scénarios officiels exclus
+localement**, typage réussi ; 22 tests Python Android passent.
+
+Le parcours navigateur avec sa nouvelle trace Playwright réussit en local.
+Le job Android 126681310945 sur 64bb679 a compilé, validé l’APK et activé KVM,
+puis échoué à l’étape native entre 15:57:28 et 16:08:46 UTC. La cause précise
+reste à extraire du journal ; aucune acceptation Android complète n’est annoncée.
 
 Sources lues : `AGENTS.md`, `CODEX_MISSION.md`, `PRODUCT.md`, les deux documents V3/V4 présents dans `docs/`, la [constitution V3 originale](https://github.com/Mickalive/chorescore-v3/blob/f922d347bc9989a717101bce274ca459902f6ff0/docs/V3_CONSTITUTION.md) et la [constitution V4 originale](https://github.com/Mickalive/chorescore-v3/blob/24041c9ff0adc9d88af534ef7e019699915d6ebe/docs/V4_CONSTITUTION.md). La copie V4 du dépôt est identique à cette source. Référence visuelle : composants et écran principal de `Mickalive/Chorescore`.
 

@@ -52,6 +52,22 @@ test('a cancelled Google sheet can be retried without creating a Firebase sessio
   expect(auth.getCurrentUser()).toBeNull();
 });
 
+test('a failed shared Google attempt releases the guard so the user can retry', async () => {
+  const auth = new FirebaseAuthAdapter(config, storage());
+  google.signIn.mockRejectedValueOnce(new Error('Google connection interrupted'))
+    .mockResolvedValueOnce({ type: 'success', data: {} as any });
+  const fetch = jest.spyOn(global, 'fetch').mockResolvedValue({ ok: true, json: async () => ({
+    localId: 'alice', idToken: 'firebase-token', refreshToken: 'refresh', expiresIn: '3600',
+  }) } as Response);
+  const results = await Promise.allSettled([auth.signInWithGoogle(), auth.signInWithGoogle()]);
+  expect(results.map(result => result.status)).toEqual(['rejected', 'rejected']);
+  expect(google.signIn).toHaveBeenCalledTimes(1);
+  expect(fetch).not.toHaveBeenCalled();
+  expect((await auth.signInWithGoogle())?.userId).toBe('alice');
+  expect(google.signIn).toHaveBeenCalledTimes(2);
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+
 test('signing out while the native Google sheet is open cannot restore the account later', async () => {
   const secure = storage();
   const auth = new FirebaseAuthAdapter(config, secure);

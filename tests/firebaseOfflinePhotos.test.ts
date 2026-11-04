@@ -38,3 +38,11 @@ test('switching accounts while checking offline membership cannot expose the old
   await expect(media.download('family', 'photo')).rejects.toMatchObject({ status: 401 });
   expect(readCached).not.toHaveBeenCalled();
 });
+
+test('an online member cannot reopen cached bytes after the Firebase photo was deleted', async () => {
+  const client = new InMemoryFirestore();
+  client.seed('groups/family', { access: { alice: { role: 'OWNER' } } });
+  const media = new FirebaseMediaGateway({ client, getUid: () => 'alice',
+    getAccessToken: async () => 'token', readCached: async () => 'file://private/deleted.jpg' });
+  await expect(media.download('family', 'deleted-photo')).rejects.toMatchObject({ status: 404 });
+});

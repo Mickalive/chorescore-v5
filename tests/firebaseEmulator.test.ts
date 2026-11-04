@@ -425,7 +425,7 @@ describeEmulator('real Firestore rules and collaboration journey', () => {
     await alice.sync.pushChanges(hid);
     await bob.sync.pullChanges(hid);
     await alice.media.remove(hid, remoteRef);
-    bob.cache.delete(`${hid}:${remoteRef}`);
+    expect(bob.cache.has(`${hid}:${remoteRef}`)).toBe(true);
     await expect(bob.media.download(hid, remoteRef)).rejects.toMatchObject({ status: 404 });
 
     await alice.sync.deleteGroup(hid);
@@ -485,7 +485,7 @@ describeEmulator('real Firestore rules and collaboration journey', () => {
     const path=`groups/${household.id}/records/categories:${category.id}`;
     const original=await alice.firestore.getDocument(path);
     if(!original)throw new Error('Legitimate category missing');
-    const modes=['no-event','no-change','wrong-value','wrong-index','replay'] as const;
+    const modes=['no-event','no-change','wrong-value','wrong-index','replay','event-only','wrong-count','gap'] as const;
     for(const mode of modes){
       await expect(alice.firestore.runTransaction(async transaction=>{
         const group=await transaction.get(`groups/${household.id}`);
@@ -494,11 +494,11 @@ describeEmulator('real Firestore rules and collaboration journey', () => {
         const value={...(original.fields.value as Record<string,any>),name:'Changed'};
         const version=Number(original.fields.version)+1;
         transaction.set(`groups/${household.id}`,{...group.fields,revision});
-        if(mode!=='replay')transaction.set(path,{...original.fields,revision,eventIndex:0,version,value});
+        if(mode!=='replay'&&mode!=='event-only')transaction.set(path,{...original.fields,revision,eventIndex:mode==='gap'?1:0,version,value});
         if(mode!=='no-event')transaction.set(`groups/${household.id}/events/${revision}`,{
-          revision,groupId:household.id,count:1,createdAt:new Date().toISOString()});
-        if(mode!=='no-change')transaction.set(`groups/${household.id}/events/${revision}/changes/0`,{
-          revision,index:mode==='wrong-index'?1:0,collection:'categories',id:category.id,
+          revision,groupId:household.id,count:mode==='wrong-count'||mode==='gap'?2:1,createdAt:new Date().toISOString()});
+        if(mode!=='no-change'&&mode!=='event-only')transaction.set(`groups/${household.id}/events/${revision}/changes/${mode==='gap'?1:0}`,{
+          revision,index:mode==='wrong-index'||mode==='gap'?1:0,collection:'categories',id:category.id,
           version:mode==='replay'?Number(original.fields.version):version,
           value:mode==='replay'||mode==='wrong-value'?original.fields.value:value});
       })).rejects.toMatchObject({status:403});
