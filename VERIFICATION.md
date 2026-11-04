@@ -1,6 +1,6 @@
 # Vérification de la mission V5 — en cours
 
-Aucune déclaration de produit terminé. Dernier état : **240 tests applicatifs réussis**, TypeScript, 3 tests serveur et parcours Chromium/SQLite complet réussis ; 2 scénarios officiels Firestore ignorés hors émulateur. Les captures Android de Groupes et de la catégorie correspondent au candidat `9a04a392` ; le parcours natif complet a été interrompu par l’arrêt graphique de l’émulateur. Le candidat avec aperçu photo et balances persistées compile, sans nouvelle validation native. Firebase de production et deux téléphones restent non vérifiés.
+Aucune déclaration de produit terminé. Dernier état : **246 tests applicatifs réussis**, TypeScript, 3 tests serveur et parcours Chromium/SQLite complet réussis ; 2 scénarios officiels Firestore ignorés hors émulateur. Les captures Android de Groupes et de la catégorie correspondent au candidat `9a04a392` ; le parcours natif complet a été interrompu par l’arrêt graphique de l’émulateur. Le candidat avec aperçu photo et balances persistées compile, sans nouvelle validation native. Firebase de production et deux téléphones restent non vérifiés.
 
 
 Mise à jour du 4 novembre — parcours Android automatisé : le même scénario
@@ -50,6 +50,25 @@ contrôle de l’APK expose désormais sa ligne d’échec ; l’épreuve OpenCo
 le contrôleur de processus déjà testé et expose son transcript borné en cas
 d’échec, plutôt qu’un simple code 1. Aucun de ces échecs n’est déclaré résolu
 sans le résultat précis de la nouvelle exécution.
+
+
+Candidat Firebase réellement compilé depuis 9f85583 : Gradle réussi en 54 s,
+ARM64 et x86_64, signature SHA-1 identique à celle enregistrée par le propriétaire.
+Les trois paramètres publics sont présents dans le bundle APK ; leur valeur
+n’est pas committée. SHA-256 APK :
+`bfc3284c535435f9beac430a87c6c295d17866a7173543cbaa2533511d603124`.
+Métadonnées dans `docs/evidence/android-firebase-configured-candidate.json`.
+**Installation, connexion Google, déploiement des règles et deux téléphones
+non vérifiés.** La suite complète passe : 246 tests, 38 suites ; 2 tests des
+règles restent exclus localement hors émulateur.
+
+Le contrôle d’identité APK comptait seulement le signataire numéro 1 et pouvait
+laisser passer plusieurs signataires. Il compte désormais tous les signataires.
+La détection d’un APK debuggable lit aussi la sortie complète, sans faux négatif
+lié au SIGPIPE sous pipefail. 21 tests Python du pilote Android réussissent,
+dont ces deux régressions. Les journaux d’identité retiennent maintenant stderr.
+Le diagnostic récupère également l’artefact propre de l’épreuve du modèle,
+car un échec avant reconstruction ne produit aucun artefact de reconstruction.
 
 Sources lues : `AGENTS.md`, `CODEX_MISSION.md`, `PRODUCT.md`, les deux documents V3/V4 présents dans `docs/`, la [constitution V3 originale](https://github.com/Mickalive/chorescore-v3/blob/f922d347bc9989a717101bce274ca459902f6ff0/docs/V3_CONSTITUTION.md) et la [constitution V4 originale](https://github.com/Mickalive/chorescore-v3/blob/24041c9ff0adc9d88af534ef7e019699915d6ebe/docs/V4_CONSTITUTION.md). La copie V4 du dépôt est identique à cette source. Référence visuelle : composants et écran principal de `Mickalive/Chorescore`.
 

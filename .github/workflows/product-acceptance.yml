@@ -153,7 +153,7 @@ jobs:
       - name: Verify APK identity and digest
         run: |
           mkdir -p verification-evidence/android
-          bash scripts/android/verify-apk-identity.sh android/app/build/outputs/apk/release/app-release.apk | tee verification-evidence/android/identity.txt
+          bash scripts/android/verify-apk-identity.sh android/app/build/outputs/apk/release/app-release.apk 2>&1 | tee verification-evidence/android/identity.txt
           sha256sum android/app/build/outputs/apk/release/app-release.apk > verification-evidence/android/apk.sha256
       - name: Enable hardware virtualization
         run: |

@@ -1,0 +1,14 @@
+{
+  "sourceCommit": "9f85583ba3d03bb095ed06dc214d76b3bd38ed20",
+  "apkSha256": "bfc3284c535435f9beac430a87c6c295d17866a7173543cbaa2533511d603124",
+  "firebaseProject": "chorescore-a75b1",
+  "firebaseConfigurationEmbedded": true,
+  "signatureSha1": "5e8f16062ea3cd2c4a0d547876baa6f38cabf625",
+  "applicationTestsPassed": 246,
+  "localOfficialFirestoreTestsSkipped": 2,
+  "installed": false,
+  "realGoogleSignInVerified": false,
+  "productionFirestoreRulesDeployed": false,
+  "twoPhoneCollaborationVerified": false,
+  "apkLocalPath": "/workspace/chorescore-evidence/firebase-bfc3284c/ChoreScore-Firebase.apk"
+}

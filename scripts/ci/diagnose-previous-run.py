@@ -18,7 +18,7 @@ api = 'https://api.github.com/repos/' + repository
 def request(url):
     # gh handles GitHub's signed log-download redirects without forwarding
     # Authorization to the blob-storage hostname.
-    return subprocess.check_output(['gh', 'api', url], timeout=60)
+    return subprocess.check_output(['gh', 'api', url], timeout=60, stderr=subprocess.PIPE)
 
 
 def annotation(message):
@@ -52,11 +52,22 @@ else:
             annotation(log[-7000:])
         except Exception as error:
             annotation('Log unavailable: ' + type(error).__name__)
+            if isinstance(error, subprocess.CalledProcessError) and error.stderr:
+                annotation(str(error.stderr)[-1500:])
 (context / 'previous-failures.md').write_text('\n\n'.join(summaries))
 
 worker_runs = json.loads(request(api + '/actions/workflows/product-autopilot.yml/runs?per_page=10'))['workflow_runs']
 worker = next((run for run in worker_runs if run['id'] != current and run['conclusion'] == 'failure'), None)
 if worker:
+    # A failed capability probe never creates product-reconstruction evidence.
+    # Retrieve its own artifact instead of silently losing the actual failure.
+    probe_destination = context / 'previous-probe'
+    probe = subprocess.run(['gh', 'run', 'download', str(worker['id']), '--repo', repository,
+        '--name', 'free-model-proof-' + str(worker['id']), '--dir', str(probe_destination)],
+        capture_output=True, timeout=60)
+    if probe.returncode == 0:
+        for file in probe_destination.rglob('*probe.jsonl'):
+            annotation('Previous capability probe: ' + file.read_text(errors='replace')[-5500:])
     destination = context / 'previous-worker'
     result = subprocess.run(['gh', 'run', 'download', str(worker['id']), '--repo', repository,
         '--name', 'product-reconstruction-' + str(worker['id']), '--dir', str(destination)],

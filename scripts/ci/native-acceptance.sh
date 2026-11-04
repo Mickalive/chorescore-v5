@@ -20,7 +20,7 @@ pushd android
 ./gradlew :app:assembleRelease -PreactNativeArchitectures=arm64-v8a,x86_64 --max-workers=2 --no-daemon --build-cache
 popd
 apk=android/app/build/outputs/apk/release/app-release.apk
-bash scripts/android/verify-apk-identity.sh "$apk" > verification-evidence/android/identity.txt
+bash scripts/android/verify-apk-identity.sh "$apk" > verification-evidence/android/identity.txt 2>&1
 emulator -avd chorescore-ci -no-window -no-audio -no-boot-anim -gpu swiftshader \
   -accel on -no-snapshot -camera-back none -camera-front none \
   > verification-evidence/android/emulator.log 2>&1 &

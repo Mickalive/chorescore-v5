@@ -32,13 +32,13 @@ if [ "$ACTUAL" != "$PACKAGE" ]; then
   echo "APK package mismatch: expected $PACKAGE, got ${ACTUAL:-unknown}" >&2
   exit 1
 fi
-if printf '%s\n' "$BADGING" | grep -q '^application-debuggable'; then
+if printf '%s\n' "$BADGING" | grep '^application-debuggable' >/dev/null; then
   echo "Release artifact is debuggable; refusing to treat it as a release candidate" >&2
   exit 1
 fi
 
 CERTS=$("$APKSIGNER" verify --verbose --print-certs "$APK")
-SIGNERS=$(printf '%s\n' "$CERTS" | grep -c '^Signer #1 certificate SHA-1 digest:' || true)
+SIGNERS=$(printf '%s\n' "$CERTS" | grep -c '^Signer #[0-9][0-9]* certificate SHA-1 digest:' || true)
 if [ "$SIGNERS" -ne 1 ]; then
   echo "Expected exactly one APK signer, found $SIGNERS" >&2
   exit 1
