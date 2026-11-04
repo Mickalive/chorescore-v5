@@ -5,6 +5,38 @@ import TodosScreen from '../app/(tabs)/todos';
 import { Button } from '../src/ui/components/Button';
 import { createInMemoryRepositories } from '../src/infrastructure/repositories/RepositoryFactory';
 import { createGroupWithMembers } from '../src/application/use-cases/groupMembers';
+import { DateTimeField } from '../src/ui/components/DateTimeField';
+
+test('a reminder that expired while editing explains the error without creating or scheduling a todo', async () => {
+  const repos = createInMemoryRepositories();
+  const { household } = await createGroupWithMembers(repos, {
+    name: 'Maison', owner: { userId: 'a', displayName: 'Alice' },
+    memberNames: [], contributionUnit: 'points',
+  });
+  const create = jest.spyOn(repos.todos, 'create');
+  const scheduleNotification = jest.fn();
+  const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined);
+  mockApp.mockReturnValue({currentHouseholdId: household.id, currentUser: {userId: 'a'}, repos,
+    emitDataChange: jest.fn(), subscribeToDataChanges: () => () => undefined,
+    services: {attachments: {isAvailable: () => false}, media: {isAvailable: () => false},
+      calendar: {isAvailable: () => false}, notifications: {scheduleNotification}}});
+  let tree!: renderer.ReactTestRenderer;
+  try {
+    await act(async () => { tree = renderer.create(<TodosScreen />); });
+    const button = (id: string) => tree.root.findAllByType(Button).find(node => node.props.testID === id)!;
+    await act(async () => { button('todos.newItem').props.onPress(); });
+    act(() => { tree.root.findAllByType(TextInput).find(node => node.props.testID === 'todos.createTitle')!
+      .props.onChangeText('Courses à conserver'); });
+    act(() => { tree.root.findAllByType(DateTimeField).find(node => node.props.testID === 'todos.reminderDateTime')!
+      .props.onChange(new Date(Date.now() - 1000)); });
+    await act(async () => { await button('todos.createSubmit').props.onPress(); });
+    expect(alert).toHaveBeenCalledWith('state.error', 'todos.reminderMustBeFuture');
+    expect(create).not.toHaveBeenCalled();
+    expect(scheduleNotification).not.toHaveBeenCalled();
+    expect(tree.root.findAllByType(TextInput).find(node => node.props.testID === 'todos.createTitle')!
+      .props.value).toBe('Courses à conserver');
+  } finally { act(() => tree?.unmount()); alert.mockRestore(); create.mockRestore(); }
+});
 
 const mockApp = jest.fn();
 jest.mock('@react-native-async-storage/async-storage', () =>

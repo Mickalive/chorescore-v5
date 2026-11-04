@@ -207,6 +207,13 @@ export default function TodosScreen() {
   const handleCreate = async () => {
     if (submittingRef.current) return;
     if (!currentHouseholdId || !createForm.title.trim()) return;
+    // The date may have passed while the user edited the rest of the form.
+    // Reject before writing an outbox entry or requesting native permission.
+    if (createForm.reminderAt && (!Number.isFinite(createForm.reminderAt.getTime()) ||
+        createForm.reminderAt.getTime() <= Date.now())) {
+      Alert.alert(t('state.error'), t('todos.reminderMustBeFuture'));
+      return;
+    }
 
     const kind = createForm.kind;
     let expenseAmountMinor: number | undefined;

@@ -5,7 +5,7 @@
   "project": "demo-chorescore-audit",
   "rulesSha256": "af821f0187291e5f67b91f95475ea27e21693e3e3b7034155178850e33462995",
   "scenarioSha256": "66972daa993abb2a325437a7ff69e59864910725c8fbdb923cc30f3e484f9d5d",
-  "allApplicationTestsPassed": 258,
+  "allApplicationTestsPassed": 259,
   "skippedTests": 0,
   "officialScenariosPassed": 3,
   "productionAccessed": false,

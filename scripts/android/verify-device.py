@@ -880,14 +880,16 @@ try:
     fill('todos.createTitle','Rappel natif CI')
     fill('todos.createNotes','Notification CI')
     open_datetime('todos.reminderDateTime')
-    reminder_date,reminder_time=device_time_plus(2)
+    # Minute-only inputs truncate seconds; leave time for real native typing,
+    # keyboard dismissal and scrolling on the hosted emulator.
+    reminder_date,reminder_time=device_time_plus(4)
     fill('todos.reminderDateTime.date',reminder_date)
     fill('todos.reminderDateTime.time',reminder_time)
     tap(resource='todos.reminderDateTime.confirm')
     scroll_to(resource='todos.createSubmit')
     scroll_top()
     locate(resource='todos.newItem')
-    wait_for_reminder('Rappel natif CI')
+    wait_for_reminder('Rappel natif CI',timeout=360)
 
     tap('Balances')
     scroll_find('Courses CI',partial=True)

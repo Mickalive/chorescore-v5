@@ -16,11 +16,17 @@ The trusted controller executes that test after a completed edit and stops
 the capability probe on verified success; it does not wait for a stalled
 model to announce completion. This shortcut applies only to the tiny probe.
 Actual product patches still require every independent acceptance gate.
-Run 41928160922 passed the notification consent stage but then the trusted
-driver failed reading device time: adb shell split the space in the date format.
-The format now uses an ISO T separator, with a regression test across midnight.
-Rerun the installed journey and repair its next actual failure. Do not change
-todo persistence or bypass real notification delivery to satisfy the driver.
+Run 41932568410 completed both todo kinds, then the real app showed
+"Impossible de créer la tâche" while saving the short-delay reminder. A past
+reminder now fails before repository/native side effects with a precise FR/EN
+message and preserves the draft; its regression test was red before the fix.
+The native driver leaves four minutes for real typing instead of two (seconds
+are truncated by the minute input) and still requires actual notification
+receipt. This installed scenario is not yet proven green. Use the new baseline
+to distinguish an expired timestamp from another native scheduler error; do not
+bypass permissions, scheduling, delivery or the existing acceptance assertions.
+The owner reports production Firestore rules published; no administrator
+session or real Google/two-phone acceptance is available in this environment.
 The latest three official Firestore scenarios pass, including cached photo
 deletion and incomplete/replayed deltas. Do not spend a pass fixing an older
 green transport check. Passing checks are summarized; focus on the current FAIL.

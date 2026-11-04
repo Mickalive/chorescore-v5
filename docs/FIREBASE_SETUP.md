@@ -17,8 +17,8 @@ Le parcours actuel est décrit dans [FIREBASE_CONNECT.md](FIREBASE_CONNECT.md) :
 | Niveau | État réel |
 | --- | --- |
 | Code du dépôt | `FirebaseAuthAdapter` (SDK natif Google + Firebase REST, SecureStore, rafraîchissement), `RemoteSyncAdapter` (jeton réel, outbox durable, push/pull paginé, conflits, tombstones), `FirebaseSyncTransport` (autorité Firestore Spark sans serveur) et `FirebaseMediaGateway` (photos privées Firestore, ≤ 700 Kio), plus `HttpMediaGateway` et le serveur SQLite autoritaire. |
-| Configuration | Projet Firebase créé. Fournisseur Google, client OAuth Web/Android, empreinte SHA-1 et clé API publique **non fournis/non validés** dans cet environnement. |
-| Preuve réelle | Aucune connexion Google réelle, aucune règle Firestore déployée, aucun déploiement HTTPS, aucun essai sur deux téléphones n'a été exécuté ici. Les tests avec un Firestore en mémoire ne remplacent pas ces preuves. |
+| Configuration | Projet, fournisseur Google, application Android et SHA-1 configurés par le propriétaire. Fichier Android reçu et validé, paramètres importés dans `.env.local` ignoré. Base Firestore et publication des règles confirmées par le propriétaire le 5 novembre ; publication non inspectée avec une session administrateur ici. |
+| Preuve réelle | Aucune connexion Google réelle ni essai sur deux téléphones exécuté ici. Les règles sont testées sur l’émulateur officiel Google ; la publication de production est rapportée par le propriétaire, sans contrôle administrateur indépendant. |
 
 ## Paramètres publics transmis au build
 
@@ -36,7 +36,7 @@ Le défaut public `chorescore-a75b1` est aussi présent dans
 `firebaseAuthConfig()` renvoie `null` et l'application reste locale : elle
 n'invente ni identifiant ni session.
 
-Sans les deux valeurs OAuth manquantes, l'application reste en mode local
+Ces valeurs sont désormais présentes dans le candidat Firebase local. Un build qui ne les reçoit pas reste en mode local
 honnête : elle ne fabrique ni compte Google ni session de collaboration. La clé
 API Firebase et le client Web sont publics mais ne sont pas des autorisations
 d'accès aux données.
@@ -126,8 +126,9 @@ téléverse et relit les photos sous ACL de groupe, sans Cloud Storage.
 compensations à taux snapshoté et fournit sauvegarde/restauration.
 
 Apple et Facebook ne sont pas activés : leurs adapters renvoient explicitement
-`null`, sans faux compte social. Aucune donnée d'une identité locale n'est
-réattribuée automatiquement à un compte Google.
+`null`, sans faux compte social. Lors de la première connexion Google, seuls les groupes locaux non publiés dont
+la propriété est prouvée par le stockage sécurisé sont repris, en conservant
+les identifiants des membres et les écritures historiques.
 
 ## Acceptation encore nécessaire (preuves, pas code)
 
@@ -141,7 +142,8 @@ réattribuée automatiquement à un compte Google.
 - Apple/Facebook si ces fournisseurs doivent être livrés.
 
 Les tests unitaires simulent les réponses réseau : ils vérifient le cycle de
-session, pas le fournisseur. Les tests Firestore utilisent un port en mémoire,
-pas les règles réelles ni le réseau Google. Les tests HTTP vérifient isolation,
+session, pas le fournisseur. Les tests unitaires Firestore utilisent un port en mémoire ; les scénarios
+d’intégration exécutent aussi les règles réelles sur l’émulateur officiel Google
+(`scripts/firebase/run-local-rules.sh`), sans accéder à la production. Les tests HTTP vérifient isolation,
 invitations, deltas, conflits, complétion atomique et collecte des médias sur un
 serveur local ; ils ne prouvent ni un déploiement ni deux téléphones.
