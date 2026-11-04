@@ -38,6 +38,16 @@ def driver():
 
 
 class SelectorBehavior(unittest.TestCase):
+    def test_device_reminder_time_uses_one_remote_shell_argument_and_crosses_midnight(self):
+        env=driver()
+        def remote_date(*args):
+            # adb shell joins arguments before the Android shell parses them.
+            import shlex
+            self.assertEqual(shlex.split(' '.join(args[1:])),list(args[1:]))
+            return '2026-11-04T23:59:30\n'
+        env['adb']=Mock(side_effect=remote_date)
+        self.assertEqual(env['device_time_plus'](2),('2026-11-05','00:01'))
+
     def test_uppercase_android_notification_permission_uses_the_system_resource_id(self):
         env=driver()
         env['time']=SimpleNamespace(sleep=lambda _:None)

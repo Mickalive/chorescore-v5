@@ -20,7 +20,11 @@ Repository: `Mickalive/chorescore-v5` (main has reusable V4 domain/accounting co
 
 **Options and quality**: group options members/invites/unit/currencies/categories/compensation/delete, general options language FR/EN/profile/privacy/notifications/legal/signout. Complete accurate French typography and translations. Android/iOS safe areas, touch targets, loading/empty/offline/error states, accessibility, keyboard handling, huge history, long names/text. Free forever, no premium/demo/paywall.
 
-## Known false-completion traps to fix first
+## Historical starting defects — recheck against current source
+The following list records the state at the start of reconstruction, not the
+current state. The implementation has since changed. Never undo a working fix,
+replace persisted identities or restart an implemented feature based only on
+this historical list. Use the current baseline and source to choose a repair.
 1. V4/V5 `LocalSyncAdapter` is a NO-OP; `LocalAuthAdapter` Google/Apple/Facebook return null. A local-only owner has the SAME fixed ID on every phone — unsafe to treat as multiuser. Implement real identities and syncing before enabling cross-device invite.
 2. `LocalNotificationAdapter` and `LocalCalendarAdapter` are NO-OP. Do not call them working.
 3. V5 `LocalAttachmentAdapter` and `LocalSystemShareAdapter` were added, but functionality has never been proven on Android. Verify Expo 57 APIs at runtime, fix pick result/content:// copies, photo edit/remove and image rendering. Do NOT confuse generated APK with photo feature verification.
@@ -30,11 +34,11 @@ Repository: `Mickalive/chorescore-v5` (main has reusable V4 domain/accounting co
 7. Previously reported 'complete' checks were not proof. Avoid assumptions, test the actual flows.
 
 ## Work order — ONE continuous coding task, small verified slices
-A. Read V3/V4 original requirements, inspect current code; compile a succinct requirements-to-implementation matrix **with explicit missing behavior** (keep in `VERIFICATION.md`). No lengthy reports.
+A. Use the existing cross-repository requirements matrix and the current verification summary. Consult the relevant original V3/V4 section, inspect source, and implement the next concrete missing behavior; do not produce another matrix-only audit or reload the entire verification chronicle.
 B. Redesign navigation and all main screens as coherent V1-inspired polished UI; create and inspect screenshots where tooling permits. Keep new design tokens and components modest/simple.
 C. Make every single-device core feature complete and reliable. Focus on actual SQLite transactions, splits, category defaults, editing balances, todo completion, FR/EN, proper native photos/sharing/reminders. Run runtime/manual or emulator tests. Do not advance a broken critical journey.
 D. Implement real authenticated multi-device collaboration behind properly configured cloud backend: cloud data model, security rules, robust invitation token/identity linking, sync revisions/conflict policies, private media storage. Use emulator and separate user tests; where account credentials are unavailable, complete independently implementable code, tests/rules and document *precisely* the external step needed to activate it.
-E. Test integrated Android app (and iOS if available), fix UX and regressions, build the release candidate APK directly without GitHub workflows, and provide reproducible evidence by flow. Stop adding features only after all required flows meet acceptance.
+E. Test integrated Android app (and iOS if available), fix UX and regressions, build the release candidate locally or through the owner's authorized free public GitHub workflows, and provide reproducible evidence by flow. No paid inference, private-runner billing, automatic merge or production deployment. Stop adding features only after all required flows meet acceptance.
 
 ## Acceptance / proof
 - Build passes `npm ci`, `npm run typecheck`, Android Gradle APK, and relevant domain + integration tests.

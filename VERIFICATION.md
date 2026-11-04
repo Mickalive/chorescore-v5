@@ -1,6 +1,6 @@
 # Vérification de la mission V5 — en cours
 
-Aucune déclaration de produit terminé. Dernier état : **252 tests applicatifs réussis**, TypeScript, 3 tests serveur et parcours Chromium/SQLite complet réussis ; 2 scénarios officiels Firestore ignorés hors émulateur. Les captures Android de Groupes et de la catégorie correspondent au candidat `9a04a392` ; le parcours natif complet a été interrompu par l’arrêt graphique de l’émulateur. Le candidat avec aperçu photo et balances persistées compile, sans nouvelle validation native. Firebase de production et deux téléphones restent non vérifiés.
+Aucune déclaration de produit terminé. Dernière vérification locale : **258 tests réussis avec l’émulateur Firestore officiel, 41 suites, aucun skip** ; typage réussi, 25 tests du pilote Android et 8 du contrôleur réussis. Reprise des groupes de l’ancien APK vers Google et renommage d’un membre lié corrigés ; les tests refusent le détournement de compte et de date d’adhésion. Le parcours natif 41928160922 a franchi le consentement et les deux complétions, puis échoué sur le format de date du pilote : correction testée, parcours complet à relancer. Connexion Google réelle, règles de production et deux téléphones restent non vérifiés. Lire la baseline actuelle avant les anciennes notes ci-dessous.
 
 
 Mise à jour du 4 novembre — parcours Android automatisé : le même scénario

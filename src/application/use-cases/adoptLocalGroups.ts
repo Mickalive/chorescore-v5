@@ -12,8 +12,19 @@ export async function adoptLocalGroups(
   getCurrentUserId: () => string | null,
 ): Promise<void> {
   if (!authenticatedUserId || authenticatedUserId.startsWith('local-')) return;
-  const localId = await storage.getItem('chorescore.auth.local-identity');
-  if (!localId?.startsWith('local-')) return;
+  let localId = await storage.getItem('chorescore.auth.local-identity');
+  if (!localId) {
+    // The first Google-configured upgrade may never instantiate LocalAuthAdapter,
+    // so recover the old device-local identity from its original secure session.
+    const raw = await storage.getItem('chorescore.auth.session');
+    if (raw) {
+      try {
+        const session = JSON.parse(raw) as { provider?: unknown; userId?: unknown };
+        if (session?.provider === 'local' && typeof session.userId === 'string') localId = session.userId;
+      } catch { /* A corrupt old session cannot authorize adoption. */ }
+    }
+  }
+  if (!localId || (!localId.startsWith('local-') && localId !== 'chorescore-local-owner')) return;
   await repos.withTransaction(async () => {
     const assertCurrentAccount = () => {
       if (getCurrentUserId() !== authenticatedUserId) throw new Error('Account changed during local group migration');

@@ -237,6 +237,10 @@ service cloud.firestore {
           && (
             request.resource.data.value.userId == null
             || (
+              exists(recordPath(groupId, recordId))
+              && resource.data.value.userId == request.resource.data.value.userId
+            )
+            || (
               request.resource.data.value.userId == request.auth.uid
               && 'members:' + getAfter(groupPath(groupId)).data.access[request.auth.uid].memberId == recordId
             )
@@ -249,6 +253,10 @@ service cloud.firestore {
               && request.resource.data.value.userId == request.auth.uid
               && 'members:' + getAfter(groupPath(groupId)).data.access[request.auth.uid].memberId == recordId
             )
+          )
+          && (
+            !exists(recordPath(groupId, recordId))
+            || resource.data.value.get('joinedAt', null) == request.resource.data.value.get('joinedAt', null)
           )
         );
     }

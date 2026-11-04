@@ -607,8 +607,9 @@ def wait_for_permission(timeout=20):
 def device_time_plus(minutes=2):
     """Future local date/time on the emulator, not on the CI host."""
     import datetime
-    raw=adb('shell','date','+%Y-%m-%d %H:%M:%S').strip()
-    future=datetime.datetime.strptime(raw,'%Y-%m-%d %H:%M:%S')+datetime.timedelta(minutes=minutes)
+    # adb joins shell arguments: an unquoted space splits the date format.
+    raw=adb('shell','date','+%Y-%m-%dT%H:%M:%S').strip()
+    future=datetime.datetime.strptime(raw,'%Y-%m-%dT%H:%M:%S')+datetime.timedelta(minutes=minutes)
     return future.strftime('%Y-%m-%d'), future.strftime('%H:%M')
 
 def verify_installed_candidate():

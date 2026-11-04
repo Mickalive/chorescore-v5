@@ -258,6 +258,32 @@ describeEmulator('real Firestore rules and collaboration journey', () => {
       [bob.uid]: { memberId: bobMember.id, role: 'MEMBER' },
     });
 
+    // Display names remain editable after the invitation links a real account.
+    // Renaming must never replace that member's identity or join date.
+    await alice.sync.pullChanges(hid);
+    const linkedBob=await alice.repos.members.getById(bobMember.id);
+    await alice.repos.members.update(bobMember.id,{name:'Robert'});
+    await expect(alice.sync.pushChanges(hid)).resolves.toBeUndefined();
+    await bob.sync.pullChanges(hid);
+    expect(await bob.repos.members.getById(bobMember.id)).toMatchObject({
+      id:bobMember.id,userId:bob.uid,name:'Robert',joinedAt:linkedBob!.joinedAt});
+
+    for(const forgedIdentity of [{userId:null},{userId:bob.uid},{joinedAt:'2000-01-01T00:00:00.000Z'}]){
+      await expect(bob.firestore.runTransaction(async transaction=>{
+        const group=await transaction.get(`groups/${hid}`);
+        const record=await transaction.get(`groups/${hid}/records/members:${ownerMember.id}`);
+        if(!group||!record)throw new Error('Missing linked owner');
+        const revision=Number(group.fields.revision)+1;
+        const version=Number(record.fields.version)+1;
+        const value={...(record.fields.value as Record<string,any>),...forgedIdentity};
+        transaction.set(`groups/${hid}`,{...group.fields,revision});
+        transaction.set(record.path,{...record.fields,revision,eventIndex:0,version,value});
+        transaction.set(`groups/${hid}/events/${revision}`,{revision,groupId:hid,count:1,createdAt:new Date().toISOString()});
+        transaction.set(`groups/${hid}/events/${revision}/changes/0`,{
+          revision,index:0,collection:'members',id:ownerMember.id,version,value});
+      })).rejects.toMatchObject({status:403});
+    }
+
     await expect(mallory.sync.pullChanges(hid)).rejects.toMatchObject({ status: 403 });
     expect(await mallory.repos.households.getById(hid)).toBeNull();
 

@@ -14,6 +14,11 @@ on:
       - 'package.json'
       - 'package-lock.json'
       - '.github/PRODUCT_AUTOPILOT.md'
+      - 'AGENTS.md'
+      - 'CODEX_MISSION.md'
+      - 'PRODUCT.md'
+      - 'opencode.json'
+      - 'docs/CROSS_REPOSITORY_REQUIREMENTS.md'
   workflow_dispatch:
 
 permissions:
@@ -167,4 +172,7 @@ jobs:
           # Use the registered numeric id so no default-branch name lookup is
           # needed; preserve the existing branch and integrated PR.
           workflow_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .workflow_id)
+          acceptance_id=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows" --jq '.workflows[] | select(.path == ".github/workflows/product-acceptance.yml") | .id')
+          test -n "$acceptance_id"
+          gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/$acceptance_id/dispatches" -f ref=feat/product-reconstruction
           gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow_id/dispatches" -f ref=feat/product-reconstruction

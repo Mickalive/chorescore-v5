@@ -376,6 +376,44 @@ test('local groups survive first Google sign-in without replaying history or ado
   await expect(adoptLocalGroups(repos, storage, 'signed-out', () => null)).rejects.toThrow('Account changed');
 });
 
+test.each(['identity', 'legacy-session'])('old APK groups remain accessible after Google sign-in from secure %s', async source => {
+  const repos=(await createSqliteRepositories())!;
+  const legacy='chorescore-local-owner';
+  const cloud='google-legacy-'+source;
+  const {household,ownerMember,namedMembers}=await createGroupWithMembers(repos,{
+    name:'Ancien APK '+source,owner:{userId:legacy,displayName:'Moi'},memberNames:['Camille'],contributionUnit:'points'});
+  await repos.expenses.create({householdId:household.id,title:'Historique',amountMinor:101,currency:'CHF',
+    paidByMemberId:ownerMember.id,participantMemberIds:[ownerMember.id,namedMembers[0].id],splitMode:'equal',
+    occurredAt:'2026-10-01T12:00:00.000Z',createdBy:legacy});
+  const history=await repos.expenses.getByHousehold(household.id);
+  const membership=await repos.memberships.getByUserAndHousehold(legacy,household.id);
+  const storage={getItem:async(key:string)=>source==='identity'&&key==='chorescore.auth.local-identity'?legacy:
+    source==='legacy-session'&&key==='chorescore.auth.session'?JSON.stringify({provider:'local',userId:legacy}):null,
+    setItem:async()=>{},deleteItem:async()=>{},clear:async()=>{}};
+  await adoptLocalGroups(repos,storage,cloud,()=>cloud);
+  expect((await repos.households.getById(household.id))?.ownerId).toBe(cloud);
+  expect((await repos.members.getById(ownerMember.id))?.userId).toBe(cloud);
+  expect(await repos.memberships.getByUserAndHousehold(cloud,household.id)).toEqual({...membership,userId:cloud});
+  expect(await repos.expenses.getByHousehold(household.id)).toEqual(history);
+  expect((await repos.members.getByHousehold(household.id)).map(member=>member.id).sort())
+    .toEqual([ownerMember.id,namedMembers[0].id].sort());
+  await adoptLocalGroups(repos,storage,'another-google',()=> 'another-google');
+  expect((await repos.households.getById(household.id))?.ownerId).toBe(cloud);
+});
+
+test('legacy database ownership alone or a social session never authorizes local group adoption', async () => {
+  const repos=(await createSqliteRepositories())!;
+  const legacy='chorescore-local-owner';
+  const {household}=await createGroupWithMembers(repos,{
+    name:'Ne pas reprendre',owner:{userId:legacy,displayName:'Moi'},memberNames:[],contributionUnit:'points'});
+  for(const session of [null,JSON.stringify({provider:'google',userId:legacy}),'invalid-json']){
+    const storage={getItem:async(key:string)=>key==='chorescore.auth.session'?session:null,
+      setItem:async()=>{},deleteItem:async()=>{},clear:async()=>{}};
+    await adoptLocalGroups(repos,storage,'different-google',()=> 'different-google');
+    expect((await repos.households.getById(household.id))?.ownerId).toBe(legacy);
+  }
+});
+
 test('stored balance projections match history across edits, remote replacements, deletions and rollback', async () => {
   const repos=(await createSqliteRepositories())!;
   const { household, ownerMember, namedMembers }=await createGroupWithMembers(repos, {
