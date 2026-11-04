@@ -12,6 +12,10 @@ standard public GitHub runner CPU through localhost llama.cpp. No inference
 API key, provider account, GPU or billing service is involved. Model and runtime
 revisions/checksums are recorded. The capability probe must edit a broken
 source fixture and pass the unchanged test; inference alone is insufficient.
+The trusted controller executes that test after a completed edit and stops
+the capability probe on verified success; it does not wait for a stalled
+model to announce completion. This shortcut applies only to the tiny probe.
+Actual product patches still require every independent acceptance gate.
 
 Read AGENTS.md, CODEX_MISSION.md, PRODUCT.md and the cumulative requirements
 matrix in docs/CROSS_REPOSITORY_REQUIREMENTS.md. The originals are pinned by

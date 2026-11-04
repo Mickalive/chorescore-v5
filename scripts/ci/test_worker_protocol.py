@@ -12,6 +12,23 @@ def event(tool, status='error'):
 
 
 class ProgressTests(unittest.TestCase):
+    def test_verified_files_stop_a_stalled_probe_without_trusting_its_claim(self):
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder)/'candidate.txt'
+            command = ('from pathlib import Path; import time; '
+                'p=Path('+repr(str(target))+'); p.write_text("correct"); '
+                'print('+repr(json.dumps(event('edit', 'completed')))+',flush=True); time.sleep(30)')
+            start = time.monotonic()
+            self.assertTrue(run_worker([sys.executable, '-c', command], Path(folder)/'worker.log', 10,
+                verified_when=lambda e: target.read_text() == 'correct'))
+            self.assertLess(time.monotonic()-start, 5)
+
+    def test_false_claim_cannot_override_the_acceptance_callback(self):
+        with tempfile.TemporaryDirectory() as folder:
+            command = 'import time; print('+repr(json.dumps(event('edit', 'completed')))+',flush=True); time.sleep(30)'
+            self.assertFalse(run_worker([sys.executable, '-c', command], Path(folder)/'worker.log', .2,
+                verified_when=lambda e: False))
+
     def test_normal_successful_process_is_not_killed(self):
         with tempfile.TemporaryDirectory() as folder:
             self.assertTrue(run_worker([sys.executable,'-c','print("done")'],Path(folder)/'worker.log',5))

@@ -7,11 +7,12 @@ import subprocess
 import time
 
 
-def run_worker(args, log, timeout):
+def run_worker(args, log, timeout, verified_when=None):
     progress = WorkerProgress()
     process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
     deadline = time.monotonic() + timeout
     failure = None
+    verified = False
     pending = b''
     selector = selectors.DefaultSelector()
     selector.register(process.stdout, selectors.EVENT_READ)
@@ -32,18 +33,23 @@ def run_worker(args, log, timeout):
                 while b'\n' in pending:
                     line, pending = pending.split(b'\n', 1)
                     try:
-                        failure = progress.accept(json.loads(line))
+                        event = json.loads(line)
+                        failure = progress.accept(event)
+                        if failure is None and verified_when is not None:
+                            verified = verified_when(event)
                     except (ValueError, UnicodeError):
                         continue
-                    if failure:
+                    if failure or verified:
                         break
-                if failure:
+                if failure or verified:
                     break
             if failure:
                 output.write(('\nSTOPPED: ' + failure + '\n').encode())
+            elif verified:
+                output.write(b'\nVERIFIED: trusted acceptance callback passed; stop the probe process.\n')
     finally:
         selector.close()
-        if process.poll() is None and failure is None:
+        if process.poll() is None and failure is None and not verified:
             try:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired:
@@ -56,7 +62,7 @@ def run_worker(args, log, timeout):
                 os.killpg(process.pid, signal.SIGKILL)
                 process.wait()
         process.stdout.close()
-    return failure is None and process.returncode == 0
+    return failure is None and (verified or process.returncode == 0)
 
 
 class WorkerProgress:

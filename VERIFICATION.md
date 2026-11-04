@@ -70,6 +70,21 @@ dont ces deux régressions. Les journaux d’identité retiennent maintenant std
 Le diagnostic récupère également l’artefact propre de l’épreuve du modèle,
 car un échec avant reconstruction ne produit aucun artefact de reconstruction.
 
+
+Diagnostic précis du programme gratuit : l’artefact de l’exécution 41853628362
+montre une lecture puis la bonne modification de la source d’essai, sans fin
+d’exécution. Le contrôleur de capacité valide maintenant le vrai fichier et
+exécute lui-même le test numérique inchangé après un edit terminé ; il arrête
+alors uniquement cette épreuve, sans attendre un message final du modèle.
+Deux tests avec de vrais processus vérifient l’arrêt après validation et le
+refus d’une fausse déclaration sans validation : 7 tests du contrôleur passent.
+Les six contrôles indépendants d’un vrai patch produit restent obligatoires.
+Le refus de lecture des journaux avait une cause distincte confirmée par gh :
+« response contains terminal escape sequences ». La récupération autorise ces
+séquences puis les supprime avant toute annotation publique. Les prochains
+journaux devront confirmer l’échec Android exact ; sa correction n’est pas
+encore revendiquée.
+
 Sources lues : `AGENTS.md`, `CODEX_MISSION.md`, `PRODUCT.md`, les deux documents V3/V4 présents dans `docs/`, la [constitution V3 originale](https://github.com/Mickalive/chorescore-v3/blob/f922d347bc9989a717101bce274ca459902f6ff0/docs/V3_CONSTITUTION.md) et la [constitution V4 originale](https://github.com/Mickalive/chorescore-v3/blob/24041c9ff0adc9d88af534ef7e019699915d6ebe/docs/V4_CONSTITUTION.md). La copie V4 du dépôt est identique à cette source. Référence visuelle : composants et écran principal de `Mickalive/Chorescore`.
 
 | Parcours promis | Implémentation et preuve actuelle | Manque explicite |

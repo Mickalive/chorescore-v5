@@ -21,11 +21,25 @@ original = target.read_bytes()
 test_digest = hashlib.sha256(test.read_bytes()).hexdigest()
 assert subprocess.run(['node',str(test)],capture_output=True).returncode != 0, 'Broken fixture must actually fail'
 log = Path('verification-evidence/autopilot/local-model-probe.jsonl')
+
+
+def verified_repair(event):
+    part = event.get('part', {})
+    if (event.get('type') != 'tool_use' or part.get('tool') not in {'edit', 'write', 'apply_patch'}
+            or part.get('state', {}).get('status') != 'completed'):
+        return False
+    # The model's tool result is only a wake-up signal. Trust the actual files
+    # and the controller's unchanged numeric test, never the model's claim.
+    return (target.exists() and target.read_bytes() != original and test.exists()
+            and hashlib.sha256(test.read_bytes()).hexdigest() == test_digest
+            and subprocess.run(['node', str(test)], capture_output=True, timeout=15).returncode == 0)
+
+
 try:
     succeeded = run_worker(['opencode', 'run', '--agent', 'model-probe',
             '--model', os.environ['AUTOPILOT_MODEL'], '--format', 'json',
-            'Repair .opencode-ci/code-probe/sum.cjs so it adds two numbers rather than concatenating strings. Read it, edit the source, then run node .opencode-ci/code-probe/test.cjs. Do not edit the test. Do not delegate or call task.'],
-            log, 600)
+            'Read .opencode-ci/code-probe/sum.cjs and directly edit it to add two numbers rather than concatenate strings. Do not edit the test. The controller will execute the unchanged numeric test immediately after your edit and stop this capability probe if it passes. Do not delegate or call task.'],
+            log, 600, verified_when=verified_repair)
     events = []
     for line in log.read_text(errors='replace').splitlines():
         try:

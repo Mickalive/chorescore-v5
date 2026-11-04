@@ -88,7 +88,7 @@ config['provider'] = {'local-coder': {
 }}
 config['agent']['model-probe'] = {
     'mode': 'primary', 'description': 'Prove a real source repair and execute its test',
-    'prompt': 'Directly read and repair the assigned scratch source file and run its test. Do not delegate or call task. Do not modify the test. No other work.',
+    'prompt': 'Directly read and edit the assigned scratch source file. The independent controller runs the unchanged test immediately after your edit. Do not delegate or call task. Do not modify the test. No other work.',
     'steps': 8, 'permission': {'task': 'deny', 'question': 'deny'},
 }
 with open(os.environ['GITHUB_ENV'], 'a') as output:

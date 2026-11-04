@@ -18,10 +18,12 @@ api = 'https://api.github.com/repos/' + repository
 def request(url):
     # gh handles GitHub's signed log-download redirects without forwarding
     # Authorization to the blob-storage hostname.
-    return subprocess.check_output(['gh', 'api', url], timeout=60, stderr=subprocess.PIPE)
+    return subprocess.check_output(['gh', 'api', '--allow-escape-sequences', url], timeout=60, stderr=subprocess.PIPE)
 
 
 def annotation(message):
+    message = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', message)
+    message = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', message)
     message = message.replace(token, '[REDACTED]')
     message = re.sub(r'(?i)(authorization:\s*(?:bearer|basic)\s+)\S+', r'\1[REDACTED]', message)
     message = message.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
