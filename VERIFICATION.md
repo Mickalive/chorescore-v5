@@ -190,6 +190,23 @@ passé les six contrôles indépendants ; son état reste consigné séparément
 Les contrôles Android/Firestore/navigateur ne peuvent être omis, dupliqués ou
 remplacés par un message de succès du modèle : 8 tests du contrôleur passent.
 
+
+Cause native confirmée par l’artefact fa27693 : l’écran en échec est encore la
+permission système de notification, avec le bouton **ALLOW**, alors que le
+pilote comparait « Allow ». Aucune raison de modifier la persistance des todos
+pour contourner cette autorisation. Le pilote reconnaît maintenant les IDs
+système des boutons, avec vérification du package ; le test sur l’écran AOSP
+majuscules était rouge avant correction puis passe. Un bouton imitant cette
+permission dans l’application reste refusé. **24 tests Python Android passent.**
+
+Le job Android réutilisera un APK identique si seuls les pilotes changent :
+cache des seuls octets APK après vérification d’identité, clé incluant source,
+dépendances, assets, plugins, signature et workflow. Le parcours natif complet
+et ses preuves sont toujours rejoués. Le worker conserve aussi les outils SDK
+déjà installés au lieu de les mettre à jour à chaque baseline. Ces ajustements
+ne constituent pas une acceptation native : la nouvelle exécution doit confirmer
+la création/complétion des todos, le rappel livré et le reste du parcours.
+
 Sources lues : `AGENTS.md`, `CODEX_MISSION.md`, `PRODUCT.md`, les deux documents V3/V4 présents dans `docs/`, la [constitution V3 originale](https://github.com/Mickalive/chorescore-v3/blob/f922d347bc9989a717101bce274ca459902f6ff0/docs/V3_CONSTITUTION.md) et la [constitution V4 originale](https://github.com/Mickalive/chorescore-v3/blob/24041c9ff0adc9d88af534ef7e019699915d6ebe/docs/V4_CONSTITUTION.md). La copie V4 du dépôt est identique à cette source. Référence visuelle : composants et écran principal de `Mickalive/Chorescore`.
 
 | Parcours promis | Implémentation et preuve actuelle | Manque explicite |

@@ -16,10 +16,11 @@ The trusted controller executes that test after a completed edit and stops
 the capability probe on verified success; it does not wait for a stalled
 model to announce completion. This shortcut applies only to the tiny probe.
 Actual product patches still require every independent acceptance gate.
-Current product failure (run 41864999398): installed Android passes group and
-category creation, then cannot find todos.complete.0 after creating a task todo
-with a reminder. Inspect the preserved Android UI hierarchy and runtime errors
-before choosing a fix; do not assume the todo was saved or bypass its completion.
+Run 41864999398 stopped at todos.complete.0 after a todo with a reminder. The
+preserved Android screen proved that the OS permission dialog still showed
+uppercase ALLOW. The trusted driver now uses the OS permission resource id.
+Rerun the installed journey and repair its next actual failure. Do not change
+todo persistence to bypass notification consent or assume the previous todo saved.
 The latest three official Firestore scenarios pass, including cached photo
 deletion and incomplete/replayed deltas. Do not spend a pass fixing an older
 green transport check. Passing checks are summarized; focus on the current FAIL.

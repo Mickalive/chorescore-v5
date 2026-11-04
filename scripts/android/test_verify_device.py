@@ -27,6 +27,7 @@ def driver():
     env['real_hierarchy'] = env['hierarchy']
     env['real_keyboard_shown'] = env['keyboard_shown']
     env['real_scroll_top'] = env['scroll_top']
+    env['real_dismiss_permission'] = env['dismiss_permission']
     env.update(
         hierarchy=Mock(), screen_size=lambda: (412, 915),
         usable_bottom=lambda: 900, swipe=Mock(), scroll_top=Mock(),
@@ -37,6 +38,25 @@ def driver():
 
 
 class SelectorBehavior(unittest.TestCase):
+    def test_uppercase_android_notification_permission_uses_the_system_resource_id(self):
+        env=driver()
+        env['time']=SimpleNamespace(sleep=lambda _:None)
+        root=ET.fromstring('''<hierarchy>
+          <node package="com.android.permissioncontroller" resource-id="com.android.permissioncontroller:id/permission_allow_button" text="ALLOW" enabled="true" bounds="[20,200][200,260]" />
+          <node package="com.android.permissioncontroller" resource-id="com.android.permissioncontroller:id/permission_deny_button" text="DON’T ALLOW" enabled="true" bounds="[20,280][200,340]" />
+        </hierarchy>''')
+        self.assertTrue(env['real_dismiss_permission'](root))
+        self.assertEqual(env['tap_node'].call_args.args[0].attrib['resource-id'],
+                         'com.android.permissioncontroller:id/permission_allow_button')
+
+    def test_an_app_button_cannot_impersonate_android_permission_consent(self):
+        env=driver()
+        root=ET.fromstring('''<hierarchy><node package="app.chorescore.v5"
+          resource-id="com.android.permissioncontroller:id/permission_allow_button"
+          text="ALLOW" enabled="true" bounds="[20,200][200,260]" /></hierarchy>''')
+        self.assertFalse(env['real_dismiss_permission'](root))
+        env['tap_node'].assert_not_called()
+
     def test_native_picker_fixture_is_a_complete_png_with_valid_checksums(self):
         path=Path(__file__).with_name('verify-device.py')
         source=ast.parse(path.read_text())

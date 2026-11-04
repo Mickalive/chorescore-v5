@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Disposable GitHub runner only; no user device or production data is touched.
 set -euo pipefail
+trap 'exit_status=$?; df -h "${GITHUB_WORKSPACE:-.}"; exit "$exit_status"' ERR
 test "${GITHUB_ACTIONS:-}" = true
 test -c /dev/kvm
 sudo chmod a+rw /dev/kvm
@@ -12,7 +13,13 @@ sdk_manager=$(find "$sdk_root/cmdline-tools" -maxdepth 3 -type f -name sdkmanage
 test -n "$sdk_manager" && test -x "$sdk_manager"
 export PATH="$(dirname "$sdk_manager"):$PATH"
 if ! test -f "$ANDROID_AVD_HOME/chorescore-ci.ini"; then
-  sdkmanager 'system-images;android-35;default;x86_64' 'emulator' 'platform-tools'
+  # Keep already-installed runner tools; updating the emulator again wastes
+  # disk space beside the local model and obscures the actual app failure.
+  packages=()
+  test -f "$sdk_root/system-images/android-35/default/x86_64/package.xml" || packages+=('system-images;android-35;default;x86_64')
+  test -x "$sdk_root/emulator/emulator" || packages+=('emulator')
+  test -x "$sdk_root/platform-tools/adb" || packages+=('platform-tools')
+  if [ "${#packages[@]}" -gt 0 ]; then sdkmanager "${packages[@]}"; fi
   echo no | avdmanager create avd --name chorescore-ci --package 'system-images;android-35;default;x86_64' --device pixel_2
 fi
 npx --no-install expo prebuild --platform android --no-install --clean

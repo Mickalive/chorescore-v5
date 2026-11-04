@@ -131,6 +131,10 @@ jobs:
     env:
       EXPO_NO_TELEMETRY: '1'
       ANDROID_EVIDENCE_DIR: verification-evidence/android
+      # This acceptance journey uses the honest device-local account. A
+      # configured Google candidate is verified separately, never faked here.
+      EXPO_PUBLIC_FIREBASE_API_KEY: ''
+      EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID: ''
     steps:
       - uses: actions/checkout@v4
         with:
@@ -147,7 +151,14 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - name: Generate normal native app (no test session or mock services)
         run: npx expo prebuild --platform android --no-install
+      - name: Restore identical local release APK for driver-only changes
+        id: apk-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: android/app/build/outputs/apk/release/app-release.apk
+          key: android-local-release-v1-${{ hashFiles('app/**', 'src/**', 'plugins/**', 'assets/**', 'app.json', 'app.config.*', 'package.json', 'package-lock.json', 'babel.config.*', 'metro.config.*', 'tsconfig.json', 'firebase/android-signing.json', '.github/workflows/product-acceptance.yml') }}
       - name: Compile both release architectures
+        if: steps.apk-cache.outputs.cache-hit != 'true'
         working-directory: android
         run: ./gradlew :app:assembleRelease -PreactNativeArchitectures=arm64-v8a,x86_64 --max-workers=2 --no-daemon
       - name: Verify APK identity and digest
@@ -155,6 +166,12 @@ jobs:
           mkdir -p verification-evidence/android
           bash scripts/android/verify-apk-identity.sh android/app/build/outputs/apk/release/app-release.apk 2>&1 | tee verification-evidence/android/identity.txt
           sha256sum android/app/build/outputs/apk/release/app-release.apk > verification-evidence/android/apk.sha256
+      - name: Cache verified APK bytes before the runtime journey
+        if: steps.apk-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: android/app/build/outputs/apk/release/app-release.apk
+          key: ${{ steps.apk-cache.outputs.cache-primary-key }}
       - name: Enable hardware virtualization
         run: |
           test -e /dev/kvm

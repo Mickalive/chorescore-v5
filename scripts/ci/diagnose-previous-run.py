@@ -134,4 +134,9 @@ if worker:
                     errors=[event for event in events if event.get('type')=='error']
                     annotation(file.name + ' actual tool actions/errors: ' + json.dumps({'tools':tools[-5:],'errors':errors[-2:]})[-6000:])
                 else:
-                    annotation(file.name + ' last output: ' + content[-5000:])
+                    if 'android' in file.name:
+                        failures = [line for line in content.splitlines() if re.search(
+                            r'(?i)(ENOSPC|no space left|^ERROR|^Warning:|TIMEOUT|Traceback|AssertionError|command not found|failed)', line)]
+                        annotation(file.name + ' failure details: ' + ('\n'.join(failures[-12:]) + '\n' + content[-1200:])[-6000:])
+                    else:
+                        annotation(file.name + ' last output: ' + content[-5000:])

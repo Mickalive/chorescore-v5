@@ -571,14 +571,27 @@ def screenshot(name):
         print('::notice title=Android screenshot captured::'+name,flush=True)
 
 def dismiss_permission(root):
+    permission_packages={'com.android.permissioncontroller','com.google.android.permissioncontroller'}
     packages={node.attrib.get('package','') for node in root.iter('node')}
-    if not packages & {'com.android.permissioncontroller',
-                       'com.google.android.permissioncontroller'}:
+    if not packages & permission_packages:
         return False
-    for label in ('Allow','Autoriser','While using the app','Pendant l’utilisation'):
-        taps=candidates(root,label=label)
-        if taps:
-            tap_node(taps[0])
+    # Android 35's AOSP dialog uses uppercase ALLOW. The OS resource identity
+    # is stable across capitalization/language; never tap an app's lookalike.
+    for package in permission_packages:
+        for name in ('permission_allow_button','permission_allow_foreground_only_button'):
+            taps=[node for node in candidates(root,resource=package+':id/'+name)
+                  if node.attrib.get('package')==package]
+            if taps:
+                tap_node(taps[0])
+                time.sleep(.8)
+                return True
+    labels={'allow','autoriser','while using the app','pendant l’utilisation'}
+    for node in root.iter('node'):
+        if node.attrib.get('package') not in permission_packages:
+            continue
+        label=node.attrib.get('text','') or node.attrib.get('content-desc','')
+        if label.casefold() in labels and node in candidates(root,label=label):
+            tap_node(node)
             time.sleep(.8)
             return True
     return False
