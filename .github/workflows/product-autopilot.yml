@@ -204,6 +204,9 @@ jobs:
       contents: read
       actions: write
     steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
       - name: Resume the same mission after verification or an unfinished repair
         env:
           GH_TOKEN: ${{ github.token }}
@@ -220,6 +223,10 @@ jobs:
             # was attempted. Expose the failure instead of looping on bootstrap.
             gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "product-reconstruction-$GITHUB_RUN_ID" --dir previous
             test -n "$(find previous -name iterations.json -type f -print -quit)"
+            if ! python3 scripts/ci/has-product-progress.py previous; then
+              echo '::notice title=Automatic retries stopped::The worker made no executable product change. Maintainer repair is required; do not repeat read-only cycles.'
+              exit 0
+            fi
           fi
           workflow_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .workflow_id)
           gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow_id/dispatches" -f ref=feat/product-reconstruction

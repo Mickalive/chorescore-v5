@@ -1006,7 +1006,9 @@ try:
     fill('groupOptions.rateContribution','1,5')
     fill('groupOptions.rateMoney','1,01')
     scroll_to(resource='groupOptions.save')
-    locate(resource='groupOptions.save')  # disabled until the SQLite save finishes
+    # The success dialog appears only after the SQLite transaction completes.
+    # It covers the save control, so acknowledge the actual native positive button.
+    confirm_native_alert('OK')
     adb('shell','am','force-stop',PACKAGE)
     start()
     scroll_to('Ouvrir le groupe '+compensation_group)

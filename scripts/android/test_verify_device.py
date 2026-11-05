@@ -45,6 +45,9 @@ class SelectorBehavior(unittest.TestCase):
         env['confirm_native_alert']('Supprimer')
         env['locate'].assert_called_once_with(resource='android:id/button1')
         env['tap_node'].assert_called_once_with(button)
+        button.set('text','OK')
+        env['confirm_native_alert']('OK')
+        self.assertEqual(env['tap_node'].call_count,2)
         button.set('text','ANNULER')
         with self.assertRaises(AssertionError):env['confirm_native_alert']('Supprimer')
 

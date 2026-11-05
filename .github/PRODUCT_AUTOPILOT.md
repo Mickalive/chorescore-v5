@@ -16,14 +16,14 @@ The trusted controller executes that test after a completed edit and stops
 the capability probe on verified success; it does not wait for a stalled
 model to announce completion. This shortcut applies only to the tiny probe.
 Actual product patches still require every independent acceptance gate.
-Run 41936741692 proved real notification delivery, both todo completions,
-correct initial balances and a photo reopened after process death. Its next
-failure was after expense deletion: the preserved screen still showed the
-native confirmation. The driver tapped the title "Supprimer" instead of the
-uppercase positive button "SUPPRIMER". It now targets android:id/button1 and
-checks the app package and expected action. The existing exact balance
-assertions remain unchanged. Use the next installed baseline, repair its
-actual next failure, and never change accounting to compensate for a dialog.
+Run 41944038218 passed native reminders, both todo completions, exact ledger
+edits/deletion, persisted photos, the Android share chooser and notification
+preferences across restart. It failed at the explicit compensation setup: the
+real native "Options enregistrées" success dialog covered groupOptions.save.
+The driver now confirms its actual android:id/button1 OK before restarting.
+Preserve the existing exact compensation and persistence assertions.
+Several free-model cycles made no executable source change. A read-only
+cycle must not schedule another identical cycle; maintainer repair is needed.
 The owner reports production Firestore rules published; no administrator
 session or real Google/two-phone acceptance is available in this environment.
 The latest three official Firestore scenarios pass, including cached photo
@@ -117,3 +117,7 @@ patch, the publication and continuation jobs are skipped. Green automation is
 not full product acceptance: original-specification review, real Google login
 and production collaboration remain explicit proofs. Do not invent features or
 rewrite working screens simply to produce another commit.
+
+Unfinished retries require actual executable product paths in the retained
+iteration evidence. A run containing only reads or report changes stops and
+exposes a maintainer-repair notice instead of dispatching itself indefinitely.

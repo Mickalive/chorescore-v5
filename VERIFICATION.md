@@ -11,6 +11,9 @@ Aucune déclaration de produit terminé. Dernière vérification locale : **259 
 5 novembre — arrêt sans réécriture : quand les six contrôles de baseline réussissent, l’agent d’écriture n’est pas appelé. Le candidat est conservé pour acceptation finale ; aucun produit terminé n’est déclaré sur ces seuls contrôles. Sans patch vérifié, intégration et relance sont ignorées. Un candidat restauré déjà vérifié peut être publié sans nouvelle édition, suivi d’un seul contrôle final. **16 tests du contrôleur réussis**, dont deux exécutant le vrai programme dans un dépôt temporaire avec contrôles simulés : arrêt avant tout appel d’écriture si vert, conservation de l’échec après passages sans édition si rouge. Ces tests prouvent le contrôle du programme, pas l’application ni Firebase production.
 
 
+5 novembre — reprise manuelle sur preuve distante : la dernière acceptation 41944038218 a franchi les éditions/suppressions avec soldes exacts, le partage Android et les préférences de rappel persistées. Elle échoue ensuite à `groupOptions.save` parce que la confirmation native « Options enregistrées » recouvre ce bouton. Le pilote confirme désormais le bouton positif « OK », puis redémarre, sans changer la logique produit ni les soldes attendus. Les cycles OpenCode 41956701384, 41967314805 et 41975918374 montrent chacun trois passes sans source modifiée : aucune progression produit n’est revendiquée. La relance automatique exige maintenant une modification exécutable ; les cycles de lecture seuls s’arrêtent pour correction par le mainteneur. **20 tests de contrôle et 26 tests du pilote réussis**, analyse YAML et diff vérifiés. Nouveau parcours Android complet encore nécessaire ; Google réel et collaboration production restent non vérifiés.
+
+
 
 Mise à jour du 4 novembre — parcours Android automatisé : le même scénario
 installé est exécuté par Product acceptance et par OpenCode, avec vidéo par
