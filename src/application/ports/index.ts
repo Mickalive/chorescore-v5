@@ -1,3 +1,4 @@
+import type { NetworkMetrics } from '../../domain/services/networkCost';
 /**
  * ChoreScore V3 — Application Ports (Interfaces)
  *
@@ -102,12 +103,65 @@ export interface SecureStorageGateway {
 }
 
 export interface SyncGateway {
+  /** Session-level HTTP body counters, not a cloud billing estimate. */
+  getNetworkMetrics?(): NetworkMetrics | undefined;
   isAvailable(): boolean;
   startSync(householdId: string): Promise<void>;
   stopSync(householdId: string): Promise<void>;
   pushChanges(householdId: string): Promise<void>;
   pullChanges(householdId: string): Promise<void>;
   getStatus(householdId: string): Promise<SyncStatus>;
+
+  /** Remote collaboration: discover groups and pull every accessible group. */
+  discoverGroups?(userId: string): Promise<void>;
+  /** Remote collaboration: create the server group if it does not exist yet. */
+  ensureRemoteGroup?(householdId: string, userId: string): Promise<void>;
+  /** Remote collaboration: create a server invitation for a named member. */
+  createInvitation?(householdId: string, memberId: string): Promise<RemoteInvitation>;
+  /** Remote collaboration: revoke an unused invitation token. */
+  revokeInvitation?(householdId: string, token: string): Promise<void>;
+  /** Remote collaboration: accept a server invitation and pull its group. */
+  acceptInvitation?(token: string): Promise<RemoteInvitationAcceptance>;
+  /** Owner-only authoritative group deletion, propagated to other clients. */
+  deleteGroup?(householdId: string): Promise<void>;
+  /**
+   * Remote collaboration: complete a todo through the authority's single
+   * atomic endpoint. The server derives the ledger entry and audit identity,
+   * so two devices can never record the completion twice.
+   */
+  completeTodo?(
+    householdId: string,
+    todoId: string,
+    input: Record<string, unknown>,
+  ): Promise<void>;
+  /** Open conflicts are explicit; resolution never overwrites silently. */
+  getConflicts?(householdId: string): Promise<SyncConflictView[]>;
+  resolveConflict?(
+    householdId: string,
+    conflictId: string,
+    choice: 'local' | 'remote',
+  ): Promise<void>;
+}
+
+export interface SyncConflictView {
+  id: string;
+  collection: string;
+  entityId: string;
+  detectedAt: string;
+  localPayload: string | null;
+  remotePayload: string | null;
+}
+
+export interface RemoteInvitation {
+  token: string;
+  groupId: string;
+  memberId: string;
+  expiresAt: string;
+}
+
+export interface RemoteInvitationAcceptance {
+  groupId: string;
+  memberId: string;
 }
 
 export interface SyncStatus {
@@ -115,6 +169,7 @@ export interface SyncStatus {
   lastSyncedAt: string | null;
   pendingChanges: number;
   error: string | null;
+  conflicts: number;
 }
 
 // ── Analytics Port ─────────────────────────────────────────────
@@ -180,6 +235,8 @@ export interface InvitationResult {
  * hides the action instead of faking a photo.
  */
 export interface AttachmentGateway {
+  /** Retry durable cleanup of unreferenced managed files, when supported. */
+  collectGarbage?(): Promise<void>;
   isAvailable(): boolean;
   /** User picked a photo, or cancelled / provider unavailable (null). */
   pickPhoto(): Promise<AttachmentSource | null>;
@@ -203,6 +260,27 @@ export interface AttachmentHandle {
   byteSize?: number;
   width?: number;
   height?: number;
+}
+
+/**
+ * Private cloud media transport. Files live under a group ACL on the
+ * authority; clients upload before referencing them in a synced entry and
+ * download lazily into a local cache. No public URL is ever produced.
+ */
+export interface MediaGateway {
+  isAvailable(): boolean;
+  upload(
+    householdId: string,
+    attachment: {
+      id: string;
+      ref: string;
+      mimeType?: string;
+      byteSize?: number;
+    },
+  ): Promise<{ remoteRef: string; sha256: string; byteSize: number }>;
+  /** Resolve a remote reference to a locally readable file URI. */
+  download(householdId: string, remoteRef: string): Promise<string>;
+  remove(householdId: string, remoteRef: string): Promise<void>;
 }
 
 // ── Permissions ────────────────────────────────────────────────

@@ -1,3 +1,4 @@
+import type { ContributionActivityQuery, ContributionActivityTotal } from '../../domain/calculations/contributionActivity';
 /**
  * ChoreScore V3 — Repository Interfaces
  *
@@ -6,6 +7,7 @@
  */
 
 import {
+  ContributionUnit,
   User,
   Membership,
   Household,
@@ -20,7 +22,19 @@ import {
   SyncCursor,
   SyncRecord,
   SyncCollection,
+  SyncGroupState,
+  SyncConflict,
+  PendingSyncMutation,
 } from '../../domain/entities';
+import type { BalanceSnapshot } from '../../domain/calculations/materializedBalances';
+
+export interface BalanceProjectionRepository {
+  /** Caller uses its repository transaction when combining this with writes.
+   * SQLite reads stored member totals; legacy rows are backfilled in bounded
+   * batches once. Later reads transfer only member totals, never the history.
+   */
+  getByHousehold(householdId: string, unit: ContributionUnit, memberIds: string[]): Promise<BalanceSnapshot>;
+}
 
 /**
  * Idempotent upsert of full entities with known ids.
@@ -58,6 +72,7 @@ export interface HouseholdRepository extends SeedableRepository<Household> {
 }
 
 export interface MemberRepository extends SeedableRepository<Member> {
+  getCountsByHouseholds(householdIds: string[]): Promise<Record<string, number>>;
   getByHousehold(householdId: string): Promise<Member[]>;
   getByHouseholdPaginated(householdId: string, query?: PaginatedQuery): Promise<PaginatedResult<Member>>;
   getById(id: string): Promise<Member | null>;
@@ -109,6 +124,8 @@ export interface PaginatedResult<T> {
 }
 
 export interface PaginatedQuery {
+  /** Contribution history only: undefined=all, null=unlinked tasks. */
+  persistentTaskId?: string | null;
   limit?: number;
   /** Exclusive composite cursor — items strictly older than the encoded position. */
   cursor?: string | null;
@@ -117,6 +134,7 @@ export interface PaginatedQuery {
 }
 
 export interface ContributionEntryRepository extends SeedableRepository<ContributionEntry> {
+  getActivitySummary(householdId: string, query: ContributionActivityQuery): Promise<ContributionActivityTotal[]>;
   getByHousehold(householdId: string): Promise<ContributionEntry[]>;
   getByHouseholdPaginated(householdId: string, query?: PaginatedQuery): Promise<PaginatedResult<ContributionEntry>>;
   getById(id: string): Promise<ContributionEntry | null>;
@@ -134,6 +152,8 @@ export interface PersistentTaskRepository extends SeedableRepository<PersistentT
 }
 
 export interface TodoRepository extends SeedableRepository<TodoItem> {
+  getOpenByHousehold(householdId: string): Promise<TodoItem[]>;
+  getFutureReminders(householdId: string, after: string): Promise<TodoItem[]>;
   getByHousehold(householdId: string): Promise<TodoItem[]>;
   getByHouseholdPaginated(householdId: string, query?: PaginatedQuery): Promise<PaginatedResult<TodoItem>>;
   getById(id: string): Promise<TodoItem | null>;
@@ -175,6 +195,8 @@ export interface InvitationRepository extends SeedableRepository<Invitation> {
 // ── V3-06: Sync State Repository ───────────────────────────────
 
 export interface SyncStateRepository {
+  /** Reserve a monotonically increasing, persisted local outbox sequence. */
+  nextLocalRevision(householdId: string, collection: SyncCollection): Promise<number>;
   getCursor(householdId: string, collection: SyncCollection): Promise<SyncCursor | null>;
   setCursor(cursor: SyncCursor): Promise<void>;
   /**
@@ -194,6 +216,28 @@ export interface SyncStateRepository {
   ): Promise<SyncRecord[]>;
   /** Store local dirty records WITHOUT advancing the cursor (push path). */
   storeLocalRecords(householdId: string, collection: SyncCollection, records: SyncRecord[]): Promise<void>;
-  /** Get all local records for a collection since a given revision (for push). */
-  getDirtyRecords(householdId: string, collection: SyncCollection, sinceRevision: number): Promise<SyncRecord[]>;
+  /** Read pending records in revision order; limit bounds push-batch memory. */
+  countDirtyRecords(householdId: string, collection: SyncCollection, sinceRevision: number): Promise<number>;
+  getDirtyRecords(householdId: string, collection: SyncCollection, sinceRevision: number, limit?: number): Promise<SyncRecord[]>;
+
+  // ── Remote collaboration metadata (server revisions are distinct from
+  // local outbox revisions; never reuse one for the other). ──────────────
+  getGroupState(householdId: string): Promise<SyncGroupState | null>;
+  setGroupState(state: SyncGroupState): Promise<void>;
+  getRemoteVersion(householdId: string, collection: SyncCollection, entityId: string): Promise<number>;
+  setRemoteVersion(
+    householdId: string,
+    collection: SyncCollection,
+    entityId: string,
+    version: number,
+  ): Promise<void>;
+  getPendingMutation(householdId: string): Promise<PendingSyncMutation | null>;
+  savePendingMutation(mutation: PendingSyncMutation): Promise<void>;
+  deletePendingMutation(householdId: string): Promise<void>;
+  recordConflict(conflict: SyncConflict): Promise<void>;
+  getConflicts(householdId: string): Promise<SyncConflict[]>;
+  /** Mark open conflicts for one entity as resolved after a successful push. */
+  resolveConflicts(householdId: string, collection: SyncCollection, entityId: string): Promise<void>;
+  /** Drop one local outbox record after the user chose the remote version. */
+  discardLocalRecord(householdId: string, collection: SyncCollection, entityId: string): Promise<void>;
 }

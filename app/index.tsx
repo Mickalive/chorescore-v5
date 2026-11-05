@@ -1,3 +1,6 @@
+import { GroupCard } from '../src/features/groups/GroupCard';
+import { GroupsHeader } from '../src/features/groups/GroupsHeader';
+import { firebaseAuthConfig } from '../src/infrastructure/cloud/FirebaseAuthAdapter';
 /**
  * ChoreScore V4 — Root Index Screen (Groups)
  *
@@ -5,18 +8,17 @@
  * Groups, tasks, expenses and balances are stored on the device.
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { View, StyleSheet, TouchableOpacity, Alert, TextInput } from 'react-native';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { View, StyleSheet, TouchableOpacity, Alert, TextInput, Keyboard } from 'react-native';
 import { useRouter } from 'expo-router';
 import { ScreenContainer } from '../src/ui/components/ScreenContainer';
 import { Text } from '../src/ui/components/Text';
-import { Card } from '../src/ui/components/Card';
 import { Button } from '../src/ui/components/Button';
-import { LoadingState, EmptyState, PersistenceBanner } from '../src/ui/components/States';
+import { LoadingState, EmptyState, PersistenceBanner, InlineNotice } from '../src/ui/components/States';
 import { colors, spacing, borderRadius } from '../src/ui/design-system/theme';
 import { useApp } from '../src/features/app/AppContext';
 import { useI18n } from '../src/i18n';
-import { Household } from '../src/domain/entities';
+import { ContributionUnit, Household } from '../src/domain/entities';
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -25,17 +27,23 @@ export default function HomeScreen() {
     currentUser,
     isLoading,
     persistenceDegraded,
+    services,
     signIn,
+    signInWithProvider,
     households,
     loadHouseholds,
     createHousehold,
     setCurrentHouseholdId,
-    getMembersForHousehold,
+    repos,
+    subscribeToDataChanges,
   } = useApp();
   const [startingLocal, setStartingLocal] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
   const [memberNames, setMemberNames] = useState<string[]>([]);
   const [memberInput, setMemberInput] = useState('');
+  const [contributionUnit, setContributionUnit] = useState<ContributionUnit>('minutes');
+  const creatingRef = useRef(false);
+  const [creating, setCreating] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [memberCounts, setMemberCounts] = useState<Record<string, number>>({});
 
@@ -55,22 +63,18 @@ export default function HomeScreen() {
       setMemberCounts({});
       return;
     }
-    Promise.all(
-      households.map(async (group) => {
-        try {
-          const members = await getMembersForHousehold(group.id);
-          return [group.id, members.length] as const;
-        } catch {
-          return [group.id, 0] as const;
-        }
-      }),
-    ).then((entries) => {
-      if (!cancelled) setMemberCounts(Object.fromEntries(entries));
+    const refresh = () => repos.members.getCountsByHouseholds(households.map(group => group.id))
+      .then(counts => { if (!cancelled) setMemberCounts(counts); })
+      .catch(() => { if (!cancelled) setMemberCounts({}); });
+    void refresh();
+    const unsubscribe = subscribeToDataChanges(type => {
+      if (type === 'member' || type === 'household') void refresh();
     });
     return () => {
       cancelled = true;
+      unsubscribe();
     };
-  }, [households, getMembersForHousehold]);
+  }, [households, repos, subscribeToDataChanges]);
 
   const openHousehold = async (id: string) => {
     setCurrentHouseholdId(id);
@@ -78,15 +82,21 @@ export default function HomeScreen() {
   };
 
   const handleCreateHousehold = async () => {
-    if (!newGroupName.trim()) return;
+    if (!newGroupName.trim() || creatingRef.current) return;
+    creatingRef.current = true;
+    setCreating(true);
     try {
-      await createHousehold(newGroupName.trim(), memberNames);
+      const names = memberInput.trim() ? [...memberNames, memberInput.trim()] : memberNames;
+      await createHousehold(newGroupName.trim(), names, contributionUnit);
       setNewGroupName('');
       setMemberNames([]);
       setMemberInput('');
       setShowCreate(false);
     } catch {
       Alert.alert(t('state.error'), t('groups.createError'));
+    } finally {
+      creatingRef.current = false;
+      setCreating(false);
     }
   };
 
@@ -95,6 +105,9 @@ export default function HomeScreen() {
     if (!name) return;
     setMemberNames((current) => [...current, name]);
     setMemberInput('');
+    // Keyboard re-renders with the cleared field on Android 15 and can re-open
+    // after submit. Dismiss explicitly so the next control is reachable.
+    Keyboard.dismiss();
   };
 
   const handleRemoveMemberName = (index: number) => {
@@ -111,7 +124,12 @@ export default function HomeScreen() {
   const handleStartLocal = async () => {
     setStartingLocal(true);
     try {
-      await signIn('', '');
+      if (firebaseAuthConfig()) {
+        const signedIn = await signInWithProvider('google');
+        if (!signedIn) return;
+      } else {
+        await signIn('', '');
+      }
     } catch {
       Alert.alert(t('state.error'), t('state.genericError'));
     } finally {
@@ -137,9 +155,9 @@ export default function HomeScreen() {
         </View>
 
         <View style={styles.signInContainer}>
-          <Text variant="caption">{t('auth.localInfo')}</Text>
+          <Text variant="caption">{t(firebaseAuthConfig() ? 'app.tagline' : 'auth.localInfo')}</Text>
           <Button
-            title={startingLocal ? t('state.loading') : t('auth.localContinue')}
+            title={startingLocal ? t('state.loading') : t(firebaseAuthConfig() ? 'auth.continueGoogle' : 'auth.localContinue')}
             variant="primary"
             onPress={handleStartLocal}
             disabled={startingLocal}
@@ -152,76 +170,35 @@ export default function HomeScreen() {
 
   return (
     <ScreenContainer edges={['top', 'bottom']}>
-      <View style={styles.header}>
-        <Text variant="screenTitle">{t('groups.title')}</Text>
-      </View>
+      <GroupsHeader groupCount={households.length}
+        memberCount={Object.values(memberCounts).reduce((sum, count) => sum + count, 0)} />
 
       <PersistenceBanner visible={persistenceDegraded} message={t('state.persistenceBody')} />
+      {!services.sync.isAvailable() && <InlineNotice message={t('auth.localInfo')} style={{ marginBottom: spacing.lg }} />}
 
       <View style={styles.list}>
         {households.length === 0 ? (
           <EmptyState
             title={t('groups.emptyTitle')}
             body={t('groups.emptyBody')}
-            actionLabel={t('groups.create')}
-            onAction={() => setShowCreate(true)}
           />
         ) : (
-          households.map((item: Household) => {
-            const count = memberCounts[item.id] ?? null;
-            return (
-              <TouchableOpacity
-                key={item.id}
-                onPress={() => openHousehold(item.id)}
-                activeOpacity={0.7}
-                accessibilityRole="button"
-                accessibilityLabel={t('a11y.openGroup', { name: item.name })}
-              >
-                <Card variant="highlighted" style={styles.householdCard}>
-                  <View style={styles.householdRow}>
-                    <View style={styles.householdInfo}>
-                      <Text variant="sectionTitle">{item.name}</Text>
-                      <Text variant="caption">
-                        {count === null
-                          ? item.contributionUnit === 'minutes'
-                            ? t('unit.minutes')
-                            : t('unit.points')
-                          : count === 1
-                            ? t('groups.memberOne')
-                            : t('groups.memberMany', { count })}
-                      </Text>
-                    </View>
-                    <View style={styles.householdActions}>
-                      <TouchableOpacity
-                        onPress={(e) => {
-                          e.stopPropagation?.();
-                          setCurrentHouseholdId(item.id);
-                          router.push('/group-options');
-                        }}
-                        style={styles.actionChip}
-                        accessibilityRole="button"
-                        accessibilityLabel={t('a11y.groupOptions', { name: item.name })}
-                      >
-                        <Text variant="caption" color={colors.textSecondary}>
-                          {t('groups.options')}
-                        </Text>
-                      </TouchableOpacity>
-                      <Text variant="caption" style={styles.chevron}>{'>'}</Text>
-                    </View>
-                  </View>
-                </Card>
-              </TouchableOpacity>
-            );
-          })
+          households.map((item: Household) => (
+            <GroupCard key={item.id} group={item} memberCount={memberCounts[item.id]}
+              onOpen={() => openHousehold(item.id)}
+              onOptions={() => { setCurrentHouseholdId(item.id); router.push('/group-options'); }} />
+          ))
         )}
       </View>
 
       {showCreate ? (
         <View style={styles.createForm}>
+          <Text variant="sectionTitle">{t('groups.create')}</Text>
           <View style={styles.inputGroup}>
             <Text variant="caption">{t('groups.nameLabel')}</Text>
             <TextInput
               testID="groups.nameInput"
+              autoFocus
               style={styles.input}
               value={newGroupName}
               onChangeText={setNewGroupName}
@@ -230,6 +207,16 @@ export default function HomeScreen() {
             />
           </View>
 
+          <View style={styles.inputGroup}>
+            <Text variant="caption">{t('groupOptions.unit')}</Text>
+            <View style={styles.memberInputRow}>
+              {(['minutes', 'points'] as const).map((unit) => (
+                <Button key={unit} title={t(unit === 'minutes' ? 'unit.minutes' : 'unit.points')}
+                  variant={contributionUnit === unit ? 'primary' : 'secondary'}
+                  onPress={() => setContributionUnit(unit)} testID={`groups.unit.${unit}`} />
+              ))}
+            </View>
+          </View>
           <View style={styles.inputGroup}>
             <Text variant="caption">{t('groups.membersLabel')}</Text>
             <View style={styles.memberInputRow}>
@@ -241,7 +228,9 @@ export default function HomeScreen() {
                 placeholder={t('groups.memberNamePlaceholder')}
                 placeholderTextColor={colors.textMuted}
                 onSubmitEditing={handleAddMemberName}
+                submitBehavior="blurAndSubmit"
                 returnKeyType="done"
+                maxLength={60}
               />
               <Button
                 title={t('action.add')}
@@ -277,7 +266,8 @@ export default function HomeScreen() {
               title={t('action.create')}
               variant="primary"
               onPress={handleCreateHousehold}
-              disabled={!newGroupName.trim()}
+              disabled={!newGroupName.trim() || creating}
+              testID="groups.createButton"
             />
             <Button
               title={t('action.cancel')}
@@ -293,7 +283,7 @@ export default function HomeScreen() {
             title={t('groups.create')}
             variant="primary"
             onPress={() => setShowCreate(true)}
-            testID="groups.createButton"
+            testID="groups.newButton"
           />
         </View>
       )}
@@ -347,7 +337,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
+    paddingVertical: spacing.sm,
+    minHeight: 48,
     borderRadius: borderRadius.sm,
     backgroundColor: colors.surfaceAlt,
     borderWidth: 1,
@@ -371,43 +362,6 @@ const styles = StyleSheet.create({
   },
   list: {
     gap: spacing.md,
-  },
-  householdCard: {
-    marginBottom: spacing.sm,
-  },
-  householdRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  householdInfo: {
-    flex: 1,
-  },
-  householdActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
-  actionChip: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-    borderRadius: borderRadius.sm,
-    backgroundColor: colors.surfaceAlt,
-  },
-  chevron: {
-    color: colors.textMuted,
-    fontSize: 18,
-  },
-  emptyState: {
-    alignItems: 'center',
-    paddingVertical: spacing.xxl,
-  },
-  emptyTitle: {
-    marginBottom: spacing.md,
-  },
-  emptyText: {
-    textAlign: 'center',
-    color: colors.textSecondary,
   },
   actions: {
     marginTop: spacing.xl,

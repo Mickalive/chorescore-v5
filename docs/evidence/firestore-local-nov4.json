@@ -1,0 +1,13 @@
+{
+  "date": "2026-11-05",
+  "officialImage": "gcr.io/google.com/cloudsdktool/google-cloud-cli@sha256:c3b114528245d315af73d92d95d8e2fed9747ce29003ad46232f22b4542da036",
+  "emulatorVersion": "1.23.0",
+  "project": "demo-chorescore-audit",
+  "rulesSha256": "5d5442c843cf7295da8770e11d57410398f6cd99409382bf387fb7282bd77ba3",
+  "scenarioSha256": "328dce40fd1d81d9256f4b0f71f737e9face6e53ac19a743d23e85e40c4fcb04",
+  "allApplicationTestsPassed": 260,
+  "skippedTests": 0,
+  "officialScenariosPassed": 4,
+  "productionAccessed": false,
+  "productionRulesDeployed": false
+}

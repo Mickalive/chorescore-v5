@@ -34,6 +34,7 @@ export class LocalSyncAdapter implements SyncGateway {
       lastSyncedAt: null,
       pendingChanges: 0,
       error: null,
+      conflicts: 0,
     };
   }
 }

@@ -1,3 +1,4 @@
+import { randomUUID } from 'expo-crypto';
 /** ChoreScore local-first authentication. A user can use the app entirely offline. */
 
 import { AuthGateway, AuthSessionToken, AuthUser } from '../../application/ports';
@@ -10,21 +11,7 @@ import {
 
 const SESSION_STORAGE_KEY = 'chorescore.auth.session';
 
-const LOCAL_USER: AuthUser = {
-  userId: 'chorescore-local-owner',
-  email: '',
-  displayName: 'Moi',
-  provider: 'local',
-};
-
-const LOCAL_SESSION: AuthSessionToken = {
-  userId: LOCAL_USER.userId,
-  accessToken: 'device-local-session',
-  expiresAt: '2999-12-31T00:00:00.000Z',
-  provider: 'local',
-  displayName: LOCAL_USER.displayName,
-  email: LOCAL_USER.email,
-};
+const LOCAL_IDENTITY_KEY = 'chorescore.auth.local-identity';
 
 export interface LocalAuthAdapterOptions {
   /** Explicit E2E flag; defaults to the `EXPO_PUBLIC_E2E_AUTH` environment. */
@@ -63,9 +50,19 @@ export class LocalAuthAdapter implements AuthGateway {
   }
 
   private async activateLocalSession(): Promise<AuthSessionToken> {
-    this.applySession(LOCAL_SESSION);
-    await this.persistSession(LOCAL_SESSION);
-    return LOCAL_SESSION;
+    let userId = await this.secureStorage?.getItem(LOCAL_IDENTITY_KEY);
+    if (!userId) {
+      // This identity is device-local only; it can never authorize cloud access.
+      userId = `local-${randomUUID()}`;
+      await this.secureStorage?.setItem(LOCAL_IDENTITY_KEY, userId);
+    }
+    const session: AuthSessionToken = {
+      userId, accessToken: 'device-local-session', provider: 'local',
+      expiresAt: '2999-12-31T00:00:00.000Z', displayName: 'Moi', email: '',
+    };
+    await this.persistSession(session);
+    this.applySession(session);
+    return session;
   }
 
   async signInWithGoogle(): Promise<AuthUser | null> {
@@ -121,6 +118,9 @@ export class LocalAuthAdapter implements AuthGateway {
         if (raw) {
           const token = JSON.parse(raw) as AuthSessionToken;
           if (token?.userId && (!token.expiresAt || new Date(token.expiresAt).getTime() > Date.now())) {
+            if (token.provider === 'local') {
+              await this.secureStorage.setItem(LOCAL_IDENTITY_KEY, token.userId);
+            }
             this.applySession(token);
             return token;
           }

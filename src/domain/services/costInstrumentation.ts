@@ -31,6 +31,8 @@ export interface CostRecord {
  * A regression that exceeds these limits is a release finding.
  */
 export const COST_BUDGETS: Record<string, Partial<CostRecord>> = {
+  'firestore-request': { networkCalls: 1, bytesSynced: 2 * 1024 * 1024 },
+  'collaboration-request': { networkCalls: 1, bytesSynced: 2 * 1024 * 1024 },
   // Opening a group with 50k historical entries
   'open-household': { reads: 5, networkCalls: 0 },
   // Tab switching: Ajouter → Balances → À faire → Ajouter
@@ -70,6 +72,7 @@ class CostTracker {
     };
 
     const tracker = this;
+    let finished = false;
     return {
       recordRead() { record.reads++; },
       recordWrite() { record.writes++; },
@@ -79,7 +82,10 @@ class CostTracker {
       },
       recordClassification() { record.classifications++; },
       finish() {
+        if (finished) return;
+        finished = true;
         tracker.records.push(record);
+        if (tracker.records.length > 512) tracker.records.shift();
       },
       getRecord() { return { ...record }; },
     };
@@ -102,26 +108,14 @@ class CostTracker {
    * Throws if the budget is exceeded.
    */
   assertBudget(action: string): void {
-    const record = this.records.find((r) => r.action === action);
-    if (!record) return; // No record = no assertion
-
+    const record = [...this.records].reverse().find(r => r.action === action);
     const budget = COST_BUDGETS[action];
-    if (!budget) return; // No budget defined
-
-    if (budget.reads !== undefined && record.reads > budget.reads) {
-      throw new Error(
-        `[CostGate] ${action}: ${record.reads} reads exceeds budget of ${budget.reads}`,
-      );
-    }
-    if (budget.writes !== undefined && record.writes > budget.writes) {
-      throw new Error(
-        `[CostGate] ${action}: ${record.writes} writes exceeds budget of ${budget.writes}`,
-      );
-    }
-    if (budget.networkCalls !== undefined && record.networkCalls > budget.networkCalls) {
-      throw new Error(
-        `[CostGate] ${action}: ${record.networkCalls} network calls exceeds budget of ${budget.networkCalls}`,
-      );
+    if (!record) throw new Error(`[CostGate] ${action}: no measurement`);
+    if (!budget) throw new Error(`[CostGate] ${action}: no budget defined`);
+    for (const key of ['reads','writes','networkCalls','bytesSynced','classifications'] as const) {
+      if (budget[key] !== undefined && record[key] > budget[key]!) {
+        throw new Error(`[CostGate] ${action}: ${record[key]} ${key} exceeds budget of ${budget[key]}`);
+      }
     }
   }
 }

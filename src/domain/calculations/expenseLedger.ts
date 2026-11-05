@@ -14,7 +14,9 @@ import {
 import { validateCrossLedgerSettlement } from './crossLedgerSettlement';
 
 function add(map: Map<string, number>, memberId: string, delta: number): void {
-  map.set(memberId, (map.get(memberId) ?? 0) + delta);
+  const next = (map.get(memberId) ?? 0) + delta;
+  if (!Number.isSafeInteger(next)) throw new Error('Money balance exceeds safe integer precision');
+  map.set(memberId, next);
 }
 
 function validateExpenseBase(entry: ExpenseEntry): void {
@@ -60,7 +62,7 @@ export function allocateExpense(entry: ExpenseEntry): ExpenseParticipantShare[] 
     if (!participantSet.has(share.memberId)) {
       throw new Error(`Expense ${entry.id} custom split contains a non-participant`);
     }
-    if (!Number.isInteger(share.amountMinor) || share.amountMinor < 0) {
+    if (!Number.isSafeInteger(share.amountMinor) || share.amountMinor < 0) {
       throw new Error(`Expense ${entry.id} custom split amounts must be non-negative integers`);
     }
   }
