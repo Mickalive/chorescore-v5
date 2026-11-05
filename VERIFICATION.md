@@ -2,6 +2,9 @@
 
 Aucune déclaration de produit terminé. Dernière vérification locale : **259 tests réussis avec l’émulateur Firestore officiel, 41 suites, aucun skip** ; typage réussi, 25 tests du pilote Android, 8 du contrôleur et 10 de configuration Firebase réussis. Le formulaire refuse désormais un rappel passé avant toute écriture et conserve le brouillon avec une explication FR/EN (test rouge avant correction). Le pilote laisse quatre minutes pour saisir le rappel et exige toujours sa réception native. Parcours complet à revérifier : l’exécution 41932568410 a réussi les deux complétions puis affiché une erreur à la création du rappel. Base Firestore créée et règles publiées selon la confirmation du propriétaire le 5 novembre (Europe/Berlin) ; aucune session administrateur disponible ici pour inspecter indépendamment la publication. Connexion Google réelle et deux téléphones restent non vérifiés.
 
+5 novembre — le parcours installé 41936741692 a observé la notification réelle, les deux complétions, les soldes avant redémarrage et la photo rouverte après arrêt du processus. Il a ensuite échoué sur les soldes après suppression. L’écran conservé montre la confirmation Android encore ouverte : le pilote touchait le titre « Supprimer » au lieu du bouton « SUPPRIMER ». Le ciblage utilise maintenant `android:id/button1` avec contrôle du libellé et du package. Test rouge avant correction, 26 tests du pilote réussis après ; nouveau parcours natif à exécuter. Aucun montant attendu ni invariant comptable modifié.
+
+
 
 Mise à jour du 4 novembre — parcours Android automatisé : le même scénario
 installé est exécuté par Product acceptance et par OpenCode, avec vidéo par

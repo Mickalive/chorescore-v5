@@ -16,15 +16,14 @@ The trusted controller executes that test after a completed edit and stops
 the capability probe on verified success; it does not wait for a stalled
 model to announce completion. This shortcut applies only to the tiny probe.
 Actual product patches still require every independent acceptance gate.
-Run 41932568410 completed both todo kinds, then the real app showed
-"Impossible de créer la tâche" while saving the short-delay reminder. A past
-reminder now fails before repository/native side effects with a precise FR/EN
-message and preserves the draft; its regression test was red before the fix.
-The native driver leaves four minutes for real typing instead of two (seconds
-are truncated by the minute input) and still requires actual notification
-receipt. This installed scenario is not yet proven green. Use the new baseline
-to distinguish an expired timestamp from another native scheduler error; do not
-bypass permissions, scheduling, delivery or the existing acceptance assertions.
+Run 41936741692 proved real notification delivery, both todo completions,
+correct initial balances and a photo reopened after process death. Its next
+failure was after expense deletion: the preserved screen still showed the
+native confirmation. The driver tapped the title "Supprimer" instead of the
+uppercase positive button "SUPPRIMER". It now targets android:id/button1 and
+checks the app package and expected action. The existing exact balance
+assertions remain unchanged. Use the next installed baseline, repair its
+actual next failure, and never change accounting to compensate for a dialog.
 The owner reports production Firestore rules published; no administrator
 session or real Google/two-phone acceptance is available in this environment.
 The latest three official Firestore scenarios pass, including cached photo

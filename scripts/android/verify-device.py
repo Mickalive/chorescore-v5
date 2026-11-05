@@ -664,6 +664,13 @@ def dismiss_alert():
             return True
     return False
 
+def confirm_native_alert(label):
+    """Confirm the app's Android dialog, never its similarly named title."""
+    button=locate(resource='android:id/button1')
+    if button.attrib.get('package')!=PACKAGE or button.attrib.get('text','').casefold()!=label.casefold():
+        raise AssertionError('Unexpected native confirmation button')
+    tap_node(button)
+
 def picker_file_node(name):
     """Return the real document row, never the tiny corner preview button."""
     for node in hierarchy().iter('node'):
@@ -924,7 +931,7 @@ try:
     # Deleting from Balances updates the ledger and removes the row.
     scroll_to('Courses CI',partial=True)
     tap(resource='balances.deleteEntry')
-    tap('Supprimer')
+    confirm_native_alert('Supprimer')
     time.sleep(1.5)
     assert_absent('Courses CI',partial=True)
     assert_ledger_totals(['+ 17 pts','- 16 pts','- 1 pts'],

@@ -38,6 +38,16 @@ def driver():
 
 
 class SelectorBehavior(unittest.TestCase):
+    def test_delete_confirmation_targets_native_positive_button_not_matching_dialog_title(self):
+        env=driver()
+        button=ET.fromstring('<node package="app.chorescore.v5" resource-id="android:id/button1" text="SUPPRIMER" />')
+        env.update(PACKAGE='app.chorescore.v5',locate=Mock(return_value=button))
+        env['confirm_native_alert']('Supprimer')
+        env['locate'].assert_called_once_with(resource='android:id/button1')
+        env['tap_node'].assert_called_once_with(button)
+        button.set('text','ANNULER')
+        with self.assertRaises(AssertionError):env['confirm_native_alert']('Supprimer')
+
     def test_device_reminder_time_uses_one_remote_shell_argument_and_crosses_midnight(self):
         env=driver()
         def remote_date(*args):
