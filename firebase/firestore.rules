@@ -178,6 +178,7 @@ service cloud.firestore {
         && request.resource.data.id.matches('^[A-Za-z0-9_-]{1,128}$')
         && writableCollection(request.resource.data.collection)
         && validSettlement(groupId)
+        && validTodoCompletion(groupId)
         && recordId == request.resource.data.collection + ':' + request.resource.data.id
         && request.resource.data.version is int
         && request.resource.data.version >= 1
@@ -266,6 +267,31 @@ service cloud.firestore {
         || !exists(recordPath(groupId, recordId))
         || resource.data.value == null
         || resource.data.value.status != 'completed';
+    }
+
+    function completedTodoHasLedger(groupId, value) {
+      // Rules emit uppercase hex; mobile completion ids use lowercase SHA-256.
+      // getAfter also supports importing an already-completed local history.
+      let entryId = 'todo-' + hashing.sha256(value.id.toUtf8()).toHexString().lower();
+      let kind = value.get('kind', 'task');
+      let collection = kind == 'expense' ? 'expense_entries' : 'contribution_entries';
+      let other = kind == 'expense' ? 'contribution_entries' : 'expense_entries';
+      let entry = recordPath(groupId, collection + ':' + entryId);
+      return kind in ['task', 'expense']
+        && value.completedAt is string
+        && existsAfter(entry)
+        && getAfter(entry).data.value != null
+        && getAfter(entry).data.collection == collection
+        && getAfter(entry).data.value.id == entryId
+        && getAfter(entry).data.value.householdId == groupId
+        && !existsAfter(recordPath(groupId, other + ':' + entryId));
+    }
+
+    function validTodoCompletion(groupId) {
+      return request.resource.data.collection != 'todo_items'
+        || request.resource.data.value == null
+        || request.resource.data.value.status != 'completed'
+        || completedTodoHasLedger(groupId, request.resource.data.value);
     }
 
     function validEventChange(groupId, revision, index) {

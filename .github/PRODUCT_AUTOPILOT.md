@@ -26,7 +26,7 @@ Several free-model cycles made no executable source change. A read-only
 cycle must not schedule another identical cycle; maintainer repair is needed.
 The owner reports production Firestore rules published; no administrator
 session or real Google/two-phone acceptance is available in this environment.
-The latest three official Firestore scenarios pass, including cached photo
+The latest four official Firestore scenarios pass, including cached photo
 deletion and incomplete/replayed deltas. Do not spend a pass fixing an older
 green transport check. Passing checks are summarized; focus on the current FAIL.
 
@@ -121,3 +121,9 @@ rewrite working screens simply to produce another commit.
 Unfinished retries require actual executable product paths in the retained
 iteration evidence. A run containing only reads or report changes stops and
 exposes a maintainer-repair notice instead of dispatching itself indefinitely.
+
+Direct completed-todo writes without their deterministic, correctly typed ledger
+entry are now rejected by the actual rules. Preserve the positive first-sync
+case for todos already completed locally. These new rules are not yet confirmed
+published in production; never claim the earlier owner publication installed
+a later rules revision automatically.

@@ -6,6 +6,10 @@ image=gcr.io/google.com/cloudsdktool/google-cloud-cli@sha256:c3b114528245d315af7
 container_id=''
 cleanup() {
   result=$?
+  if [ "$result" -ne 0 ] && [ -n "$container_id" ]; then
+    mkdir -p "$project_root/verification-evidence/firestore"
+    docker logs "$container_id" > "$project_root/verification-evidence/firestore/local-emulator.log" 2>&1 || true
+  fi
   if [ -n "$container_id" ]; then docker rm -f "$container_id" >/dev/null 2>&1 || true; fi
   exit "$result"
 }

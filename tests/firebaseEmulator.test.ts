@@ -228,6 +228,35 @@ describeEmulator('real Firestore rules and collaboration journey', () => {
     rmSync(mockDirectory, { recursive: true, force: true });
   });
 
+  test('first cloud publication preserves todos completed in the local database before any sync', async () => {
+    const alice = await client(`bootstrap-${randomUUID()}`);
+    const { household, ownerMember } = await createGroupWithMembers(alice.repos, {
+      name: 'Completed before cloud', owner: { userId: alice.uid, displayName: 'Alice' },
+      memberNames: [], contributionUnit: 'points',
+    });
+    const completed: Array<{ id: string; kind: 'task' | 'expense' }> = [];
+    for (const kind of ['task', 'expense'] as const) {
+      const todo = await alice.repos.todos.create({householdId: household.id, title: kind, kind,
+        status: 'todo', assigneeMemberId: ownerMember.id, beneficiaryMemberIds: [ownerMember.id],
+        dueAt: null, reminderAt: null, notes: '', persistentTaskId: null});
+      await completeTodoAtomic(alice.repos, kind === 'task'
+        ? { todo, household, completedByUserId: alice.uid, performerMemberId: ownerMember.id,
+            beneficiaryMemberIds: [ownerMember.id], value: 6 }
+        : { todo, household, completedByUserId: alice.uid, paidByMemberId: ownerMember.id,
+            participantMemberIds: [ownerMember.id], amountMinor: 101, currency: 'CHF' });
+      completed.push({id: todo.id, kind});
+    }
+    await expect(alice.sync.pushChanges(household.id)).resolves.toBeUndefined();
+    for (const todo of completed) {
+      const remote = await alice.firestore.getDocument(`groups/${household.id}/records/todo_items:${todo.id}`);
+      expect(remote?.fields.value).toMatchObject({status: 'completed'});
+      const collection = todo.kind === 'task' ? 'contribution_entries' : 'expense_entries';
+      const ledger = await alice.firestore.getDocument(`groups/${household.id}/records/${collection}:${await todoCompletionEntryId(todo.id)}`);
+      expect(ledger?.fields.value).toMatchObject({
+        id: await todoCompletionEntryId(todo.id), householdId: household.id });
+    }
+  });
+
   test('two accounts, targeted invitation, real deltas, media and owner deletion', async () => {
     const suffix = randomUUID().slice(0, 8);
     const alice = await client(`alice-${suffix}`);
@@ -370,6 +399,22 @@ describeEmulator('real Firestore rules and collaboration journey', () => {
         changes: [{ collection: 'todo_items', id: todo.id, baseVersion: 1,
           value: { ...todo, status: 'completed', completedAt: new Date(clock).toISOString() } }],
       })).rejects.toThrow('atomic completion');
+      // A modified client can bypass FirebaseSyncTransport entirely. The
+      // server rules must also reject completion without its ledger entry.
+      await expect(alice.firestore.runTransaction(async transaction => {
+        const group = await transaction.get(`groups/${hid}`);
+        const record = await transaction.get(`groups/${hid}/records/todo_items:${todo.id}`);
+        if (!group || !record) throw new Error('Missing pending todo');
+        const revision = Number(group.fields.revision) + 1;
+        const version = Number(record.fields.version) + 1;
+        const value = { ...todo, status: 'completed', completedAt: new Date(clock).toISOString() };
+        transaction.set(`groups/${hid}`, { ...group.fields, revision });
+        transaction.set(record.path, { ...record.fields, revision, eventIndex: 0, version, value });
+        transaction.set(`groups/${hid}/events/${revision}`, {
+          revision, groupId: hid, count: 1, createdAt: new Date(clock).toISOString() });
+        transaction.set(`groups/${hid}/events/${revision}/changes/0`, {
+          revision, index: 0, collection: 'todo_items', id: todo.id, version, value });
+      })).rejects.toMatchObject({ status: 403 });
       await bob.sync.pullChanges(hid);
       const received = (await bob.repos.todos.getById(todo.id))!;
       await completeTodoAtomic(bob.repos, kind === 'task'
