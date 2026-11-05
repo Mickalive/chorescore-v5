@@ -8,6 +8,9 @@ Aucune déclaration de produit terminé. Dernière vérification locale : **259 
 5 novembre — audit de la boucle GitHub et corrections : reprise après tentative de réparation échouée (hors panne d’initialisation), restauration des candidats non publiés sur leur seule révision d’origine, maintien de l’échec concret après un passage sans édition, publication immédiate d’une tranche passant les six portes indépendantes. Le parcours Android dispose de 55 minutes dans le contrôleur ; une nouvelle tentative ne démarre plus trop tard pour laisser les preuves être conservées. La concurrence devient propre à chaque vérification : un nouveau push ne doit plus annuler le parcours Android déjà lancé. **14 tests du contrôleur et 26 du pilote Android réussis**, deux workflows YAML analysés, compilation Python et diff vérifiés. La relance distante et l’intégration d’une correction produite par OpenCode restent à observer ; elles ne sont pas revendiquées sur la seule base de ces tests locaux. Aucun merge, déploiement automatique ni service payant ajouté.
 
 
+5 novembre — arrêt sans réécriture : quand les six contrôles de baseline réussissent, l’agent d’écriture n’est pas appelé. Le candidat est conservé pour acceptation finale ; aucun produit terminé n’est déclaré sur ces seuls contrôles. Sans patch vérifié, intégration et relance sont ignorées. Un candidat restauré déjà vérifié peut être publié sans nouvelle édition, suivi d’un seul contrôle final. **16 tests du contrôleur réussis**, dont deux exécutant le vrai programme dans un dépôt temporaire avec contrôles simulés : arrêt avant tout appel d’écriture si vert, conservation de l’échec après passages sans édition si rouge. Ces tests prouvent le contrôle du programme, pas l’application ni Firebase production.
+
+
 
 Mise à jour du 4 novembre — parcours Android automatisé : le même scénario
 installé est exécuté par Product acceptance et par OpenCode, avec vidéo par

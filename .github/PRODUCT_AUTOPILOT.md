@@ -106,3 +106,14 @@ queued by branch and completes its installed journey before the latest pending
 version starts. Never mark the entire product complete from a compilation, an
 agent message or a checkpoint; genuine Google/two-device acceptance remains
 separate. No automatic merge or production deployment is authorized here.
+
+## Stop before unnecessary rewrites
+
+When the current baseline passes all six independent gates, do not start the
+writer. Freeze the candidate with status awaiting-final-acceptance. A restored
+checkpoint that passes that baseline may be integrated without another edit;
+its successor runs one final verification and then stops. With no verified
+patch, the publication and continuation jobs are skipped. Green automation is
+not full product acceptance: original-specification review, real Google login
+and production collaboration remain explicit proofs. Do not invent features or
+rewrite working screens simply to produce another commit.

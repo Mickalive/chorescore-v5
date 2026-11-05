@@ -73,6 +73,8 @@ jobs:
     if: github.event.repository.private == false
     runs-on: ubuntu-24.04
     timeout-minutes: 300
+    outputs:
+      publishable: ${{ steps.repair.outputs.publishable }}
     permissions:
       contents: read
       actions: read
@@ -109,14 +111,22 @@ jobs:
       - *install-opencode
       - *local-runtime
       - name: Audit, implement and iterate against independent product gates
-        run: python3 scripts/ci/product-autopilot.py
+        id: repair
+        run: |
+          python3 scripts/ci/product-autopilot.py
+          if test -s verification-evidence/autopilot/verified.patch; then
+            echo 'publishable=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'publishable=false' >> "$GITHUB_OUTPUT"
+          fi
       - name: Expose concrete iteration outcome
         if: always()
         run: |
           python3 - <<'PY'
           from pathlib import Path
           file=Path('verification-evidence/autopilot/iterations.json')
-          text=file.read_text() if file.exists() else 'Worker did not reach an implementation iteration. Inspect the failed setup/health step.'
+          state=Path('verification-evidence/autopilot/mission-state.json')
+          text=state.read_text() if state.exists() else file.read_text() if file.exists() else 'Worker did not reach an implementation iteration. Inspect the failed setup/health step.'
           print('::notice title=Product reconstruction outcome::'+text[-12000:].replace('%','%25').replace('\n','%0A'))
           PY
       - uses: actions/upload-artifact@v4
@@ -134,6 +144,7 @@ jobs:
 
   integrate:
     needs: reconstruct
+    if: needs.reconstruct.outputs.publishable == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:

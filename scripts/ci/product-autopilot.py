@@ -11,7 +11,7 @@ import signal
 import time
 from pathlib import Path
 import subprocess
-from worker_protocol import run_worker, is_verified_product_patch
+from worker_protocol import run_worker, is_verified_product_patch, all_checks_passed
 from resume_candidate import restore_candidate
 
 ROOT = Path.cwd()
@@ -106,6 +106,19 @@ def stop_local_model():
 
 # Release model RAM before Gradle/Chromium/SQLite checks. Reload cached local
 # weights only when the next implementation pass actually starts.
+def retain_verified(patch, attempt):
+    (EVIDENCE / 'verified.patch').write_bytes(patch)
+    apk = ROOT / 'android/app/build/outputs/apk/release/app-release.apk'
+    shutil.copy2(apk, EVIDENCE / 'verified.apk')
+    shutil.copytree(ROOT / 'verification-evidence/android', EVIDENCE / 'verified-native', dirs_exist_ok=True)
+    (EVIDENCE / 'verified-candidate.json').write_text(json.dumps({
+        'base': BASE, 'attempt': attempt,
+        'patchSha256': hashlib.sha256(patch).hexdigest(),
+        'apkSha256': hashlib.sha256(apk.read_bytes()).hexdigest(),
+        'fullProductComplete': False,
+    }, indent=2) + '\n')
+
+
 stop_local_model()
 (EVIDENCE / 'base.txt').write_text(BASE + '\n')
 resumed = restore_candidate(CONTEXT / 'previous-worker', BASE, allowed)
@@ -117,9 +130,11 @@ verified = None
 initial = []
 previous = CONTEXT / 'previous-failures.md'
 baseline_failed = False
+baseline_outcomes = []
 for name, args, timeout in checks:
     log = EVIDENCE / f'baseline-{name}.log'
     passed = run(args, log, timeout)
+    baseline_outcomes.append({'check': name, 'passed': passed})
     initial.append(f'## Baseline {name}: {"PASS" if passed else "FAIL"}' +
         ('' if passed else '\n' + log.read_text(errors='replace')[-18000:]))
     if not passed:
@@ -130,6 +145,21 @@ for name, args, timeout in checks:
 if baseline_failed and previous.exists():
     initial.append('## Historical context (the current baseline above takes priority)\n' + previous.read_text()[-6000:])
 (CONTEXT / 'latest-checks.md').write_text('\n\n'.join(initial))
+if all_checks_passed(baseline_outcomes):
+    # Green checks authorize stopping automatic edits, not inventing proof of
+    # Google login, production access or the full original product contract.
+    if resumed:
+        protect_controls()
+        patch = subprocess.check_output(['git', 'diff', '--cached', '--binary', BASE])
+        if patch:
+            retain_verified(patch, 'resumed-baseline')
+    (EVIDENCE / 'mission-state.json').write_text(json.dumps({
+        'status': 'awaiting-final-acceptance', 'automaticEditsStopped': True,
+        'checks': baseline_outcomes, 'fullProductComplete': False,
+        'remainingProof': ['original-specification final review', 'real Google sign-in', 'two-phone production collaboration'],
+    }, indent=2) + '\n')
+    print('::notice title=Automatic edits stopped::All six checks passed. Preserve this candidate for final product acceptance.', flush=True)
+    raise SystemExit(0)
 last_checks = list(initial)
 for attempt in range(1, 4):
     # Leave enough of the hosted job for its longest possible verification,
@@ -184,18 +214,7 @@ for attempt in range(1, 4):
     (EVIDENCE / f'candidate-{attempt}.patch').write_bytes(patch)
     if passed:
         verified = patch
-        (EVIDENCE / 'verified.patch').write_bytes(patch)
-        (EVIDENCE / 'base.txt').write_text(BASE + '\n')
-        apk = ROOT / 'android/app/build/outputs/apk/release/app-release.apk'
-        shutil.copy2(apk, EVIDENCE / 'verified.apk')
-        native = ROOT / 'verification-evidence/android'
-        shutil.copytree(native, EVIDENCE / 'verified-native', dirs_exist_ok=True)
-        (EVIDENCE / 'verified-candidate.json').write_text(json.dumps({
-            'base': BASE, 'attempt': attempt,
-            'patchSha256': hashlib.sha256(patch).hexdigest(),
-            'apkSha256': hashlib.sha256(apk.read_bytes()).hexdigest(),
-            'fullProductComplete': False,
-        }, indent=2) + '\n')
+        retain_verified(patch, attempt)
         print('Verified product slice ready for integration; next workflow audits the remaining requirements.', flush=True)
         break
 
