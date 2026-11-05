@@ -1046,6 +1046,15 @@ except Exception:
     # as the downloadable evidence, without flattening it into an exit code.
     escaped=detail.replace('%','%25').replace('\r','%0D').replace('\n','%0A')
     print('::error title=Android acceptance failure::'+escaped,flush=True)
+    # Keep the current synthetic-device screen beside its assertion. Otherwise
+    # diagnosing one failure requires launching another whole workflow first.
+    try:
+        root=ET.fromstring((EVIDENCE/'latest-window.xml').read_text())
+        screen='\n'.join(' | '.join(node.attrib.get(key,'')[:200] for key in
+            ('package','resource-id','text','content-desc')) for node in root.iter('node')
+            if node.attrib.get('text') or node.attrib.get('content-desc'))[-6000:]
+        print('::notice title=Failed Android screen::'+screen.replace('%','%25').replace('\r','%0D').replace('\n','%0A'),flush=True)
+    except Exception:pass
     raise
 finally:
     try:(EVIDENCE/'logcat.txt').write_text(adb('logcat','-d','-t','1500',timeout=20))
