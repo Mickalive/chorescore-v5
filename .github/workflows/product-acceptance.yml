@@ -8,10 +8,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: product-acceptance-${{ github.ref }}
-  cancel-in-progress: true
-
 defaults:
   run:
     shell: bash
@@ -34,6 +30,9 @@ jobs:
         run: python3 scripts/ci/diagnose-previous-run.py
 
   application:
+    concurrency:
+      group: product-application-${{ github.ref }}
+      cancel-in-progress: true
     # Standard hosted runners are free for public repositories. Never consume
     # private-repository minutes or enable billing on the owner's behalf.
     if: github.event.repository.private == false
@@ -93,6 +92,9 @@ jobs:
           retention-days: 3
 
   firestore:
+    concurrency:
+      group: product-firestore-${{ github.ref }}
+      cancel-in-progress: true
     if: github.event.repository.private == false
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -125,6 +127,11 @@ jobs:
           retention-days: 3
 
   android:
+    # Finish the installed journey already running. Keep at most one latest
+    # pending successor instead of restarting Android after every source push.
+    concurrency:
+      group: product-android-${{ github.ref }}
+      cancel-in-progress: false
     if: github.event.repository.private == false
     runs-on: ubuntu-24.04
     timeout-minutes: 55

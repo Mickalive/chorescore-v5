@@ -96,7 +96,8 @@ else:
 (context / 'previous-failures.md').write_text('\n\n'.join(summaries))
 
 worker_runs = json.loads(request(api + '/actions/workflows/product-autopilot.yml/runs?per_page=10'))['workflow_runs']
-worker = next((run for run in worker_runs if run['id'] != current and run['conclusion'] == 'failure'), None)
+worker = next((run for run in worker_runs if run['id'] != current and run['conclusion'] == 'failure'
+               and (not branch or run.get('head_branch') == branch)), None)
 if worker:
     # A failed capability probe never creates product-reconstruction evidence.
     # Retrieve its own artifact instead of silently losing the actual failure.

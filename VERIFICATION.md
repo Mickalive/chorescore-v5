@@ -5,6 +5,9 @@ Aucune déclaration de produit terminé. Dernière vérification locale : **259 
 5 novembre — le parcours installé 41936741692 a observé la notification réelle, les deux complétions, les soldes avant redémarrage et la photo rouverte après arrêt du processus. Il a ensuite échoué sur les soldes après suppression. L’écran conservé montre la confirmation Android encore ouverte : le pilote touchait le titre « Supprimer » au lieu du bouton « SUPPRIMER ». Le ciblage utilise maintenant `android:id/button1` avec contrôle du libellé et du package. Test rouge avant correction, 26 tests du pilote réussis après ; nouveau parcours natif à exécuter. Aucun montant attendu ni invariant comptable modifié.
 
 
+5 novembre — audit de la boucle GitHub et corrections : reprise après tentative de réparation échouée (hors panne d’initialisation), restauration des candidats non publiés sur leur seule révision d’origine, maintien de l’échec concret après un passage sans édition, publication immédiate d’une tranche passant les six portes indépendantes. Le parcours Android dispose de 55 minutes dans le contrôleur ; une nouvelle tentative ne démarre plus trop tard pour laisser les preuves être conservées. La concurrence devient propre à chaque vérification : un nouveau push ne doit plus annuler le parcours Android déjà lancé. **14 tests du contrôleur et 26 du pilote Android réussis**, deux workflows YAML analysés, compilation Python et diff vérifiés. La relance distante et l’intégration d’une correction produite par OpenCode restent à observer ; elles ne sont pas revendiquées sur la seule base de ces tests locaux. Aucun merge, déploiement automatique ni service payant ajouté.
+
+
 
 Mise à jour du 4 novembre — parcours Android automatisé : le même scénario
 installé est exécuté par Product acceptance et par OpenCode, avec vidéo par

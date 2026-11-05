@@ -89,3 +89,20 @@ resumes the same programme on that new revision. Existing public GitHub token
 push suppression must never silently stop product reconstruction. If an
 external service cannot run or no verified patch is produced, the failed
 checks and candidates remain evidence; do not publish a false completion.
+
+## Continuity of the same mission
+
+A failed implementation cycle with retained iteration evidence schedules the next
+cycle after the free-model capability probe passes. Setup/probe failures remain
+explicit failures rather than unattended bootstrap retries. Unpublished patches
+may resume only on their exact upstream revision and only inside the existing
+source allowlist. They are never considered verified by restoration. All six
+independent gates still apply before integration into PR #2. A pass without a
+source edit keeps the last actual check failure as its next work order.
+
+Once a product slice passes every gate, publish that verified slice immediately;
+the next workflow audits the remaining requirements. Android verification is
+queued by branch and completes its installed journey before the latest pending
+version starts. Never mark the entire product complete from a compilation, an
+agent message or a checkpoint; genuine Google/two-device acceptance remains
+separate. No automatic merge or production deployment is authorized here.

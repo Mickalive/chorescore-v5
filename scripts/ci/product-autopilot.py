@@ -8,11 +8,14 @@ import os
 import hashlib
 import shutil
 import signal
+import time
 from pathlib import Path
 import subprocess
 from worker_protocol import run_worker, is_verified_product_patch
+from resume_candidate import restore_candidate
 
 ROOT = Path.cwd()
+STARTED_AT = time.monotonic()
 EVIDENCE = ROOT / 'verification-evidence' / 'autopilot'
 EVIDENCE.mkdir(parents=True, exist_ok=True)
 CONTEXT = ROOT / '.opencode-ci'
@@ -80,7 +83,7 @@ checks = [
         'firebase', 'emulators:exec', '--only', 'firestore', '--project', 'demo-chorescore-audit',
         'node scripts/firebase/verify-rules.cjs'], 420),
     ('browser', ['npm', 'run', 'test:web'], 240),
-    ('android', ['bash', 'scripts/ci/native-acceptance.sh'], 1800),
+    ('android', ['bash', 'scripts/ci/native-acceptance.sh'], 3300),
 ]
 
 
@@ -104,6 +107,11 @@ def stop_local_model():
 # Release model RAM before Gradle/Chromium/SQLite checks. Reload cached local
 # weights only when the next implementation pass actually starts.
 stop_local_model()
+(EVIDENCE / 'base.txt').write_text(BASE + '\n')
+resumed = restore_candidate(CONTEXT / 'previous-worker', BASE, allowed)
+if resumed:
+    (EVIDENCE / 'resumed-candidate.json').write_text(json.dumps(resumed, indent=2) + '\n')
+    print('Unpublished source restored onto the same revision; all acceptance gates remain mandatory.', flush=True)
 records = []
 verified = None
 initial = []
@@ -122,7 +130,12 @@ for name, args, timeout in checks:
 if baseline_failed and previous.exists():
     initial.append('## Historical context (the current baseline above takes priority)\n' + previous.read_text()[-6000:])
 (CONTEXT / 'latest-checks.md').write_text('\n\n'.join(initial))
+last_checks = list(initial)
 for attempt in range(1, 4):
+    # Leave enough of the hosted job for its longest possible verification,
+    # evidence upload and continuation; unfinished source resumes next run.
+    if time.monotonic() - STARTED_AT >= 2 * 60 * 60:
+        break
     if not run(['python3', 'scripts/ci/start-local-coder.py'], EVIDENCE / f'{attempt}-local-start.log', 900):
         raise SystemExit('Local CPU model failed to start; no paid fallback used.')
     prompt = MISSION + '\nPass ' + str(attempt) + '. Read .opencode-ci/latest-checks.md first if present. Implement real product changes now.'
@@ -142,6 +155,8 @@ for attempt in range(1, 4):
     outcomes = []
     context = []
     if not product:
+        # A read-only pass must not erase the concrete failure for the next one.
+        context.extend(last_checks)
         context.append('REJECTED: no executable product change; reports/tests alone do not complete the product.')
         context.append((EVIDENCE / f'worker-{attempt}.jsonl').read_text(errors='replace')[-6000:])
     for name, args, timeout in (checks if product else []):
@@ -155,6 +170,8 @@ for attempt in range(1, 4):
         # rebuilding native artifacts while accounting/security is broken.
         if not passed:
             break
+    if product:
+        last_checks = list(context)
     (CONTEXT / 'latest-checks.md').write_text('\n\n'.join(context))
     # An interrupted model is not proof of a bad patch, and a confident final
     # message is not proof of a good one. Retain only actual source changes
@@ -179,17 +196,9 @@ for attempt in range(1, 4):
             'apkSha256': hashlib.sha256(apk.read_bytes()).hexdigest(),
             'fullProductComplete': False,
         }, indent=2) + '\n')
-        print('Verified product slice retained; continuing the next remaining requirement.', flush=True)
-    elif verified is not None:
-        # Failed experiments must not replace the strongest verified source.
-        subprocess.run(['git', 'reset', '--hard', BASE], check=True)
-        # Remove only this disposable worker's new allowed source files; never
-        # remove preserved evidence, dependencies or a user's workspace.
-        for name in subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard'], text=True).splitlines():
-            if allowed(name):
-                Path(name).unlink(missing_ok=True)
-        subprocess.run(['git', 'apply', '--index', '-'], input=verified, check=True)
+        print('Verified product slice ready for integration; next workflow audits the remaining requirements.', flush=True)
+        break
 
 if verified is None:
-    raise SystemExit('No verified product slice after three bounded iterations; candidates and exact failures preserved.')
+    raise SystemExit('No verified product slice yet; unpublished candidates and exact failures retained for the next cycle.')
 (EVIDENCE / 'verified.patch').write_bytes(verified)
