@@ -234,6 +234,11 @@ describeEmulator('real Firestore rules and collaboration journey', () => {
       name: 'Completed before cloud', owner: { userId: alice.uid, displayName: 'Alice' },
       memberNames: [], contributionUnit: 'points',
     });
+    const localCategories = [];
+    for (let index = 0; index < 26; index++) {
+      localCategories.push(await alice.repos.categories.create({
+        householdId: household.id, name: `Local history ${index}`, defaultTaskRatio: null }));
+    }
     const completed: Array<{ id: string; kind: 'task' | 'expense' }> = [];
     for (const kind of ['task', 'expense'] as const) {
       const todo = await alice.repos.todos.create({householdId: household.id, title: kind, kind,
@@ -247,6 +252,10 @@ describeEmulator('real Firestore rules and collaboration journey', () => {
       completed.push({id: todo.id, kind});
     }
     await expect(alice.sync.pushChanges(household.id)).resolves.toBeUndefined();
+    for (const category of localCategories) {
+      expect((await alice.firestore.getDocument(`groups/${household.id}/records/categories:${category.id}`))?.fields.value)
+        .toMatchObject({ id: category.id, name: category.name });
+    }
     for (const todo of completed) {
       const remote = await alice.firestore.getDocument(`groups/${household.id}/records/todo_items:${todo.id}`);
       expect(remote?.fields.value).toMatchObject({status: 'completed'});

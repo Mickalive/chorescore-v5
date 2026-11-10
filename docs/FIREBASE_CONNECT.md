@@ -4,6 +4,26 @@ Projet : **chorescore-a75b1**. Conserver le forfait **Spark**, sans carte bancai
 Ces étapes activent la connexion et fournissent la configuration publique de
 l’application ; elles ne donnent pas accès au compte Google à l’assistant.
 
+## État actuel et dernières actions
+
+Le fichier Android a déjà été reçu : projet/package, client Google et signature
+ont été vérifiés ; le candidat Firebase est compilé. Le parcours Android local
+complet et les quatre scénarios Firestore officiels passent.
+
+Pour la validation de production :
+
+1. Copier tout le [fichier de règles corrigé a267d05](https://raw.githubusercontent.com/Mickalive/chorescore-v5/a267d05/firebase/firestore.rules), remplacer le code dans [Firestore → Règles](https://console.firebase.google.com/project/chorescore-a75b1/firestore/rules), puis **Publier**. Cette version ajoute le refus d’une complétion sans écriture ; la première publication n’installe pas automatiquement cette correction.
+2. Installer le candidat Firebase fourni dans la conversation et toucher **Continuer avec Google**. La connexion réelle doit aboutir à Groupes et rester après fermeture/réouverture.
+3. Sur un second téléphone connecté avec un autre compte, accepter l’invitation d’un membre nommé. Vérifier le même groupe, une tâche et une photo dans les deux sens, puis une modification hors ligne après reconnexion.
+
+Ces actions utilisent la session Google et les appareils du propriétaire.
+Aucune session administrateur ni identité Google réelle n’est disponible dans
+l’environnement de développement. Ne pas envoyer de mot de passe ou de clé privée.
+
+## Référence de configuration
+
+Les étapes ci-dessous décrivent la configuration initiale déjà réalisée.
+
 ## 1. Activer Google
 
 Ouvrir [Authentication → Fournisseurs](https://console.firebase.google.com/project/chorescore-a75b1/authentication/providers).
