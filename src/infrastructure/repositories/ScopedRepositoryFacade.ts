@@ -1,3 +1,4 @@
+import type { ContributionActivityQuery } from '../../domain/calculations/contributionActivity';
 /**
  * ChoreScore V3 — Scoped Repository Facade
  *
@@ -73,6 +74,12 @@ export function createScopedRepositories(
 ): AllRepositories {
   return {
     ...repos,
+    balanceProjections: {
+      async getByHousehold(householdId, unit, memberIds) {
+        requireHouseholdMembership(callerUserId, householdId, await repos.memberships.getByHousehold(householdId));
+        return repos.balanceProjections.getByHousehold(householdId, unit, memberIds);
+      },
+    },
     contributions: new ScopedContributionRepository(repos.contributions, callerUserId, repos.memberships),
     expenses: new ScopedExpenseRepository(repos.expenses, callerUserId, repos.memberships),
     todos: new ScopedTodoRepository(repos.todos, callerUserId, repos.memberships),
@@ -170,6 +177,10 @@ function extractHouseholdId(
  * Authorization-enforcing facade for a contribution entry repository.
  */
 export class ScopedContributionRepository implements ContributionEntryRepository {
+  async getActivitySummary(householdId: string, query: ContributionActivityQuery) {
+    await this.checkMembership(householdId);
+    return this.inner.getActivitySummary(householdId, query);
+  }
   constructor(
     private inner: ContributionEntryRepository,
     private callerUserId: string,
@@ -298,6 +309,16 @@ export class ScopedTodoRepository implements TodoRepository {
   }
 
   seed(items: TodoItem[]): Promise<void> | void { return this.inner.seed(items); }
+
+  async getFutureReminders(householdId: string, after: string): Promise<TodoItem[]> {
+    await this.checkMembership(householdId);
+    return this.inner.getFutureReminders(householdId, after);
+  }
+
+  async getOpenByHousehold(householdId: string): Promise<TodoItem[]> {
+    await this.checkMembership(householdId);
+    return this.inner.getOpenByHousehold(householdId);
+  }
 
   async getByHousehold(householdId: string): Promise<TodoItem[]> {
     await this.checkMembership(householdId);
@@ -446,6 +467,13 @@ export class ScopedHouseholdRepository implements HouseholdRepository {
  * Authorization-enforcing facade for a member repository.
  */
 export class ScopedMemberRepository implements MemberRepository {
+  async getCountsByHouseholds(householdIds: string[]): Promise<Record<string, number>> {
+    if (householdIds.length === 0) return {};
+    const memberships = await this.membershipRepo.getByUser(this.callerUserId);
+    for (const id of new Set(householdIds)) requireHouseholdMembership(this.callerUserId, id, memberships);
+    return this.inner.getCountsByHouseholds(householdIds);
+  }
+
   constructor(
     private inner: MemberRepository,
     private callerUserId: string,

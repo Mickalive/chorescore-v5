@@ -22,34 +22,7 @@ import {
   ExpenseCompletionOutput,
   planTodoCompletion,
 } from '../../domain/services/todoCompletionService';
-
-async function persistTaskCompletion(
-  repos: AllRepositories,
-  input: CompletionInput,
-  result: CompletionOutput
-): Promise<void> {
-  await repos.withTransaction(async () => {
-    await repos.todos.update(input.todo.id, {
-      status: 'completed',
-      completedAt: result.updatedTodo.completedAt,
-    });
-    await repos.contributions.create(result.contributionEntry);
-  });
-}
-
-async function persistExpenseCompletion(
-  repos: AllRepositories,
-  input: ExpenseCompletionInput,
-  result: ExpenseCompletionOutput
-): Promise<void> {
-  await repos.withTransaction(async () => {
-    await repos.todos.update(input.todo.id, {
-      status: 'completed',
-      completedAt: result.updatedTodo.completedAt,
-    });
-    await repos.expenses.create(result.expenseEntry);
-  });
-}
+import { todoCompletionEntryId } from '../../domain/services/todoCompletionId';
 
 /**
  * Complete a todo atomically.
@@ -78,13 +51,32 @@ export async function completeTodoAtomic(
   repos: AllRepositories,
   input: CompletionInput | ExpenseCompletionInput
 ): Promise<CompletionOutput | ExpenseCompletionOutput> {
-  const result = planTodoCompletion(input);
-
-  if (result.kind === 'expense') {
-    await persistExpenseCompletion(repos, input as ExpenseCompletionInput, result);
+  return repos.withTransaction(async () => {
+    // Re-read under the transaction: the screen may still hold a stale todo
+    // after another tap has completed it. Never trust that stale status.
+    const todo = await repos.todos.getById(input.todo.id);
+    if (!todo || todo.householdId !== input.household.id) {
+      throw new Error('Todo does not belong to this household');
+    }
+    const result = planTodoCompletion({ ...input, todo });
+    // Deterministic id shared with the server: a retry after an ambiguous
+    // network result can never record the completion twice.
+    const entryId = await todoCompletionEntryId(todo.id);
+    if (result.kind === 'expense') {
+      await repos.expenses.create({ ...result.expenseEntry, id: entryId } as Omit<
+        typeof result.expenseEntry,
+        'id'
+      >);
+    } else {
+      await repos.contributions.create({ ...result.contributionEntry, id: entryId } as Omit<
+        typeof result.contributionEntry,
+        'id'
+      >);
+    }
+    await repos.todos.update(todo.id, {
+      status: 'completed',
+      completedAt: result.updatedTodo.completedAt,
+    });
     return result;
-  }
-
-  await persistTaskCompletion(repos, input as CompletionInput, result);
-  return result;
+  });
 }

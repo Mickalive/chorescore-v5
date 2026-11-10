@@ -1,0 +1,233 @@
+name: Product reconstruction
+
+on:
+  push:
+    branches: [feat/product-reconstruction]
+    paths:
+      - 'src/**'
+      - 'app/**'
+      - 'backend/**'
+      - 'firebase/**'
+      - 'plugins/**'
+      - 'assets/**'
+      - 'app.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/PRODUCT_AUTOPILOT.md'
+      - 'AGENTS.md'
+      - 'CODEX_MISSION.md'
+      - 'PRODUCT.md'
+      - 'opencode.json'
+      - 'docs/CROSS_REPOSITORY_REQUIREMENTS.md'
+      - '.github/workflows/product-autopilot.yml'
+      - 'scripts/ci/prepare-android-runner.sh'
+      - 'scripts/ci/resume_candidate.py'
+      - 'scripts/ci/product-autopilot.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chorescore-single-product-writer
+  cancel-in-progress: true
+
+jobs:
+  free-model:
+    if: github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      model: ${{ steps.probe.outputs.model }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - &install-opencode
+        name: Install verified OpenCode (including worker hang fix)
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/opencode-bin"
+          curl --fail --location --max-time 120 --retry 2 https://github.com/anomalyco/opencode/releases/download/v1.19.5/opencode-linux-x64.tar.gz -o "$RUNNER_TEMP/opencode.tar.gz"
+          printf '%s  %s\n' 588310a336fa3b9df36b3f0225b26f679d453efaad0cf3d66c3651ef3ec1647a "$RUNNER_TEMP/opencode.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/opencode.tar.gz" -C "$RUNNER_TEMP/opencode-bin"
+          echo "$RUNNER_TEMP/opencode-bin" >> "$GITHUB_PATH"
+      - &local-runtime
+        name: Start Apache-2.0 CPU model (no inference API, key or billing)
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libcurl4-openssl-dev ninja-build
+          python3 scripts/ci/start-local-coder.py
+      - name: Prove an actual code repair with an unchanged failing-then-passing test
+        id: probe
+        run: python3 scripts/ci/prove-local-coder.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: free-model-proof-${{ github.run_id }}
+          path: verification-evidence/autopilot/
+          retention-days: 3
+
+  reconstruct:
+    needs: free-model
+    if: github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    outputs:
+      publishable: ${{ steps.repair.outputs.publishable }}
+    permissions:
+      contents: read
+      actions: read
+    env:
+      EXPO_NO_TELEMETRY: '1'
+      EVIDENCE_DIR: verification-evidence/browser
+      AUTOPILOT_MODEL: ${{ needs.free-model.outputs.model }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: feat/product-reconstruction
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Make room for the real Android journey and local model
+        run: bash scripts/ci/prepare-android-runner.sh
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install locked dependencies and real browser
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium
+          echo "CHROME_BIN=$(node -e "process.stdout.write(require('@playwright/test').chromium.executablePath())")" >> "$GITHUB_ENV"
+      - name: Preserve exact latest failing check context
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci/diagnose-previous-run.py
+      - *install-opencode
+      - *local-runtime
+      - name: Audit, implement and iterate against independent product gates
+        id: repair
+        run: |
+          python3 scripts/ci/product-autopilot.py
+          if test -s verification-evidence/autopilot/verified.patch; then
+            echo 'publishable=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'publishable=false' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Expose concrete iteration outcome
+        if: always()
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          file=Path('verification-evidence/autopilot/iterations.json')
+          state=Path('verification-evidence/autopilot/mission-state.json')
+          text=state.read_text() if state.exists() else file.read_text() if file.exists() else 'Worker did not reach an implementation iteration. Inspect the failed setup/health step.'
+          print('::notice title=Product reconstruction outcome::'+text[-12000:].replace('%','%25').replace('\n','%0A'))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: product-reconstruction-${{ github.run_id }}
+          path: |
+            verification-evidence/autopilot/
+            verification-evidence/browser/
+            verification-evidence/android/
+            verification-evidence/firestore/
+            .opencode-ci/latest-checks.md
+          include-hidden-files: true
+          retention-days: 3
+
+  integrate:
+    needs: reconstruct
+    if: needs.reconstruct.outputs.publishable == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: feat/product-reconstruction
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: product-reconstruction-${{ github.run_id }}
+          path: candidate
+      - name: Integrate verified product changes without replacing concurrent work
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          base=$(cat candidate/verification-evidence/autopilot/base.txt)
+          test "$(git rev-parse HEAD)" = "$base"
+          git apply --check --index candidate/verification-evidence/autopilot/verified.patch
+          git apply --index candidate/verification-evidence/autopilot/verified.patch
+          git diff --cached --quiet && exit 1
+          python3 - <<'PY'
+          import pathlib,subprocess
+          baseline=set(subprocess.check_output(['git','ls-tree','-r','--name-only','HEAD'],text=True).splitlines())
+          paths=subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines()
+          for name in paths:
+            p=pathlib.Path(name)
+            allowed=name in {'VERIFICATION.md','app.json'} or p.parts[0] in {'src','app','backend','firebase','plugins','assets'} or (p.parts[0] in {'tests','backend-tests'} and name not in baseline)
+            assert allowed and not p.is_symlink(), 'Rejected non-product or protected path: '+name
+          assert any(p.startswith(('src/','app/','backend/','firebase/','plugins/','assets/')) or p=='app.json' for p in paths), 'Report-only publication rejected'
+          PY
+          git config user.name 'ChoreScore product worker'
+          git config user.email 'chorescore-worker@users.noreply.github.com'
+          git commit -m "Implement independently verified product slice from reconstruction $GITHUB_RUN_ID"
+          git -c credential.helper='!f() { echo username=x-access-token; echo "password=$GH_TOKEN"; }; f' push origin HEAD:feat/product-reconstruction
+          # Pushes made with GITHUB_TOKEN do not trigger another workflow.
+          # Explicitly resume the same programme after verified source moves.
+          # Use the registered numeric id so no default-branch name lookup is
+          # needed; preserve the existing branch and integrated PR.
+          acceptance_id=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows" --jq '.workflows[] | select(.path == ".github/workflows/product-acceptance.yml") | .id')
+          test -n "$acceptance_id"
+          gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/$acceptance_id/dispatches" -f ref=feat/product-reconstruction
+
+  continue-mission:
+    needs: [free-model, reconstruct, integrate]
+    if: >-
+      always() && !cancelled() && github.event.repository.private == false &&
+      needs.free-model.result == 'success' &&
+      (needs.reconstruct.result == 'failure' || needs.integrate.result == 'success')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Resume the same mission after verification or an unfinished repair
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPAIR_RESULT: ${{ needs.reconstruct.result }}
+        run: |
+          set -euo pipefail
+          if [ "$REPAIR_RESULT" = failure ]; then
+            current=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/feat/product-reconstruction" --jq .object.sha)
+            if [ "$current" != "$GITHUB_SHA" ]; then
+              echo 'New source already launched its own mission; do not restart an obsolete run.'
+              exit 0
+            fi
+            # Missing iteration evidence means setup failed, not that a repair
+            # was attempted. Expose the failure instead of looping on bootstrap.
+            gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "product-reconstruction-$GITHUB_RUN_ID" --dir previous
+            test -n "$(find previous -name iterations.json -type f -print -quit)"
+            if ! python3 scripts/ci/has-product-progress.py previous; then
+              echo '::notice title=Automatic retries stopped::The worker made no executable product change. Maintainer repair is required; do not repeat read-only cycles.'
+              exit 0
+            fi
+          fi
+          workflow_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .workflow_id)
+          gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow_id/dispatches" -f ref=feat/product-reconstruction
+          echo 'Next audit/repair/verification cycle requested; no merge or deployment performed.'

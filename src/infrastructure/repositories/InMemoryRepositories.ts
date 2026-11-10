@@ -1,8 +1,9 @@
+import { calculateContributionActivity, ContributionActivityQuery } from '../../domain/calculations/contributionActivity';
 /**
  * ChoreScore V3 — In-Memory Repositories
  *
  * Used for testing and as a fallback when SQLite is not available.
- * Each repository generates deterministic IDs for testability.
+ * Record identities use the same device-independent UUIDs as SQLite.
  */
 
 import {
@@ -21,6 +22,9 @@ import {
   SyncCursor,
   SyncRecord,
   SyncCollection,
+  SyncGroupState,
+  SyncConflict,
+  PendingSyncMutation,
 } from '../../domain/entities';
 import {
   UserRepository,
@@ -40,11 +44,7 @@ import {
   PaginatedQuery,
 } from './index';
 
-let idCounter = 0;
-function generateId(prefix: string): string {
-  idCounter += 1;
-  return `${prefix}-${idCounter}-${Date.now()}`;
-}
+import { generateRecordId as generateId } from './recordIdentity';
 
 export class InMemoryUserRepository implements UserRepository {
   private items = new Map<string, User>();
@@ -193,6 +193,14 @@ export class InMemoryHouseholdRepository implements HouseholdRepository {
 }
 
 export class InMemoryMemberRepository implements MemberRepository {
+  async getCountsByHouseholds(householdIds: string[]): Promise<Record<string, number>> {
+    const counts = Object.fromEntries(householdIds.map(id => [id, 0]));
+    for (const member of this.items.values()) {
+      if (Object.hasOwn(counts, member.householdId)) counts[member.householdId] += 1;
+    }
+    return counts;
+  }
+
   private items = new Map<string, Member>();
 
   /** Snapshot internal state for transactional rollback. */
@@ -394,6 +402,9 @@ export class InMemoryCategoryRepository implements CategoryRepository {
 }
 
 export class InMemoryContributionEntryRepository implements ContributionEntryRepository {
+  async getActivitySummary(householdId: string, query: ContributionActivityQuery) {
+    return calculateContributionActivity([...this.items.values()].filter(entry => entry.householdId === householdId), query);
+  }
   private items = new Map<string, ContributionEntry>();
 
   /** Snapshot internal state for transactional rollback. */
@@ -425,6 +436,10 @@ export class InMemoryContributionEntryRepository implements ContributionEntryRep
     const limit = query.limit ?? 20;
     let items = Array.from(this.items.values())
       .filter((e) => e.householdId === householdId);
+
+    if (query.persistentTaskId !== undefined) {
+      items = items.filter(entry => (entry.persistentTaskId ?? null) === query.persistentTaskId);
+    }
 
     // Apply after filter (inclusive)
     if (query.after) {
@@ -587,6 +602,20 @@ export class InMemoryTodoRepository implements TodoRepository {
     for (const t of todos) {
       this.items.set(t.id, { ...t });
     }
+  }
+
+  async getFutureReminders(householdId: string, after: string): Promise<TodoItem[]> {
+    return [...this.items.values()].filter(todo => todo.householdId === householdId && todo.status !== 'completed'
+      && todo.reminderAt && todo.reminderAt > after)
+      .sort((a, b) => a.reminderAt!.localeCompare(b.reminderAt!) || a.id.localeCompare(b.id));
+  }
+
+  async getOpenByHousehold(householdId: string): Promise<TodoItem[]> {
+    const open: TodoItem[]=[];
+    for (const todo of this.items.values()) {
+      if (todo.householdId===householdId && todo.status!=='completed') open.push(todo);
+    }
+    return open;
   }
 
   async getByHousehold(householdId: string): Promise<TodoItem[]> {
@@ -825,6 +854,9 @@ export class InMemorySettlementRepository implements SettlementRepository {
 
 export class InMemoryInvitationRepository implements InvitationRepository {
   private items = new Map<string, Invitation>();
+  snapshot(): Map<string,Invitation> { return new Map([...this.items].map(([id,row]) => [id,{...row}])); }
+  restoreFromSnapshot(rows: Map<string,Invitation>): void { this.items = new Map(rows); }
+
 
   seed(items: Invitation[]): void {
     for (const inv of items) {
@@ -912,8 +944,54 @@ export class InMemoryInvitationRepository implements InvitationRepository {
 // ── V3-06: InMemory Sync State Repository ──────────────────────
 
 export class InMemorySyncStateRepository implements SyncStateRepository {
+  private sequences = new Map<string, number>();
+  snapshotSequences(): Map<string,number> { return new Map(this.sequences); }
+  restoreSequences(rows: Map<string,number>): void { this.sequences = new Map(rows); }
+  clearHousehold(householdId: string): void {
+    for (const map of [this.sequences,this.cursors,this.records,this.remoteVersions,this.pendingMutations,this.conflicts]) {
+      for (const key of map.keys()) if(key.startsWith(`${householdId}:`) || key === householdId) map.delete(key);
+    }
+    this.groupStates.delete(householdId);
+  }
+
+  async nextLocalRevision(householdId: string, collection: SyncCollection): Promise<number> {
+    const key = `${householdId}:${collection}`;
+    const previous = this.sequences.get(key) ?? Math.max(
+      this.cursors.get(key)?.lastRevision ?? 0,
+      (this.records.get(key) ?? []).reduce((max, record) => Math.max(max, record.revision), 0),
+    );
+    this.sequences.set(key, previous + 1);
+    return previous + 1;
+  }
+
   private cursors = new Map<string, SyncCursor>();
   private records = new Map<string, SyncRecord[]>();
+  private groupStates = new Map<string, SyncGroupState>();
+  private remoteVersions = new Map<string, number>();
+  private pendingMutations = new Map<string, PendingSyncMutation>();
+  private conflicts = new Map<string, SyncConflict>();
+
+  snapshotMetadata(): unknown {
+    return {
+      groupStates: new Map(Array.from(this.groupStates, ([k, v]) => [k, { ...v }])),
+      remoteVersions: new Map(this.remoteVersions),
+      pendingMutations: new Map(Array.from(this.pendingMutations, ([k, v]) => [k, { ...v }])),
+      conflicts: new Map(Array.from(this.conflicts, ([k, v]) => [k, { ...v }])),
+    };
+  }
+
+  restoreMetadata(snapshot: unknown): void {
+    const snap = snapshot as {
+      groupStates: Map<string, SyncGroupState>;
+      remoteVersions: Map<string, number>;
+      pendingMutations: Map<string, PendingSyncMutation>;
+      conflicts: Map<string, SyncConflict>;
+    };
+    this.groupStates = new Map(snap.groupStates);
+    this.remoteVersions = new Map(snap.remoteVersions);
+    this.pendingMutations = new Map(snap.pendingMutations);
+    this.conflicts = new Map(snap.conflicts);
+  }
 
   // V3-06 REPAIR: Snapshot/restore for transactional rollback of sync state
   snapshotCursors(): Map<string, SyncCursor> {
@@ -1011,13 +1089,91 @@ export class InMemorySyncStateRepository implements SyncStateRepository {
     // NOTE: cursor is NOT advanced — records still need to be pushed.
   }
 
+  async countDirtyRecords(householdId: string, collection: SyncCollection, sinceRevision: number): Promise<number> {
+    let count = 0;
+    for (const record of this.records.get(`${householdId}:${collection}`) ?? []) {
+      if (record.revision > sinceRevision) count++;
+    }
+    return count;
+  }
+
   async getDirtyRecords(
     householdId: string,
     collection: SyncCollection,
     sinceRevision: number,
+    limit?: number,
   ): Promise<SyncRecord[]> {
+    if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 0)) {
+      throw new Error('Invalid outbox page limit');
+    }
     const key = `${householdId}:${collection}`;
     const existing = this.records.get(key) ?? [];
-    return existing.filter((r) => r.revision > sinceRevision);
+    const pending = existing.filter(r => r.revision > sinceRevision).sort((a, b) => a.revision - b.revision);
+    return limit === undefined ? pending : pending.slice(0, limit);
+  }
+
+  async getGroupState(householdId: string): Promise<SyncGroupState | null> {
+    const state = this.groupStates.get(householdId);
+    return state ? { ...state } : null;
+  }
+
+  async setGroupState(state: SyncGroupState): Promise<void> {
+    this.groupStates.set(state.householdId, { ...state });
+  }
+
+  async getRemoteVersion(
+    householdId: string,
+    collection: SyncCollection,
+    entityId: string,
+  ): Promise<number> {
+    return this.remoteVersions.get(`${householdId}:${collection}:${entityId}`) ?? 0;
+  }
+
+  async setRemoteVersion(
+    householdId: string,
+    collection: SyncCollection,
+    entityId: string,
+    version: number,
+  ): Promise<void> {
+    this.remoteVersions.set(`${householdId}:${collection}:${entityId}`, version);
+  }
+
+  async getPendingMutation(householdId: string): Promise<PendingSyncMutation | null> {
+    const mutation = this.pendingMutations.get(householdId);
+    return mutation ? { ...mutation } : null;
+  }
+
+  async savePendingMutation(mutation: PendingSyncMutation): Promise<void> {
+    this.pendingMutations.set(mutation.householdId, { ...mutation });
+  }
+
+  async deletePendingMutation(householdId: string): Promise<void> {
+    this.pendingMutations.delete(householdId);
+  }
+
+  async recordConflict(conflict: SyncConflict): Promise<void> {
+    this.conflicts.set(conflict.id, { ...conflict });
+  }
+
+  async getConflicts(householdId: string): Promise<SyncConflict[]> {
+    return Array.from(this.conflicts.values())
+      .filter((conflict) => conflict.householdId === householdId)
+      .map((conflict) => ({ ...conflict }));
+  }
+
+  async resolveConflicts(householdId: string, collection: SyncCollection, entityId: string): Promise<void> {
+    for (const [id, conflict] of this.conflicts) {
+      if (conflict.householdId === householdId && conflict.collection === collection &&
+          conflict.entityId === entityId && !conflict.resolvedAt) {
+        this.conflicts.set(id, { ...conflict, resolvedAt: new Date().toISOString() });
+      }
+    }
+  }
+
+  async discardLocalRecord(householdId: string, collection: SyncCollection, entityId: string): Promise<void> {
+    const key = `${householdId}:${collection}`;
+    const existing = this.records.get(key);
+    if (!existing) return;
+    this.records.set(key, existing.filter((record) => record.id !== entityId));
   }
 }

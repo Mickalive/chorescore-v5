@@ -1,0 +1,26 @@
+{
+  "reviewedOn": "2026-11-10",
+  "sourceCommit": "a267d05c352daa775c9dc9ca527d7d28f9d4c8d3",
+  "workflowRun": "https://github.com/Mickalive/chorescore-v5/actions/runs/42057075303",
+  "androidJob": "https://github.com/Mickalive/chorescore-v5/actions/runs/42057075303/job/127348267945",
+  "installedJourneyPassed": true,
+  "completedAtUtc": "2026-11-05T16:26:35Z",
+  "observedPublicCheckpoints": [
+    "reminder-delivered-android",
+    "native-share-android",
+    "compensation-persisted-android"
+  ],
+  "applicationJobPassed": true,
+  "officialFirestoreJobPassed": true,
+  "scope": "Normal release with its honest local account; configured Google candidate is separate.",
+  "realGoogleSignInVerified": false,
+  "twoPhoneProductionCollaborationVerified": false,
+  "evidenceRetention": "GitHub artifact retention was 3 days; historical screenshots were not retrieved in this review.",
+  "automationStop": {
+    "workflowRun": "https://github.com/Mickalive/chorescore-v5/actions/runs/42057075246",
+    "observedStatus": "awaiting-final-acceptance",
+    "automaticEditsStopped": true,
+    "integrationSkipped": true,
+    "continuationSkipped": true
+  }
+}

@@ -15,7 +15,7 @@ export class LocalResearchAnalyticsAdapter implements ResearchAnalyticsGateway {
   }
 
   setEnabled(enabled: boolean): void {
-    this.enabled = enabled;
+    this.enabled = enabled && this.isAvailable();
   }
 
   emitFact(_fact: AnalyticsFact): void {

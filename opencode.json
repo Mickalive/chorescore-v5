@@ -1,0 +1,45 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "local-coder/chorescore-coder",
+  "small_model": "local-coder/chorescore-coder",
+  "enabled_providers": [
+    "local-coder"
+  ],
+  "provider": {
+    "local-coder": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Free local CPU coder",
+      "options": {
+        "baseURL": "http://127.0.0.1:18080/v1",
+        "apiKey": "local-no-billing"
+      },
+      "models": {
+        "chorescore-coder": {
+          "name": "Qwen3 8B CPU",
+          "limit": {
+            "context": 32768,
+            "output": 8192
+          },
+          "cost": {
+            "input": 0,
+            "output": 0
+          }
+        }
+      }
+    }
+  },
+  "share": "disabled",
+  "autoupdate": false,
+  "permission": {
+    "*": "allow",
+    "external_directory": "deny",
+    "task": "deny",
+    "doom_loop": "deny"
+  },
+  "agent": {
+    "build": {
+      "steps": 80,
+      "prompt": "Implement the assigned repair directly using read, grep, bash and edit tools. Never delegate, call task, invent session identifiers or launch another agent. Read the concrete work order first. Make and test a real code change before writing a report. The app source is TypeScript in app/*.tsx and src/. Read targeted source ranges (at most 200 lines). VERIFICATION.md is a long chronological log: read only its leading summary unless a specific section is needed. Do not restart the requirements matrix or read whole reports while a concrete failure is available."
+    }
+  }
+}

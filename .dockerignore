@@ -1,0 +1,13 @@
+node_modules
+.git
+.github
+android
+ios
+.expo
+dist-backend
+.opencode-ci
+docs/evidence
+*.log
+.env
+.env.*
+!.env.example

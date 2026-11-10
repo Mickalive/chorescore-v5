@@ -1,3 +1,4 @@
+import type { ContributionActivityQuery } from '../../domain/calculations/contributionActivity';
 /**
  * ChoreScore V3 — Sync Recording Wrapper
  *
@@ -51,42 +52,21 @@ import {
 import { SyncStateRepository } from '../repositories/index';
 import { createSyncRecordForEntity } from './SyncMaterializer';
 
-/**
- * Global revision counter per entity for sync records.
- * In production this would be per-entity persisted; for InMemory tests
- * we use a simple incrementing counter.
- */
-let globalRevision = 0;
-function nextRevision(): number {
-  globalRevision += 1;
-  return globalRevision;
-}
-
-/**
- * Get a revision number for a new local dirty record that is guaranteed
- * to be higher than any existing cursor revision for the given collection.
- * This ensures that local dirty records are never hidden by cursor
- * advancement from pullDeltas.
- */
+/** Local outbox sequencing must survive a process restart and reserve a unique
+ * sequence even while a previous batch is awaiting network acknowledgement. */
 async function getLocalRevision(
-  syncState: SyncStateRepository,
-  householdId: string,
-  collection: SyncCollection,
+  syncState: SyncStateRepository, householdId: string, collection: SyncCollection,
 ): Promise<number> {
-  const cursor = await syncState.getCursor(householdId, collection);
-  const cursorRev = cursor?.lastRevision ?? 0;
-  const counterRev = nextRevision();
-  // Local revision must be strictly greater than any known cursor
-  return Math.max(counterRev, cursorRev + 1);
+  return syncState.nextLocalRevision(householdId, collection);
 }
 
-export function resetRevisions(): void {
-  globalRevision = 0;
-}
+/** Kept for existing test callers; persisted sequences must never be reset. */
+export function resetRevisions(): void {}
 
 // ── Contribution Recording Wrapper ─────────────────────────────
 
 export class SyncRecordingContributionRepository implements ContributionEntryRepository {
+  getActivitySummary(householdId: string, query: ContributionActivityQuery) { return this.inner.getActivitySummary(householdId, query); }
   constructor(
     private inner: ContributionEntryRepository,
     private syncState: SyncStateRepository,
@@ -187,6 +167,8 @@ export class SyncRecordingTodoRepository implements TodoRepository {
   ) {}
 
   async seed(items: TodoItem[]): Promise<void> { await this.inner.seed(items); }
+  getFutureReminders(householdId: string, after: string): Promise<TodoItem[]> { return this.inner.getFutureReminders(householdId, after); }
+  getOpenByHousehold(householdId: string): Promise<TodoItem[]> { return this.inner.getOpenByHousehold(householdId); }
   getByHousehold(householdId: string): Promise<TodoItem[]> { return this.inner.getByHousehold(householdId); }
   getByHouseholdPaginated(householdId: string, query?: PaginatedQuery): Promise<PaginatedResult<TodoItem>> { return this.inner.getByHouseholdPaginated(householdId, query); }
   getById(id: string): Promise<TodoItem | null> { return this.inner.getById(id); }
@@ -310,6 +292,7 @@ export class SyncRecordingPersistentTaskRepository implements PersistentTaskRepo
 // ── V3-06 REPAIR: Member Recording Wrapper ─────────────────────
 
 export class SyncRecordingMemberRepository implements MemberRepository {
+  getCountsByHouseholds(ids: string[]): Promise<Record<string, number>> { return this.inner.getCountsByHouseholds(ids); }
   constructor(
     private inner: MemberRepository,
     private syncState: SyncStateRepository,

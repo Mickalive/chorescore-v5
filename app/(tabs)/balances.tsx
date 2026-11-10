@@ -1,3 +1,4 @@
+import { ContributionActivity } from '../../src/features/balances/ContributionActivity';
 /**
  * ChoreScore V3 — Balances Tab
  *
@@ -11,21 +12,20 @@
  * CrossLedgerSettlement record with a snapshotted rate.
  *
  * Balances are derived views — they never mutate the underlying ledger.
- * Materialized for display efficiency; delta-based refresh on data change.
+ * Stored member totals refresh on data change; history remains paginated.
  *
- * Settlements are period-filtered: a settlement outside the period does not
- * affect the period view but remains in all-time. Materialized snapshots
- * are refreshed via delta on data change or focus, not full replay.
+ * Periods narrow paginated history, never the main perpetual balances or
+ * compensation suggestions. Settlements remain in both all-time ledgers.
  */
 
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   StyleSheet,
   TouchableOpacity,
-  ScrollView,
   Modal,
   Alert,
+  TextInput,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { ScreenContainer } from '../../src/ui/components/ScreenContainer';
@@ -35,99 +35,66 @@ import { Button } from '../../src/ui/components/Button';
 import { colors, spacing, borderRadius } from '../../src/ui/design-system/theme';
 import { useApp, DataChangeType } from '../../src/features/app/AppContext';
 import { useI18n } from '../../src/i18n';
+import { parsePositiveNumber } from '../../src/domain/services/addEntryService';
 import {
-  ContributionEntry,
-  CrossLedgerSettlement,
-  ExpenseEntry,
   Household,
   Member,
-  ContributionTransfer,
+  PersistentTask,
   MoneyTransfer,
   ActivityEntry,
 } from '../../src/domain/entities';
 import {
-  calculateContributionBalances,
   balancesToArray,
   suggestContributionTransfers,
   contributionLedgerIsZeroSum,
 } from '../../src/domain/calculations/contributionLedger';
 import {
-  allocateExpense,
-  calculateFinancialBalancesByCurrency,
   financialBalancesToArray,
   suggestMoneyTransfers,
   financialLedgerIsZeroSum,
 } from '../../src/domain/calculations/expenseLedger';
-import { filterByPeriod, Period } from '../../src/domain/calculations/periods';
+import { periodBoundary, Period } from '../../src/domain/calculations/periods';
 import { quoteCrossLedgerMoneyAmount } from '../../src/domain/calculations/crossLedgerSettlement';
-import { validateSettlementPreconditions } from '../../src/domain/calculations/settlementPreconditions';
+import { loadGroupBalances, createProjectedSettlement } from '../../src/application/use-cases/groupBalances';
+import { LoadingState, ErrorState } from '../../src/ui/components/States';
+import type { BalanceSnapshot } from '../../src/domain/calculations/materializedBalances';
 import {
-  createBalanceSnapshot,
-  BalanceSnapshot,
-  deltaUpdateContribution,
-  deltaUpdateContributionFromSettlement,
-  deltaUpdateMoneyFromSettlement,
-} from '../../src/domain/calculations/materializedBalances';
-import {
-  paginateActivityLog,
   ActivityFilter,
   ActivityLogPage,
 } from '../../src/domain/calculations/activityLog';
+import { loadActivityHistoryPage } from '../../src/application/use-cases/activityHistory';
+import {
+  formatContributionValue,
+  formatCurrencyAmount,
+  formatMoneyAmount,
+  formatQuantity,
+  formatTransferContribution,
+  formatTransferMoney,
+} from '../../src/presentation/balanceFormat';
 
 // ── Helpers ────────────────────────────────────────────────────
-
-function formatContributionValue(value: number, unitShort: string): string {
-  const abs = Math.abs(value);
-  if (value > 0) return `+ ${abs} ${unitShort}`;
-  if (value < 0) return `- ${abs} ${unitShort}`;
-  return `0 ${unitShort}`;
-}
-
-function formatMoneyAmount(amountMinor: number, currency: string): string {
-  const abs = Math.abs(amountMinor);
-  const whole = Math.floor(abs / 100);
-  const cents = abs % 100;
-  const formatted = `${whole}.${cents.toString().padStart(2, '0')}`;
-  if (amountMinor > 0) return `+ ${currency} ${formatted}`;
-  if (amountMinor < 0) return `- ${currency} ${formatted}`;
-  return `${currency} 0.00`;
-}
-
-function formatTransferContribution(
-  t: ContributionTransfer,
-  memberName: (id: string) => string,
-  unitShort: string,
-): string {
-  return `${memberName(t.fromMemberId)} → ${memberName(t.toMemberId)} : ${t.value} ${unitShort}`;
-}
-
-function formatTransferMoney(t: MoneyTransfer, memberName: (id: string) => string): string {
-  const abs = Math.abs(t.amountMinor);
-  const whole = Math.floor(abs / 100);
-  const cents = abs % 100;
-  return `${memberName(t.fromMemberId)} → ${memberName(t.toMemberId)} : ${t.currency} ${whole}.${cents.toString().padStart(2, '0')}`;
-}
 
 function formatActivityRow(
   entry: ActivityEntry,
   memberName: (id: string) => string,
-  unitShort: string,
+  unitLabels: { minutes: string; points: string },
   settlementLabel: string,
+  locale: string,
 ): string {
   switch (entry.type) {
     case 'contribution': {
       const e = entry.entry;
-      const val = formatContributionValue(e.value, unitShort);
+      const val = formatContributionValue(e.value, unitLabels[e.unit], locale);
       return `${e.label}  ${val}  ${memberName(e.performedByMemberId)} → ${e.beneficiaryMemberIds.map(memberName).join(', ')}`;
     }
     case 'expense': {
       const e = entry.entry;
-      return `${e.title}  ${formatMoneyAmount(e.amountMinor, e.currency)}  ${memberName(e.paidByMemberId)} → ${e.participantMemberIds.map(memberName).join(', ')}`;
+      return `${e.title}  ${formatMoneyAmount(e.amountMinor, e.currency, locale)}  ${memberName(e.paidByMemberId)} → ${e.participantMemberIds.map(memberName).join(', ')}`;
     }
     case 'cross-ledger-settlement': {
       const e = entry.entry;
-      const contrib = formatContributionValue(-e.contributionValue, unitShort);
-      const money = formatMoneyAmount(e.moneyAmountMinor, e.currency);
+      const contrib = formatContributionValue(-e.contributionValue, unitLabels[e.contributionUnit], locale);
+      const money = formatMoneyAmount(e.moneyAmountMinor, e.currency, locale);
       return `${settlementLabel}  ${memberName(e.contributionCreditorMemberId)} ${contrib} ↔ ${money}`;
     }
   }
@@ -138,21 +105,17 @@ const HISTORY_PAGE_SIZE = 20;
 // ── Component ──────────────────────────────────────────────────
 
 export default function BalancesScreen() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const router = useRouter();
-  const { currentHouseholdId, repos, services, subscribeToDataChanges, emitDataChange } = useApp();
+  const { currentHouseholdId, currentUser, repos, services, subscribeToDataChanges, emitDataChange } = useApp();
   const [period, setPeriod] = useState<Period>('all-time');
   const [household, setHousehold] = useState<Household | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
-  const [contributions, setContributions] = useState<ContributionEntry[]>([]);
-  const [expenses, setExpenses] = useState<ExpenseEntry[]>([]);
-  const [settlements, setSettlements] = useState<CrossLedgerSettlement[]>([]);
-
-  // Materialized balance snapshot (all-time, for delta refresh)
-  const snapshotRef = useRef<BalanceSnapshot | null>(null);
-
-  // Track whether a full re-read is needed (initial load or household change)
-  const initialLoadDoneRef = useRef(false);
+  const [snapshot, setSnapshot] = useState<BalanceSnapshot>(() => ({ contribution: new Map(), moneyByCurrency: new Map() }));
+  const [balanceLoading, setBalanceLoading] = useState(true);
+  const [balanceError, setBalanceError] = useState(false);
+  const loadRequestRef = useRef(0);
+  const activeGroupRef = useRef(currentHouseholdId);
   const lastHouseholdIdRef = useRef<string | null>(null);
 
   // Compenser modal state
@@ -160,283 +123,88 @@ export default function BalancesScreen() {
   const [compenserCreditor, setCompenserCreditor] = useState<string>('');
   const [compenserValue, setCompenserValue] = useState<string>('');
   const [compenserError, setCompenserError] = useState<string | null>(null);
+  const compensatingRef = useRef(false);
+  const [isCompensating, setIsCompensating] = useState(false);
 
   // History filter state
   const [historyFilter, setHistoryFilter] = useState<ActivityFilter>('all');
+  const [historyShortcut, setHistoryShortcut] = useState<string | null | undefined>(undefined);
+  const [shortcuts, setShortcuts] = useState<PersistentTask[]>([]);
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      if (!currentHouseholdId) return;
+      try { const tasks = await repos.tasks.getByHousehold(currentHouseholdId); if (active) setShortcuts(tasks); }
+      catch { if (active) setShortcuts([]); }
+    };
+    setHistoryShortcut(undefined);
+    setShortcuts([]);
+    void load();
+    const unsubscribe = subscribeToDataChanges((type, groupId) => {
+      if (groupId === currentHouseholdId && type === 'shortcut') void load();
+    });
+    return () => { active = false; unsubscribe(); };
+  }, [currentHouseholdId, repos, subscribeToDataChanges]);
   const [historyPage, setHistoryPage] = useState<ActivityLogPage | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState(false);
+  const historyRequestRef = useRef(0);
+  useLayoutEffect(() => {
+    historyRequestRef.current += 1;
+    setHistoryPage(null);
+    setHistoryError(false);
+    return () => { historyRequestRef.current += 1; };
+  }, [currentHouseholdId, historyFilter, historyShortcut, period]);
 
   // Entry action sheet (Edit / Delete / Share) — historical entries are
   // modified or removed here under Balances, never in the past-only ledger.
   const [selectedEntry, setSelectedEntry] = useState<ActivityEntry | null>(null);
 
-  // ── Full load (initial / household change) ──────────────────
+  // Read a durable projection, never complete ledger payloads. Group changes
+  // invalidate in-flight reads and close actions before the next frame.
+  useLayoutEffect(() => {
+    activeGroupRef.current = currentHouseholdId;
+    loadRequestRef.current += 1;
+    setBalanceLoading(true);
+    setBalanceError(false);
+    setSelectedEntry(null);
+    setShowCompenser(false);
+  }, [currentHouseholdId]);
 
   const fullLoad = useCallback(async () => {
-    if (!currentHouseholdId) return;
-
-    const [hh, mems, contribs, exps, sett] = await Promise.all([
-      repos.households.getById(currentHouseholdId),
-      repos.members.getByHousehold(currentHouseholdId),
-      repos.contributions.getByHousehold(currentHouseholdId),
-      repos.expenses.getByHousehold(currentHouseholdId),
-      repos.settlements.getByHousehold(currentHouseholdId),
-    ]);
-
-    setHousehold(hh);
-    setMembers(mems);
-    setContributions(contribs);
-    setExpenses(exps);
-    setSettlements(sett);
-
-    // Build initial materialized snapshot (all-time)
-    const memberIds = mems.map((m) => m.id);
-    const unit = hh?.contributionUnit ?? 'minutes';
-    snapshotRef.current = createBalanceSnapshot(
-      contribs, exps, sett, unit, memberIds, 'all-time'
-    );
-
-    initialLoadDoneRef.current = true;
-    lastHouseholdIdRef.current = currentHouseholdId;
-  }, [currentHouseholdId, repos]);
-
-  // ── Delta refresh (data-change signal) ──────────────────────
-  // Re-reads only the changed collection type and applies delta
-  // to the materialized snapshot.  No full re-read, no full replay.
-
-  // ── Refs that track the current arrays synchronously ──────────
-  // handleDataChange is called from emitDataChange which may fire
-  // synchronously while React closures still hold the previous
-  // render's state. Refs are updated *after* the state setter in the
-  // same handler, so when the handler fires again (for the delta it
-  // triggers internally), the ref reflects the latest array. This is
-  // critical for settlement (which modifies snapshotRef directly) and
-  // for detecting removals/modifications across all types.
-
-  const contributionsRef = useRef(contributions);
-  contributionsRef.current = contributions;
-  const expensesRef = useRef(expenses);
-  expensesRef.current = expenses;
-  const settlementsRef = useRef(settlements);
-  settlementsRef.current = settlements;
-
-  const handleDataChange = useCallback(async (
-    type: DataChangeType,
-    hhId: string,
-  ) => {
-    if (!currentHouseholdId || hhId !== currentHouseholdId) return;
-    if (!initialLoadDoneRef.current || !snapshotRef.current) return;
-
-    const unit = household?.contributionUnit ?? 'minutes';
-    const memberIds = members.map((m) => m.id);
-
-    switch (type) {
-      case 'contribution': {
-        const newContribs = await repos.contributions.getByHousehold(currentHouseholdId);
-        // Use refs to handle the case where this fires synchronously
-        // after a local write that updated state but hasn't re-rendered yet.
-        const oldIds = new Set(contributionsRef.current.map((c) => c.id));
-        const newIds = new Set(newContribs.map((c) => c.id));
-
-        let snap = snapshotRef.current;
-
-        // Removed entries: in old but not in new
-        const removed = contributionsRef.current.filter((c) => !newIds.has(c.id));
-        for (const entry of removed) {
-          snap = {
-            ...snap,
-            contribution: deltaUpdateContribution(snap.contribution, entry, unit, memberIds, 'remove'),
-          };
-        }
-
-        // Added entries: in new but not in old
-        const added = newContribs.filter((c) => !oldIds.has(c.id));
-        for (const entry of added) {
-          snap = {
-            ...snap,
-            contribution: deltaUpdateContribution(snap.contribution, entry, unit, memberIds, 'add'),
-          };
-        }
-
-        // Modified entries: same id but different fields — remove old + apply new
-        const oldMap = new Map(contributionsRef.current.map((c) => [c.id, c]));
-        for (const newEntry of newContribs) {
-          const oldEntry = oldMap.get(newEntry.id);
-          if (!oldEntry) continue; // already handled as added
-          // Check if the entry changed (value, performedBy, or beneficiaries differ)
-          if (
-            oldEntry.value !== newEntry.value ||
-            oldEntry.performedByMemberId !== newEntry.performedByMemberId ||
-            JSON.stringify(oldEntry.beneficiaryMemberIds) !== JSON.stringify(newEntry.beneficiaryMemberIds)
-          ) {
-            snap = {
-              ...snap,
-              contribution: deltaUpdateContribution(snap.contribution, oldEntry, unit, memberIds, 'remove'),
-            };
-            snap = {
-              ...snap,
-              contribution: deltaUpdateContribution(snap.contribution, newEntry, unit, memberIds, 'add'),
-            };
-          }
-        }
-
-        snapshotRef.current = snap;
-        setContributions(newContribs);
-        break;
-      }
-      case 'expense': {
-        const newExps = await repos.expenses.getByHousehold(currentHouseholdId);
-        const oldIds = new Set(expensesRef.current.map((e) => e.id));
-        const newIds = new Set(newExps.map((e) => e.id));
-
-        let snap = snapshotRef.current;
-
-        // Removed entries: in old but not in new
-        const removed = expensesRef.current.filter((e) => !newIds.has(e.id));
-        for (const entry of removed) {
-          const shares = allocateExpense(entry);
-          let currBal = new Map(snap.moneyByCurrency.get(entry.currency) ?? []);
-          currBal.set(entry.paidByMemberId, (currBal.get(entry.paidByMemberId) ?? 0) - entry.amountMinor);
-          for (const share of shares) {
-            currBal.set(share.memberId, (currBal.get(share.memberId) ?? 0) + share.amountMinor);
-          }
-          const newMoneyByCurrency = new Map(snap.moneyByCurrency);
-          newMoneyByCurrency.set(entry.currency, currBal);
-          snap = { ...snap, moneyByCurrency: newMoneyByCurrency };
-        }
-
-        // Added entries: in new but not in old — use allocateExpense for splitMode-aware allocation
-        const added = newExps.filter((e) => !oldIds.has(e.id));
-        for (const entry of added) {
-          const shares = allocateExpense(entry);
-          let currBal = new Map(snap.moneyByCurrency.get(entry.currency) ?? []);
-          currBal.set(entry.paidByMemberId, (currBal.get(entry.paidByMemberId) ?? 0) + entry.amountMinor);
-          for (const share of shares) {
-            currBal.set(share.memberId, (currBal.get(share.memberId) ?? 0) - share.amountMinor);
-          }
-          const newMoneyByCurrency = new Map(snap.moneyByCurrency);
-          newMoneyByCurrency.set(entry.currency, currBal);
-          snap = { ...snap, moneyByCurrency: newMoneyByCurrency };
-        }
-
-        // Modified entries: same id but different fields — remove old + apply new
-        const oldExpMap = new Map(expensesRef.current.map((e) => [e.id, e]));
-        for (const newEntry of newExps) {
-          const oldEntry = oldExpMap.get(newEntry.id);
-          if (!oldEntry) continue;
-          if (
-            oldEntry.amountMinor !== newEntry.amountMinor ||
-            oldEntry.currency !== newEntry.currency ||
-            oldEntry.paidByMemberId !== newEntry.paidByMemberId ||
-            JSON.stringify(oldEntry.participantMemberIds) !== JSON.stringify(newEntry.participantMemberIds) ||
-            oldEntry.splitMode !== newEntry.splitMode ||
-            JSON.stringify(oldEntry.customShares) !== JSON.stringify(newEntry.customShares)
-          ) {
-            // Remove old effect
-            const oldShares = allocateExpense(oldEntry);
-            let currBal = new Map(snap.moneyByCurrency.get(oldEntry.currency) ?? []);
-            currBal.set(oldEntry.paidByMemberId, (currBal.get(oldEntry.paidByMemberId) ?? 0) - oldEntry.amountMinor);
-            for (const share of oldShares) {
-              currBal.set(share.memberId, (currBal.get(share.memberId) ?? 0) + share.amountMinor);
-            }
-            const tempByCurrency = new Map(snap.moneyByCurrency);
-            tempByCurrency.set(oldEntry.currency, currBal);
-            snap = { ...snap, moneyByCurrency: tempByCurrency };
-
-            // Apply new effect
-            const newShares = allocateExpense(newEntry);
-            let currBal2 = new Map(snap.moneyByCurrency.get(newEntry.currency) ?? []);
-            currBal2.set(newEntry.paidByMemberId, (currBal2.get(newEntry.paidByMemberId) ?? 0) + newEntry.amountMinor);
-            for (const share of newShares) {
-              currBal2.set(share.memberId, (currBal2.get(share.memberId) ?? 0) - share.amountMinor);
-            }
-            const tempByCurrency2 = new Map(snap.moneyByCurrency);
-            tempByCurrency2.set(newEntry.currency, currBal2);
-            snap = { ...snap, moneyByCurrency: tempByCurrency2 };
-          }
-        }
-
-        snapshotRef.current = snap;
-        setExpenses(newExps);
-        break;
-      }
-      case 'settlement': {
-        const newSett = await repos.settlements.getByHousehold(currentHouseholdId);
-        // Use the ref because handleCompenserConfirm already updated state
-        // and this signal may fire synchronously after the local write.
-        const oldIds = new Set(settlementsRef.current.map((s) => s.id));
-        const newIds = new Set(newSett.map((s) => s.id));
-
-        let snap = snapshotRef.current;
-
-        // Removed entries
-        const removed = settlementsRef.current.filter((s) => !newIds.has(s.id));
-        for (const s of removed) {
-          snap = {
-            contribution: deltaUpdateContributionFromSettlement(snap.contribution, s, unit, 'remove'),
-            moneyByCurrency: (() => {
-              const currencyMap = new Map(snap.moneyByCurrency);
-              const currBalances = new Map(currencyMap.get(s.currency) ?? []);
-              currencyMap.set(s.currency, deltaUpdateMoneyFromSettlement(currBalances, s, 'remove'));
-              return currencyMap;
-            })(),
-          };
-        }
-
-        // Added entries (only from OTHER sources — the Balances screen
-        // applies its own settlements directly in handleCompenserConfirm)
-        const added = newSett.filter((s) => !oldIds.has(s.id));
-        for (const s of added) {
-          snap = {
-            contribution: deltaUpdateContributionFromSettlement(snap.contribution, s, unit, 'add'),
-            moneyByCurrency: (() => {
-              const currencyMap = new Map(snap.moneyByCurrency);
-              const currBalances = new Map(currencyMap.get(s.currency) ?? []);
-              currencyMap.set(s.currency, deltaUpdateMoneyFromSettlement(currBalances, s, 'add'));
-              return currencyMap;
-            })(),
-          };
-        }
-
-        snapshotRef.current = snap;
-        setSettlements(newSett);
-        break;
-      }
-      case 'household': {
-        const hh = await repos.households.getById(currentHouseholdId);
-        setHousehold(hh);
-        break;
-      }
-      case 'member': {
-        const mems = await repos.members.getByHousehold(currentHouseholdId);
-        setMembers(mems);
-        break;
+    const id = currentHouseholdId;
+    if (!id || activeGroupRef.current !== id) return;
+    const request = ++loadRequestRef.current;
+    if (lastHouseholdIdRef.current !== id) setBalanceLoading(true);
+    setBalanceError(false);
+    try {
+      const loaded = await loadGroupBalances(repos, id);
+      if (request !== loadRequestRef.current || activeGroupRef.current !== id) return;
+      setHousehold(loaded.household);
+      setMembers(loaded.members);
+      setSnapshot(loaded.snapshot);
+      lastHouseholdIdRef.current = id;
+      setBalanceLoading(false);
+    } catch {
+      if (request === loadRequestRef.current && activeGroupRef.current === id) {
+        setBalanceError(true);
+        setBalanceLoading(false);
       }
     }
-  }, [currentHouseholdId, household, members, repos]);
+  }, [currentHouseholdId, repos]);
 
-  // Subscribe to data-change signals
-  useEffect(() => {
-    const unsub = subscribeToDataChanges(handleDataChange);
-    return unsub;
-  }, [subscribeToDataChanges, handleDataChange]);
+  const handleDataChange = useCallback(async (type: DataChangeType, id: string) => {
+    if (id === currentHouseholdId && ['contribution','expense','settlement','member','household'].includes(type)) await fullLoad();
+  }, [currentHouseholdId, fullLoad]);
 
-  // Initial load
+  useEffect(() => subscribeToDataChanges(handleDataChange), [subscribeToDataChanges, handleDataChange]);
   useEffect(() => {
-    fullLoad();
+    void fullLoad();
+    return () => { loadRequestRef.current += 1; };
   }, [fullLoad]);
-
-  // Refresh on screen focus — only if household changed or data may be stale
-  useFocusEffect(
-    useCallback(() => {
-      if (!currentHouseholdId) return;
-      if (lastHouseholdIdRef.current !== currentHouseholdId) {
-        // Household changed — full reload
-        fullLoad();
-      }
-      // Otherwise, data-change signal handles incremental updates
-    }, [currentHouseholdId, fullLoad])
-  );
+  useFocusEffect(useCallback(() => {
+    if (lastHouseholdIdRef.current === currentHouseholdId) void fullLoad();
+  }, [currentHouseholdId, fullLoad]));
 
   // ── Member name helper ────────────────────────────────────
 
@@ -450,50 +218,16 @@ export default function BalancesScreen() {
   const unit = household?.contributionUnit ?? 'minutes';
   const memberIds = useMemo(() => members.map((m) => m.id), [members]);
 
-  // Filter entries AND settlements by period — these are VIEW filters, never resets
-  const periodContributions = useMemo(
-    () => filterByPeriod(contributions, period),
-    [contributions, period]
-  );
-
-  const periodExpenses = useMemo(
-    () => filterByPeriod(expenses, period),
-    [expenses, period]
-  );
-
-  const periodSettlements = useMemo(
-    () => filterByPeriod(settlements, period),
-    [settlements, period]
-  );
-
-  // Contribution balances (period-filtered, including period-filtered settlements)
-  const contributionBalances = useMemo(
-    () => {
-      // Use materialized snapshot for all-time, recompute for period views
-      if (period === 'all-time' && snapshotRef.current) {
-        return snapshotRef.current.contribution;
-      }
-      // Period view: compute from period-filtered entries + period-filtered settlements
-      return calculateContributionBalances(periodContributions, unit, periodSettlements, memberIds);
-    },
-    [periodContributions, unit, periodSettlements, memberIds, period]
-  );
+  // Main balances are perpetual. Period selection narrows history only; it
+  // must never hide an old debt or change compensation suggestions.
+  const contributionBalances = snapshot.contribution;
 
   const contributionArray = useMemo(
     () => balancesToArray(contributionBalances),
     [contributionBalances]
   );
 
-  // Money balances (period-filtered, including period-filtered settlements)
-  const moneyBalancesByCurrency = useMemo(
-    () => {
-      if (period === 'all-time' && snapshotRef.current) {
-        return snapshotRef.current.moneyByCurrency;
-      }
-      return calculateFinancialBalancesByCurrency(periodExpenses, periodSettlements, memberIds);
-    },
-    [periodExpenses, periodSettlements, memberIds, period]
-  );
+  const moneyBalancesByCurrency = snapshot.moneyByCurrency;
 
   // Settlement suggestions
   const contributionSuggestions = useMemo(
@@ -523,8 +257,8 @@ export default function BalancesScreen() {
   // Build Avant/Apres preview for the Compenser modal
   const compenserPreview = useMemo(() => {
     if (!canCompensate || !compenserCreditor || !compenserValue) return null;
-    const value = parseFloat(compenserValue);
-    if (isNaN(value) || value <= 0) return null;
+    const value = parsePositiveNumber(compenserValue);
+    if (value === null) return null;
     const rate = household!.contributionToMoneyRate!;
 
     // Find a counterparty with positive money balance (creditor in money ledger)
@@ -575,10 +309,11 @@ export default function BalancesScreen() {
   ]);
 
   const handleCompenserConfirm = useCallback(async () => {
-    if (!currentHouseholdId || !household || !compenserPreview) return;
+    if (!currentHouseholdId || !household || !compenserPreview || compensatingRef.current) return;
     setCompenserError(null);
 
-    const value = parseFloat(compenserValue);
+    const value = parsePositiveNumber(compenserValue);
+    if (value === null) return;
     const rate = compenserPreview.rate;
     const moneyAmount = compenserPreview.moneyAmount;
 
@@ -593,84 +328,69 @@ export default function BalancesScreen() {
       currency: rate.currency,
       rateSnapshot: rate,
       occurredAt: new Date().toISOString(),
-      createdBy: household.ownerId,
+      // Audit identity of the member who performed the settlement. The
+      // authority replaces this with the authenticated uid when syncing.
+      createdBy: currentUser?.userId ?? household.ownerId,
     };
 
-    // Run precondition validation
-    const result = validateSettlementPreconditions(
-      settlementData as any,
-      contributions,
-      expenses,
-      memberIds,
-      settlements,
-      true
-    );
+    compensatingRef.current = true;
+    setIsCompensating(true);
+    try {
+      await createProjectedSettlement(repos, settlementData);
+      await fullLoad();
+      // Re-reading the projection is idempotent; notifying sync can no longer
+      // apply this settlement twice to an in-memory balance snapshot.
+      emitDataChange('settlement', currentHouseholdId);
 
-    if (!result.valid) {
-      setCompenserError(result.errors[0]);
-      return;
+      // Close modal and reset
+      setShowCompenser(false);
+      setCompenserCreditor('');
+      setCompenserValue('');
+    } catch {
+      setCompenserError(t('state.error'));
+    } finally {
+      compensatingRef.current = false;
+      setIsCompensating(false);
     }
-
-    // Persist the immutable settlement — use the returned entity (real id)
-    const persistedSettlement = await repos.settlements.create(settlementData);
-
-    // Update local state with the real persisted entity
-    const newSettlements = [...settlements, persistedSettlement];
-    setSettlements(newSettlements);
-
-    // Apply delta to materialized snapshot — BOTH ledgers
-    if (snapshotRef.current) {
-      snapshotRef.current = {
-        contribution: deltaUpdateContributionFromSettlement(
-          snapshotRef.current.contribution, persistedSettlement, unit, 'add'
-        ),
-        moneyByCurrency: (() => {
-          const currencyMap = new Map(snapshotRef.current!.moneyByCurrency);
-          const currBalances = new Map(currencyMap.get(persistedSettlement.currency) ?? []);
-          currencyMap.set(persistedSettlement.currency, deltaUpdateMoneyFromSettlement(currBalances, persistedSettlement, 'add'));
-          return currencyMap;
-        })(),
-      };
-    }
-
-    // NOTE: We do NOT emit 'settlement' here. The screen already applied
-    // the delta to snapshotRef and updated local state (setSettlements).
-    // Emitting would cause handleDataChange('settlement') to re-read the
-    // repo, compute added against the stale `settlements` closure (which
-    // does NOT include the just-created entity because React state updates
-    // do not mutate the current render), and apply the delta a second time.
-    // Other screens (Ajouter, Todos) do not consume settlement signals.
-
-    // Close modal and reset
-    setShowCompenser(false);
-    setCompenserCreditor('');
-    setCompenserValue('');
   }, [
-    currentHouseholdId, household, compenserPreview, compenserCreditor, compenserValue,
-    unit, contributions, expenses, memberIds, settlements, repos, emitDataChange,
+    currentHouseholdId, currentUser, household, compenserPreview, compenserCreditor, compenserValue,
+    unit, repos, emitDataChange, fullLoad, t,
   ]);
 
   // ── History pagination ─────────────────────────────────────
 
-  const loadHistoryPage = useCallback((filter: ActivityFilter, cursor?: string | null) => {
+  const loadHistoryPage = useCallback(async (filter: ActivityFilter, cursor?: string | null) => {
+    if (!currentHouseholdId) return;
+    const request = historyRequestRef.current + 1;
+    historyRequestRef.current = request;
     setHistoryLoading(true);
-    const page = paginateActivityLog(contributions, expenses, settlements, {
-      limit: HISTORY_PAGE_SIZE,
-      filter,
-      cursor: cursor ?? null,
-    });
-    setHistoryPage(page);
-    setHistoryLoading(false);
-  }, [contributions, expenses, settlements]);
+    setHistoryError(false);
+    try {
+      const page = await loadActivityHistoryPage(repos, currentHouseholdId, {
+        limit: HISTORY_PAGE_SIZE,
+        filter,
+        persistentTaskId: historyShortcut,
+        cursor: cursor ?? null,
+        after: period === 'all-time' ? undefined : periodBoundary(period),
+      });
+      if (request === historyRequestRef.current && activeGroupRef.current === currentHouseholdId) setHistoryPage(page);
+    } catch {
+      if (request === historyRequestRef.current && activeGroupRef.current === currentHouseholdId) setHistoryError(true);
+    } finally {
+      if (request === historyRequestRef.current) setHistoryLoading(false);
+    }
+  }, [currentHouseholdId, repos, period, historyShortcut]);
 
-  // Reset history page on filter change
+  // Reset history page on filter change and after every local ledger change.
+  // The page itself comes from the repository, never from the full arrays.
   useEffect(() => {
-    loadHistoryPage(historyFilter);
-  }, [historyFilter, loadHistoryPage]);
+    void loadHistoryPage(historyFilter);
+  }, [historyFilter, loadHistoryPage, snapshot]);
 
   // ── Render ─────────────────────────────────────────────────
 
-  const unitLabel = unit === 'minutes' ? t('unit.minutesShort') : t('unit.pointsShort');
+  const unitLabels = { minutes: t('unit.minutesShort'), points: t('unit.pointsShort') };
+  const unitLabel = unitLabels[unit];
 
   const periodLabels: Record<Period, string> = {
     week: t('balances.periodWeek'),
@@ -714,10 +434,10 @@ export default function BalancesScreen() {
           onPress: async () => {
             try {
               if (isTask) {
-                await repos.contributions.delete(entryId);
+                await repos.withTransaction(async () => repos.contributions.delete(entryId));
                 emitDataChange('contribution', currentHouseholdId);
               } else {
-                await repos.expenses.delete(entryId);
+                await repos.withTransaction(async () => repos.expenses.delete(entryId));
                 emitDataChange('expense', currentHouseholdId);
               }
             } catch {
@@ -731,13 +451,21 @@ export default function BalancesScreen() {
 
   const handleShareEntry = (entry: ActivityEntry) => {
     setSelectedEntry(null);
-    const message = formatActivityRow(entry, memberName, unitLabel, t('add.settlement'));
+    const message = formatActivityRow(entry, memberName, unitLabels, t('add.settlement'), locale);
     services.share.share({ message });
   };
 
+  if (balanceError) return (
+    <ScreenContainer><ErrorState title={t('state.error')} message={t('state.genericError')}
+      retryLabel={t('action.retry')} onRetry={() => { void fullLoad(); }} /></ScreenContainer>
+  );
+  if (balanceLoading || household?.id !== currentHouseholdId) return (
+    <ScreenContainer><LoadingState message={t('state.loading')} /></ScreenContainer>
+  );
+
   return (
     <ScreenContainer>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <View style={styles.scrollContent}>
         <View style={styles.header}>
           <Text variant="screenTitle">{t('balances.title')}</Text>
         </View>
@@ -748,7 +476,10 @@ export default function BalancesScreen() {
             <TouchableOpacity
               key={p}
               style={[styles.periodButton, period === p && styles.periodButtonActive]}
-              onPress={() => setPeriod(p)}
+              onPress={() => { if (period !== p) setHistoryPage(null); setPeriod(p); }}
+              testID={`balances.period.${p}`}
+              accessibilityRole="button"
+              accessibilityState={{ selected: period === p }}
             >
               <Text
                 variant="caption"
@@ -761,6 +492,7 @@ export default function BalancesScreen() {
         </View>
 
         {/* Task Ledger Block */}
+        <Text variant="caption" color={colors.textSecondary}>{t('balances.historyPeriodHint')}</Text>
         <Text variant="sectionTitle" style={styles.sectionTitle}>
           {t('balances.tasks')}
         </Text>
@@ -785,7 +517,7 @@ export default function BalancesScreen() {
                       : colors.textSecondary
                   }
                 >
-                  {formatContributionValue(balance.value, unit)}
+                  {formatContributionValue(balance.value, unitLabel, locale)}
                 </Text>
               </View>
             ))
@@ -810,7 +542,7 @@ export default function BalancesScreen() {
             {contributionSuggestions.map((transfer, i) => (
               <View key={i} style={styles.suggestionRow}>
                 <Text variant="body" style={styles.suggestionText}>
-                  {formatTransferContribution(transfer, memberName, unitLabel)}
+                  {formatTransferContribution(transfer, memberName, unitLabel, locale)}
                 </Text>
               </View>
             ))}
@@ -848,7 +580,7 @@ export default function BalancesScreen() {
                           : colors.textSecondary
                       }
                     >
-                      {formatMoneyAmount(balance.amountMinor, currency)}
+                      {formatMoneyAmount(balance.amountMinor, currency, locale)}
                     </Text>
                   </View>
                 ))}
@@ -873,7 +605,7 @@ export default function BalancesScreen() {
             {moneySuggestions.map((transfer, i) => (
               <View key={i} style={styles.suggestionRow}>
                 <Text variant="body" style={styles.suggestionText}>
-                  {formatTransferMoney(transfer, memberName)}
+                  {formatTransferMoney(transfer, memberName, locale)}
                 </Text>
               </View>
             ))}
@@ -898,10 +630,16 @@ export default function BalancesScreen() {
             <Text variant="body" style={styles.compensationDescription}>
               {household.crossLedgerCompensationEnabled
                 ? t('balances.compensationRate', {
-                    value: household.contributionToMoneyRate?.contributionValue ?? '',
+                    value: household.contributionToMoneyRate
+                      ? formatQuantity(household.contributionToMoneyRate.contributionValue, locale)
+                      : '',
                     unit: unitLabel,
                     money: household.contributionToMoneyRate
-                      ? `${household.contributionToMoneyRate.moneyAmountMinor / 100} ${household.contributionToMoneyRate.currency}`
+                      ? formatCurrencyAmount(
+                          household.contributionToMoneyRate.moneyAmountMinor,
+                          household.contributionToMoneyRate.currency,
+                          locale,
+                        )
                       : '—',
                   })
                 : t('balances.compensationDisabledHelp')}
@@ -918,6 +656,7 @@ export default function BalancesScreen() {
                 size="small"
                 style={{ marginTop: spacing.md }}
                 onPress={() => setShowCompenser(true)}
+                testID="balances.compensateButton"
               />
             )}
           </Card>
@@ -932,7 +671,7 @@ export default function BalancesScreen() {
             <TouchableOpacity
               key={f}
               style={[styles.historyFilterBtn, historyFilter === f && styles.historyFilterBtnActive]}
-              onPress={() => setHistoryFilter(f)}
+              onPress={() => { setHistoryFilter(f); setHistoryShortcut(undefined); }}
             >
               <Text
                 variant="caption"
@@ -943,31 +682,55 @@ export default function BalancesScreen() {
             </TouchableOpacity>
           ))}
         </View>
+        <Text variant="caption">{t('shortcuts.history')}</Text>
+        <View style={styles.historyFilterRow}>
+          {[{ id: undefined, name: t('shortcuts.all') }, ...shortcuts.map(task => ({ id: task.id as string | null | undefined, name: task.name })),
+            { id: null, name: t('shortcuts.other') }].map(option => <TouchableOpacity
+              key={option.id === undefined ? 'all' : option.id === null ? 'other' : option.id}
+              testID={`balances.shortcut.${option.id === undefined ? 'all' : option.id === null ? 'other' : option.id}`}
+              accessibilityRole="button" accessibilityState={{ selected: historyShortcut === option.id }}
+              style={[styles.historyFilterBtn, historyShortcut === option.id && styles.historyFilterBtnActive]}
+              onPress={() => { setHistoryShortcut(option.id); if (option.id !== undefined) setHistoryFilter('contribution'); }}>
+              <Text variant="caption" color={historyShortcut === option.id ? colors.textOnPrimary : colors.textSecondary}>{option.name}</Text>
+            </TouchableOpacity>)}
+        </View>
+        {currentHouseholdId && <ContributionActivity householdId={currentHouseholdId} unit={unit} members={members}
+          period={period} persistentTaskId={historyShortcut} revision={snapshot} />}
         <Card style={styles.historyCard}>
+          {historyError && <ErrorState title={t('state.errorTitle')} message={t('balances.historyError')}
+            onRetry={() => { void loadHistoryPage(historyFilter); }} retryLabel={t('action.retry')} />}
           {historyPage && historyPage.entries.length > 0 ? (
             <>
-              {historyPage.entries.map((entry) => (
+              {historyPage.entries.map((entry, index) => (
                 <TouchableOpacity
                   key={entry.entry.id}
+                  testID={`balances.history.index.${index}`}
                   style={styles.historyRow}
                   onPress={() => setSelectedEntry(entry)}
                   accessibilityRole="button"
                   accessibilityLabel={formatActivityRow(
                     entry,
                     memberName,
-                    unitLabel,
+                    unitLabels,
                     t('add.settlement'),
+                    locale,
                   )}
                 >
                   <Text variant="body" style={styles.historyText} numberOfLines={2}>
-                    {formatActivityRow(entry, memberName, unitLabel, t('add.settlement'))}
+                    {formatActivityRow(entry, memberName, unitLabels, t('add.settlement'), locale)}
+                  </Text>
+                  <Text variant="caption" color={colors.textSecondary}>
+                    {new Date(entry.entry.occurredAt).toLocaleString(locale === 'fr' ? 'fr-FR' : 'en-US', {
+                      year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+                    })}
                   </Text>
                 </TouchableOpacity>
               ))}
               {historyPage.hasMore && (
                 <TouchableOpacity
                   style={styles.loadMoreBtn}
-                  onPress={() => loadHistoryPage(historyFilter, historyPage.cursor)}
+                  disabled={historyLoading}
+                  onPress={() => { void loadHistoryPage(historyFilter, historyPage.cursor); }}
                 >
                   <Text variant="caption" color={colors.textSecondary}>
                     {historyLoading ? t('state.loading') : t('action.loadMore')}
@@ -977,11 +740,11 @@ export default function BalancesScreen() {
             </>
           ) : (
             <Text variant="body" style={styles.emptyText}>
-              {t('balances.emptyActivity')}
+              {historyLoading ? t('state.loading') : historyError ? '' : t('balances.emptyActivity')}
             </Text>
           )}
         </Card>
-      </ScrollView>
+      </View>
 
       {/* ── Historical entry actions (Edit / Delete / Share) ── */}
       <Modal
@@ -1006,13 +769,14 @@ export default function BalancesScreen() {
                 style={styles.actionSheetSummary}
                 numberOfLines={2}
               >
-                {formatActivityRow(selectedEntry, memberName, unitLabel, t('add.settlement'))}
+                {formatActivityRow(selectedEntry, memberName, unitLabels, t('add.settlement'), locale)}
               </Text>
             )}
 
             {selectedEntry && selectedEntry.type !== 'cross-ledger-settlement' && (
               <>
                 <TouchableOpacity
+                  testID="balances.editEntry"
                   style={styles.actionSheetButton}
                   onPress={() => handleEditEntry(selectedEntry)}
                   accessibilityRole="button"
@@ -1024,6 +788,7 @@ export default function BalancesScreen() {
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
+                  testID="balances.deleteEntry"
                   style={styles.actionSheetButton}
                   onPress={() => handleDeleteEntry(selectedEntry)}
                   accessibilityRole="button"
@@ -1037,6 +802,7 @@ export default function BalancesScreen() {
 
             {selectedEntry && (
               <TouchableOpacity
+                testID="balances.shareEntry"
                 style={styles.actionSheetButton}
                 onPress={() => handleShareEntry(selectedEntry)}
                 accessibilityRole="button"
@@ -1046,6 +812,7 @@ export default function BalancesScreen() {
             )}
 
             <TouchableOpacity
+              testID="balances.closeEntryActions"
               style={styles.actionSheetButton}
               onPress={closeEntryActions}
               accessibilityRole="button"
@@ -1066,7 +833,7 @@ export default function BalancesScreen() {
         onRequestClose={() => setShowCompenser(false)}
       >
         <ScreenContainer>
-          <ScrollView contentContainerStyle={styles.modalContent}>
+          <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text variant="screenTitle">{t('balances.composerTitle')}</Text>
               <TouchableOpacity onPress={() => setShowCompenser(false)}>
@@ -1086,6 +853,7 @@ export default function BalancesScreen() {
                     compenserCreditor === mid && styles.memberSelectBtnActive,
                   ]}
                   onPress={() => setCompenserCreditor(mid)}
+                  testID={`balances.compenserCreditor.${mid}`}
                 >
                   <Text
                     variant="caption"
@@ -1106,6 +874,7 @@ export default function BalancesScreen() {
                   key={preset}
                   style={[styles.presetBtn, compenserValue === preset && styles.presetBtnActive]}
                   onPress={() => setCompenserValue(preset)}
+                  testID={`balances.compenserPreset.${preset}`}
                 >
                   <Text variant="caption" color={compenserValue === preset ? colors.textOnPrimary : colors.text}>
                     {preset}
@@ -1113,6 +882,15 @@ export default function BalancesScreen() {
                 </TouchableOpacity>
               ))}
             </View>
+
+            <TextInput
+              testID="balances.compenserValue"
+              value={compenserValue}
+              onChangeText={setCompenserValue}
+              keyboardType="decimal-pad"
+              accessibilityLabel={t('balances.composerValue', { unit: unitLabel })}
+              style={{ minHeight: 48, borderWidth: 1, borderColor: colors.border, borderRadius: borderRadius.sm, padding: spacing.md, color: colors.text }}
+            />
 
             {compenserPreview && (
               <Card style={styles.previewCard}>
@@ -1128,11 +906,11 @@ export default function BalancesScreen() {
                     <View key={b.memberId} style={styles.previewRow}>
                       <Text variant="body" style={{ flex: 1 }}>{memberName(b.memberId)}</Text>
                       <Text variant="body" style={{ width: 80, textAlign: 'right' }}>
-                        {formatContributionValue(b.value, unit)}
+                        {formatContributionValue(b.value, unitLabel, locale)}
                       </Text>
                       <Text variant="body" style={{ width: 20, textAlign: 'center' }}>→</Text>
                       <Text variant="body" style={{ width: 80, textAlign: 'right' }}>
-                        {formatContributionValue(after?.value ?? b.value, unit)}
+                        {formatContributionValue(after?.value ?? b.value, unitLabel, locale)}
                       </Text>
                     </View>
                   );
@@ -1147,11 +925,11 @@ export default function BalancesScreen() {
                     <View key={b.memberId} style={styles.previewRow}>
                       <Text variant="body" style={{ flex: 1 }}>{memberName(b.memberId)}</Text>
                       <Text variant="body" style={{ width: 80, textAlign: 'right' }}>
-                        {formatMoneyAmount(b.amountMinor, b.currency)}
+                        {formatMoneyAmount(b.amountMinor, b.currency, locale)}
                       </Text>
                       <Text variant="body" style={{ width: 20, textAlign: 'center' }}>→</Text>
                       <Text variant="body" style={{ width: 80, textAlign: 'right' }}>
-                        {formatMoneyAmount(after?.amountMinor ?? b.amountMinor, b.currency)}
+                        {formatMoneyAmount(after?.amountMinor ?? b.amountMinor, b.currency, locale)}
                       </Text>
                     </View>
                   );
@@ -1159,16 +937,22 @@ export default function BalancesScreen() {
 
                 <Text variant="caption" color={colors.textSecondary} style={{ marginTop: spacing.md }}>
                   {t('balances.composerRateSnapshot', {
-                    value: compenserPreview.rate.contributionValue,
+                    value: formatQuantity(compenserPreview.rate.contributionValue, locale),
                     unit: unitLabel,
-                    money: compenserPreview.rate.moneyAmountMinor / 100,
-                    currency: compenserPreview.rate.currency,
+                    money: formatCurrencyAmount(
+                      compenserPreview.rate.moneyAmountMinor,
+                      compenserPreview.rate.currency,
+                      locale,
+                    ),
                   })}
                 </Text>
                 <Text variant="caption" color={colors.textSecondary}>
                   {t('balances.composerAmount', {
-                    amount: compenserPreview.moneyAmount / 100,
-                    currency: compenserPreview.rate.currency,
+                    amount: formatCurrencyAmount(
+                      compenserPreview.moneyAmount,
+                      compenserPreview.rate.currency,
+                      locale,
+                    ),
                   })}
                 </Text>
               </Card>
@@ -1182,11 +966,13 @@ export default function BalancesScreen() {
 
             <Button
               title={t('balances.composerConfirm')}
-              disabled={!compenserPreview}
+              disabled={!compenserPreview || isCompensating}
+              loading={isCompensating}
               onPress={handleCompenserConfirm}
               style={{ marginTop: spacing.lg }}
+              testID="balances.compenserConfirm"
             />
-          </ScrollView>
+          </View>
         </ScreenContainer>
       </Modal>
     </ScreenContainer>
@@ -1287,10 +1073,14 @@ const styles = StyleSheet.create({
   // History section
   historyFilterRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: spacing.xs,
     marginBottom: spacing.md,
   },
   historyFilterBtn: {
+    minHeight: 48,
+    maxWidth: '100%',
+    justifyContent: 'center',
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.xs,
     borderRadius: borderRadius.sm,

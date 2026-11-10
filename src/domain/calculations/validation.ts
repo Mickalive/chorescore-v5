@@ -17,13 +17,13 @@ export function requireFinitePositive(value: number, label: string): void {
 }
 
 export function requirePositiveInteger(value: number, label: string): void {
-  if (!Number.isInteger(value) || value <= 0) {
+  if (!Number.isSafeInteger(value) || value <= 0) {
     throw new Error(`${label} must be a positive integer, got ${value}`);
   }
 }
 
 export function requireNonNegativeInteger(value: number, label: string): void {
-  if (!Number.isInteger(value) || value < 0) {
+  if (!Number.isSafeInteger(value) || value < 0) {
     throw new Error(`${label} must be a non-negative integer, got ${value}`);
   }
 }
